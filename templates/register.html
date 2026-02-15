@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Register - Agent Kanban PM{% endblock %}
+
+{% block content %}
+<div class="register-container">
+    <div class="card" style="max-width: 500px; margin: 2rem auto;">
+        <div class="card-header">
+            <h3 class="card-title">Create an Account</h3>
+        </div>
+
+        {% if error %}
+        <div class="alert alert-danger mb-3">{{ error }}</div>
+        {% endif %}
+
+        {% if success %}
+        <div class="alert alert-success mb-3">
+            {{ success }}
+            <br><a href="/" class="btn btn-primary mt-2" style="margin-top: 0.5rem; display: inline-block;">Go to
+                Dashboard →</a>
+        </div>
+        {% endif %}
+
+        {% if not success %}
+        <form method="POST" action="/ui/register">
+            <div class="form-group mb-3">
+                <label for="name"><strong>Name</strong></label>
+                <input type="text" id="name" name="name" class="form-input" required placeholder="Your full name">
+            </div>
+
+            <div class="form-group mb-3">
+                <label for="email"><strong>Email</strong></label>
+                <input type="email" id="email" name="email" class="form-input" required placeholder="you@example.com">
+            </div>
+
+            <div class="form-group mb-3">
+                <label for="password"><strong>Password</strong></label>
+                <input type="password" id="password" name="password" class="form-input" required minlength="6"
+                    placeholder="Minimum 6 characters">
+            </div>
+
+            <div class="form-group mb-3">
+                <label for="skills"><strong>Skills</strong> <small
+                        class="text-secondary">(comma-separated)</small></label>
+                <input type="text" id="skills" name="skills" class="form-input"
+                    placeholder="e.g. python, react, management">
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="width: 100%;">Register</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

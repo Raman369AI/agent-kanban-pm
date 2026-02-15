@@ -1,47 +1,111 @@
 {% extends "base.html" %}
 
-{% block title %}Projects - Agent Kanban PM{% endblock %}
+{% block title %}Projects{% endblock %}
 
 {% block content %}
-<div class="mb-4">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h2>Projects</h2>
-            <p class="text-secondary">Manage your projects and track progress</p>
-        </div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+    <div>
+        <h2 style="margin:0;">Projects</h2>
+        <p class="text-secondary">Manage your projects and track progress</p>
     </div>
+    <button class="btn btn-primary" onclick="document.getElementById('create-modal').style.display='flex'">+ New
+        Project</button>
 </div>
 
-<!-- Project Cards -->
-<div class="grid mb-4">
-    {% for project in projects %}
-    <div class="card">
-        <div class="card-header">
-            <h3 class="card-title">{{ project.name }}</h3>
-            <span class="badge badge-{{ project.approval_status }}">
-                {{ project.approval_status }}
-            </span>
+{% for project in projects %}
+<div class="card mb-2" id="project-card-{{ project.id }}">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div style="flex:1;">
+            <h3 style="margin:0 0 0.5rem 0;">{{ project.name }}</h3>
+            <p class="text-secondary">{{ project.description }}</p>
+            <p><strong>Stages:</strong> {{ project.stages|length }}</p>
+            <p class="text-secondary"><small>Created: {{ project.created_at.strftime('%Y-%m-%d') }}</small></p>
         </div>
-        <div class="mb-3">
-            <p>{{ project.description }}</p>
-        </div>
-        <div class="mb-3">
-            <strong>Stages:</strong> {{ project.stages|length }}<br>
-            <strong>Tasks:</strong> {{ project.tasks|length }}<br>
-            <strong>Created:</strong> {{ project.created_at.strftime('%Y-%m-%d') }}
-        </div>
-        <div>
-            <a href="/ui/projects/{{ project.id }}/board" class="btn btn-primary">View Board</a>
+        <div style="display:flex;gap:0.5rem;align-items:center;">
+            <span class="badge badge-{{ project.approval_status.value }}">{{ project.approval_status.value }}</span>
         </div>
     </div>
-    {% endfor %}
+    <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+        <a href="/ui/projects/{{ project.id }}/board" class="btn btn-primary btn-sm">View Board</a>
+        <button class="btn btn-sm" onclick="deleteProject({{ project.id }})">🗑️ Delete</button>
+    </div>
 </div>
+{% endfor %}
 
 {% if not projects %}
-<div class="card text-center">
-    <h3>No projects yet</h3>
-    <p class="text-secondary">Create your first project using the API</p>
-    <a href="/docs" class="btn btn-primary" target="_blank">View API Docs</a>
+<div class="card text-center text-secondary" style="padding:3rem;">
+    <p>No projects yet. Create your first project to get started!</p>
 </div>
 {% endif %}
+
+<!-- Create Project Modal -->
+<div id="create-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3>Create New Project</h3>
+            <button class="btn-icon"
+                onclick="document.getElementById('create-modal').style.display='none'">&times;</button>
+        </div>
+        <form action="/ui/projects/create" method="POST">
+            <div class="form-group mb-2">
+                <label>Project Name</label>
+                <input type="text" name="name" class="form-input" required placeholder="My Awesome Project">
+            </div>
+            <div class="form-group mb-2">
+                <label>Description</label>
+                <textarea name="description" class="form-input" rows="3"
+                    placeholder="What is this project about?"></textarea>
+            </div>
+            {% if agents %}
+            <div class="form-group mb-2">
+                <label>Assign Agents <small class="text-secondary">(who should work on this)</small></label>
+                {% for agent in agents %}
+                <label style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;">
+                    <input type="checkbox" name="agent_ids" value="{{ agent.id }}">
+                    <span class="badge badge-agent">🤖 {{ agent.name }}</span>
+                    {% if agent.skills %}
+                    <small class="text-secondary">{{ agent.skills }}</small>
+                    {% endif %}
+                </label>
+                {% endfor %}
+            </div>
+            {% endif %}
+            <div class="form-actions">
+                <button type="button" class="btn"
+                    onclick="document.getElementById('create-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Project</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast" style="display:none;"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function deleteProject(projectId) {
+        if (!confirm('Delete this project and all its tasks?')) return;
+        fetch('/ui/projects/' + projectId, { method: 'DELETE' })
+            .then(function (r) { if (!r.ok) throw new Error('Failed'); })
+            .then(function () {
+                var card = document.getElementById('project-card-' + projectId);
+                if (card) card.remove();
+                var toast = document.getElementById('toast');
+                toast.textContent = 'Project deleted';
+                toast.className = 'toast toast-success';
+                toast.style.display = 'block';
+                setTimeout(function () { toast.style.display = 'none'; }, 3000);
+            })
+            .catch(function (err) {
+                var toast = document.getElementById('toast');
+                toast.textContent = 'Error: ' + err.message;
+                toast.className = 'toast toast-error';
+                toast.style.display = 'block';
+                setTimeout(function () { toast.style.display = 'none'; }, 3000);
+            });
+    }
+</script>
 {% endblock %}

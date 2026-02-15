@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Users - Agent Kanban PM{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex justify-content-between align-items-center">
+    <div>
+        <h2>Team Members</h2>
+        <p class="text-secondary">Manage humans and agents in your workspace</p>
+    </div>
+    <div>
+        <a href="/ui/register" class="btn btn-primary">+ Register Human</a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-container">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Email / ID</th>
+                    <th>Skills</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr {% if user.name=='Antigravity' %}class="highlight-antigravity" {% endif %}>
+                    <td>
+                        <strong>{{ user.name }}</strong>
+                        {% if user.name == 'Antigravity' %}
+                        <span class="badge badge-warning">MANAGER</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge badge-{{ user.entity_type }}">
+                            {{ user.entity_type | capitalize }}
+                        </span>
+                    </td>
+                    <td>{{ user.email or user.api_key or 'N/A' }}</td>
+                    <td>
+                        {% if user.skills %}
+                        {% for skill in user.skills.split(',') %}
+                        <span class="badge badge-sm">{{ skill.strip() }}</span>
+                        {% endfor %}
+                        {% else %}
+                        <small class="text-secondary">No skills listed</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span
+                            class="status-indicator {% if user.is_active %}status-online{% else %}status-offline{% endif %}"></span>
+                        {{ 'Active' if user.is_active else 'Inactive' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    .highlight-antigravity {
+        background-color: rgba(66, 153, 225, 0.1) !important;
+        border-left: 4px solid var(--accent-primary);
+    }
+
+    .status-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 5px;
+    }
+
+    .status-online {
+        background-color: var(--success);
+    }
+
+    .status-offline {
+        background-color: var(--danger);
+    }
+
+    .badge-sm {
+        padding: 0.1rem 0.4rem;
+        font-size: 0.75rem;
+        border: 1px solid var(--border-color);
+        color: var(--text-secondary);
+    }
+</style>
+{% endblock %}

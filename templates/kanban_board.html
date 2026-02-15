@@ -3,66 +3,602 @@
 {% block title %}{{ project.name }} - Kanban Board{% endblock %}
 
 {% block content %}
-<div class="mb-4">
-    <a href="/ui/projects" class="btn">← Back to Projects</a>
-    <h2>{{ project.name }}</h2>
-    <p class="text-secondary">{{ project.description }}</p>
-    <span class="badge badge-{{ project.approval_status }}">{{ project.approval_status }}</span>
-</div>
+<link rel="stylesheet" href="/static/css/kanban_premium.css">
 
-<!-- Kanban Board -->
-<div class="kanban-board">
-    {% for stage in project.stages %}
-    <div class="kanban-column">
-        <div class="kanban-column-header">
-            {{ stage.name }}
-            <span class="badge">{{ stage.tasks|length }}</span>
-        </div>
-        
-        {% for task in stage.tasks %}
-        <div class="kanban-task">
-            <div class="mb-2">
-                <strong>{{ task.title }}</strong>
+<div class="header-section mb-4">
+    <div class="d-flex justify-content-between align-items-start">
+        <div>
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <h2 id="project-title" class="m-0">{{ project.name }}</h2>
+                <button class="btn-icon btn-sm" onclick="editProject()" title="Edit project">✏️</button>
             </div>
-            
-            <div class="mb-2">
-                <span class="badge badge-{{ task.status }}">{{ task.status }}</span>
-                {% if task.priority > 5 %}
-                <span class="badge badge-warning">High Priority</span>
+            <p class="text-secondary" id="project-desc">{{ project.description }}</p>
+            <div class="d-flex align-items-center gap-2 mt-2">
+                <span class="badge badge-success">{{ project.approval_status }}</span>
+                {% if project.creator.name == 'Antigravity' %}
+                <div class="antigravity-manager-badge" title="Antigravity is handling the heavy lifting">
+                    <span class="icon">🌌</span>
+                    <span class="text">Managed by Antigravity</span>
+                    <div class="pulse"></div>
+                </div>
                 {% endif %}
             </div>
-            
-            {% if task.description %}
-            <div class="mb-2 text-secondary">
-                <small>{{ task.description[:60] }}{% if task.description|length > 60 %}...{% endif %}</small>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-primary" onclick="openAutopilotModal()">
+                <span class="icon">🤖</span> Configure Autopilot
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Gradient badge specific to Antigravity */
+    .antigravity-manager-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        color: white;
+        padding: 0.4rem 1rem;
+        border-radius: 2rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        position: relative;
+        box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+    }
+
+    .antigravity-manager-badge .pulse {
+        position: absolute;
+        inset: 0;
+        border-radius: 2rem;
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0% {
+            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+        }
+
+        70% {
+            box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
+        }
+
+        100% {
+            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+        }
+    }
+</style>
+
+<div class="kanban-container {% if project.creator.name == 'Antigravity' %}heavy-lifting-mode{% endif %}">
+    {% for stage in project.stages %}
+    <div class="kanban-column" data-stage-id="{{ stage.id }}" data-stage-name="{{ stage.name }}">
+        <div class="kanban-column-header">
+            {{ stage.name }}
+            <span class="badge" id="count-stage-{{ stage.id }}">{{ stage.tasks|length }}</span>
+        </div>
+
+        <div class="kanban-drop-zone" data-stage-id="{{ stage.id }}">
+            {% for task in stage.tasks %}
+            <div class="kanban-task" draggable="true" data-task-id="{{ task.id }}" data-current-stage="{{ stage.id }}">
+                <div class="task-header">
+                    <strong class="task-title">{{ task.title }}</strong>
+                    <div class="task-actions">
+                        <button class="btn-icon-sm"
+                            onclick="event.stopPropagation();openEditModal(this.closest('.kanban-task'))"
+                            title="Edit">✏️</button>
+                        <button class="btn-icon-sm btn-danger-sm"
+                            onclick="event.stopPropagation();deleteTask({{ task.id }}, this.closest('.kanban-task'))"
+                            title="Delete">🗑️</button>
+                    </div>
+                </div>
+
+                <div class="task-meta">
+                    <span class="badge badge-{{ task.status }}" id="status-task-{{ task.id }}">{{
+                        task.status }}</span>
+                    {% if task.priority > 5 %}
+                    <span class="badge badge-warning">P{{ task.priority }}</span>
+                    {% elif task.priority > 0 %}
+                    <span class="badge">P{{ task.priority }}</span>
+                    {% endif %}
+                </div>
+
+                {% if task.description %}
+                <div class="mb-2 text-secondary">
+                    <small>{{ task.description[:80] }}{% if task.description|length > 80 %}...{% endif %}</small>
+                </div>
+                {% endif %}
+
+                {% if task.assignees %}
+                <div class="task-meta">
+                    {% for assignee in task.assignees %}
+                    <span class="badge badge-assignee badge-{{ assignee.entity_type }}"
+                        data-entity-id="{{ assignee.id }}">
+                        {% if assignee.entity_type == 'agent' %}🤖{% else %}👤{% endif %} {{ assignee.name }}
+                        <button class="btn-remove-assignee"
+                            onclick="event.stopPropagation();unassignEntity({{ task.id }}, {{ assignee.id }}, this.closest('.badge'))">&times;</button>
+                    </span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                <div class="task-footer">
+                    <button class="btn-link" onclick="event.stopPropagation();openAssignModal({{ task.id }})">+
+                        Assign</button>
+                </div>
             </div>
-            {% endif %}
-            
-            {% if task.assignees %}
-            <div class="mb-2">
-                <small><strong>Assigned to:</strong></small><br>
-                {% for assignee in task.assignees %}
-                <span class="badge badge-{{ assignee.entity_type }}">
-                    {{ assignee.name }}
-                </span>
-                {% endfor %}
-            </div>
-            {% endif %}
-            
-            {% if task.required_skills %}
-            <div>
-                <small><strong>Skills:</strong> {{ task.required_skills }}</small>
+            {% endfor %}
+
+            {% if not stage.tasks %}
+            <div class="kanban-empty-placeholder text-center text-secondary" style="padding: 2rem;">
+                <small>Drop tasks here</small>
             </div>
             {% endif %}
         </div>
-        {% endfor %}
-        
-        {% if not stage.tasks %}
-        <div class="text-center text-secondary" style="padding: 2rem;">
-            <small>No tasks in this stage</small>
-        </div>
-        {% endif %}
+
+        <button class="btn-add-task" onclick="openAddTaskModal({{ stage.id }}, '{{ stage.name }}')">
+            <span>+</span> Add Task
+        </button>
     </div>
     {% endfor %}
 </div>
+
+<!-- Toast notification -->
+<div id="toast" class="toast" style="display:none;"></div>
+
+<!-- Task Edit/Create Modal -->
+<div id="task-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('task-modal')">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3 id="task-modal-title">Edit Task</h3>
+            <button class="btn-icon" onclick="closeModal('task-modal')">&times;</button>
+        </div>
+
+        <div class="tab-content">
+            <form id="task-form" onsubmit="return false;">
+                <input type="hidden" id="task-form-id">
+                <input type="hidden" id="task-form-stage-id">
+                <input type="hidden" id="task-form-mode" value="edit">
+
+                <div class="form-group">
+                    <label for="task-form-title">Title</label>
+                    <input type="text" id="task-form-title" class="form-input" required placeholder="Task title">
+                </div>
+
+                <div class="form-group">
+                    <label for="task-form-desc">Description</label>
+                    <textarea id="task-form-desc" class="form-input" rows="3"
+                        placeholder="What needs to be done?"></textarea>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="task-form-priority">Priority (0-10)</label>
+                        <input type="number" id="task-form-priority" class="form-input" min="0" max="10" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="task-form-status">Status</label>
+                        <select id="task-form-status" class="form-input">
+                            <option value="pending">Pending</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="in_review">In Review</option>
+                            <option value="completed">Completed</option>
+                            <option value="blocked">Blocked</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="task-form-skills">Required Skills</label>
+                    <input type="text" id="task-form-skills" class="form-input" placeholder="python,react,testing">
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn" onclick="closeModal('task-modal')">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="submitTaskForm()">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Assign Modal -->
+<div id="assign-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('assign-modal')">
+    <div class="modal-card modal-small">
+        <div class="modal-header">
+            <h3>Assign to Task</h3>
+            <button class="btn-icon" onclick="closeModal('assign-modal')">&times;</button>
+        </div>
+        <input type="hidden" id="assign-task-id">
+        <div id="assign-entity-list" class="entity-list">
+            <p class="text-secondary">Loading...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Project Edit and Autopilot Modals omitted for brevity - logic remains same but using new CSS classes -->
+<!-- Project Edit Modal -->
+<div id="project-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('project-modal')">
+    <div class="modal-card modal-small">
+        <div class="modal-header">
+            <h3>Edit Project</h3>
+            <button class="btn-icon" onclick="closeModal('project-modal')">&times;</button>
+        </div>
+        <div class="form-group">
+            <label>Project Name</label>
+            <input type="text" id="project-form-name" class="form-input" value="{{ project.name }}">
+        </div>
+        <div class="form-group">
+            <label>Description</label>
+            <textarea id="project-form-desc" class="form-input" rows="3">{{ project.description }}</textarea>
+        </div>
+        <div class="form-actions">
+            <button class="btn" onclick="closeModal('project-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="submitProjectEdit()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Autopilot Config Modal -->
+<div id="autopilot-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('autopilot-modal')">
+    <div class="modal-card modal-small">
+        <div class="modal-header">
+            <h3>Autopilot Settings</h3>
+            <button class="btn-icon" onclick="closeModal('autopilot-modal')">&times;</button>
+        </div>
+        <div class="form-group">
+            <label>Project Manager (Autotune)</label>
+            <p class="text-secondary"><small>Select an agent to take control of task assignment and management.</small>
+            </p>
+            <select id="autopilot-manager-select" class="form-input">
+                <option value="">Loading...</option>
+            </select>
+        </div>
+        <div class="form-actions">
+            <button class="btn" onclick="closeModal('autopilot-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveAutopilotConfig()">Save</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+        var PROJECT_ID = {{ project.id }};
+
+    var STAGE_STATUS_MAP = {
+        'Backlog': 'pending',
+        'To Do': 'pending',
+        'In Progress': 'in_progress',
+        'Review': 'in_review',
+        'Done': 'completed'
+    };
+
+    var draggedTask = null;
+
+    // Utilities
+    function showToast(message, type) {
+        var toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.className = 'toast toast-' + (type || 'info');
+        toast.style.display = 'block';
+        setTimeout(function () { toast.style.display = 'none'; }, 3000);
+    }
+
+    function updateColumnCount(stageId, delta) {
+        var badge = document.getElementById('count-stage-' + stageId);
+        if (badge) badge.textContent = parseInt(badge.textContent) + delta;
+    }
+
+    function clearPlaceholder(dropZone) {
+        var ph = dropZone.querySelector('.kanban-empty-placeholder');
+        if (ph) ph.remove();
+    }
+
+    function addPlaceholderIfEmpty(dropZone) {
+        if (dropZone.querySelectorAll('.kanban-task').length === 0) {
+            var div = document.createElement('div');
+            div.className = 'kanban-empty-placeholder text-center text-secondary';
+            div.style.padding = '2rem';
+            div.innerHTML = '<small>Drop tasks here</small>';
+            dropZone.appendChild(div);
+        }
+    }
+
+    window.closeModal = function (id) {
+        document.getElementById(id).style.display = 'none';
+    };
+
+    // Drag and Drop
+    function initDragDrop() {
+        document.querySelectorAll('.kanban-task').forEach(bindDragEvents);
+        document.querySelectorAll('.kanban-drop-zone').forEach(bindDropZone);
+    }
+
+    function bindDragEvents(task) {
+        task.addEventListener('dragstart', function (e) {
+            draggedTask = this;
+            this.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', this.dataset.taskId);
+            setTimeout(function () {
+                if (draggedTask) draggedTask.style.opacity = '0.4';
+            }, 0);
+        });
+
+        task.addEventListener('dragend', function () {
+            this.classList.remove('dragging');
+            this.style.opacity = '';
+            document.querySelectorAll('.kanban-drop-zone').forEach(function (zone) {
+                zone.classList.remove('drag-over');
+            });
+            draggedTask = null;
+        });
+    }
+
+    function bindDropZone(zone) {
+        zone.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            this.classList.add('drag-over');
+        });
+
+        zone.addEventListener('dragleave', function (e) {
+            if (!this.contains(e.relatedTarget)) {
+                this.classList.remove('drag-over');
+            }
+        });
+
+        zone.addEventListener('drop', function (e) {
+            e.preventDefault();
+            this.classList.remove('drag-over');
+            if (!draggedTask) return;
+
+            var taskId = draggedTask.dataset.taskId;
+            var oldStageId = draggedTask.dataset.currentStage;
+            var newStageId = this.dataset.stageId;
+
+            if (oldStageId === newStageId) return;
+
+            var column = this.closest('.kanban-column');
+            var stageName = column.dataset.stageName;
+            // Basic status mapping; fallback to pending if stage name unknown
+            var newStatus = STAGE_STATUS_MAP[stageName] || 'pending';
+
+            var oldZone = draggedTask.parentElement;
+            clearPlaceholder(this);
+            this.appendChild(draggedTask);
+            draggedTask.dataset.currentStage = newStageId;
+            draggedTask.style.opacity = '';
+
+            // Update visual badge
+            var statusBadge = draggedTask.querySelector('[id^="status-task-"]');
+            if (statusBadge) {
+                statusBadge.textContent = newStatus;
+                statusBadge.className = 'badge badge-' + newStatus;
+            }
+
+            addPlaceholderIfEmpty(oldZone);
+            updateColumnCount(oldStageId, -1);
+            updateColumnCount(newStageId, 1);
+
+            var movedTask = draggedTask;
+
+            // BACKEND API CALL
+            fetch('/ui/tasks/' + taskId + '/move', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stage_id: parseInt(newStageId), status: newStatus })
+            })
+                .then(function (response) {
+                    if (!response.ok) throw new Error('Failed to update task');
+                    showToast('Task moved to ' + stageName, 'success');
+                })
+                .catch(function (err) {
+                    // Revert UI on error
+                    clearPlaceholder(oldZone);
+                    oldZone.appendChild(movedTask);
+                    movedTask.dataset.currentStage = oldStageId;
+                    addPlaceholderIfEmpty(this);
+                    updateColumnCount(oldStageId, 1);
+                    updateColumnCount(newStageId, -1);
+                    showToast('Failed to move task: ' + err.message, 'error');
+                });
+        });
+    }
+
+    // Task CRUD
+    window.openAddTaskModal = function (stageId, stageName) {
+        document.getElementById('task-modal-title').textContent = 'Add Task to ' + stageName;
+        document.getElementById('task-form-mode').value = 'create';
+        document.getElementById('task-form-id').value = '';
+        document.getElementById('task-form-stage-id').value = stageId;
+        document.getElementById('task-form-title').value = '';
+        document.getElementById('task-form-desc').value = '';
+        document.getElementById('task-form-priority').value = '0';
+        document.getElementById('task-form-status').value = 'pending';
+        document.getElementById('task-form-skills').value = '';
+        document.getElementById('task-modal').style.display = 'flex';
+        document.getElementById('task-form-title').focus();
+    };
+
+    window.openEditModal = function (taskEl) {
+        var taskId = taskEl.dataset.taskId;
+        document.getElementById('task-modal-title').textContent = 'Edit Task #' + taskId;
+        document.getElementById('task-form-mode').value = 'edit';
+        document.getElementById('task-form-id').value = taskId;
+        document.getElementById('task-form-stage-id').value = taskEl.dataset.currentStage;
+
+        var title = taskEl.querySelector('.task-title');
+        document.getElementById('task-form-title').value = title ? title.textContent.trim() : '';
+
+        var desc = taskEl.querySelector('.text-secondary small');
+        document.getElementById('task-form-desc').value = desc ? desc.textContent.trim().replace(/\.\.\.$/, '') : '';
+
+        var statusBadge = taskEl.querySelector('[id^="status-task-"]');
+        document.getElementById('task-form-status').value = statusBadge ? statusBadge.textContent.trim() : 'pending';
+
+        document.getElementById('task-form-priority').value = '0'; // Default, logic to parse explicit value would be complex without data attr
+        document.getElementById('task-form-skills').value = '';
+
+        document.getElementById('task-modal').style.display = 'flex';
+    };
+
+    window.submitTaskForm = function () {
+        var mode = document.getElementById('task-form-mode').value;
+        var title = document.getElementById('task-form-title').value.trim();
+        if (!title) { showToast('Title is required', 'error'); return; }
+
+        var data = {
+            title: title,
+            description: document.getElementById('task-form-desc').value.trim(),
+            priority: parseInt(document.getElementById('task-form-priority').value) || 0,
+            status: document.getElementById('task-form-status').value,
+            required_skills: document.getElementById('task-form-skills').value.trim()
+        };
+
+        if (mode === 'create') {
+            data.project_id = PROJECT_ID;
+            data.stage_id = parseInt(document.getElementById('task-form-stage-id').value);
+
+            fetch('/ui/tasks/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+                .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
+                .then(() => { showToast('Task created!', 'success'); closeModal('task-modal'); location.reload(); })
+                .catch(err => showToast('Error: ' + err.message, 'error'));
+        } else {
+            var taskId = document.getElementById('task-form-id').value;
+            fetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+                .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
+                .then(() => { showToast('Task updated!', 'success'); closeModal('task-modal'); location.reload(); })
+                .catch(err => showToast('Error: ' + err.message, 'error'));
+        }
+    };
+
+    window.deleteTask = function (taskId, taskEl) {
+        if (!confirm('Delete this task?')) return;
+        var stageId = taskEl.dataset.currentStage;
+        fetch('/ui/tasks/' + taskId, { method: 'DELETE' })
+            .then(r => { if (!r.ok) throw new Error('Failed'); })
+            .then(() => {
+                var dropZone = taskEl.parentElement;
+                taskEl.remove();
+                addPlaceholderIfEmpty(dropZone);
+                updateColumnCount(stageId, -1);
+                showToast('Task deleted', 'success');
+            })
+            .catch(err => showToast('Error: ' + err.message, 'error'));
+    };
+
+    // Assignment
+    window.openAssignModal = function (taskId) {
+        document.getElementById('assign-task-id').value = taskId;
+        document.getElementById('assign-entity-list').innerHTML = '<p class="text-secondary">Loading...</p>';
+        document.getElementById('assign-modal').style.display = 'flex';
+
+        fetch('/ui/api/entities')
+            .then(r => r.json())
+            .then(entities => {
+                var html = '';
+                entities.forEach(function (e) {
+                    var icon = e.entity_type === 'agent' ? '🤖' : '👤';
+                    html += '<div class="entity-item">'
+                        + '<span>' + icon + ' <strong>' + e.name + '</strong>'
+                        + (e.skills ? ' <small class="text-secondary">(' + e.skills + ')</small>' : '')
+                        + '</span>'
+                        + '<button class="btn btn-sm btn-primary" onclick="assignEntity(' + taskId + ',' + e.id + ',this)">Assign</button>'
+                        + '</div>';
+                });
+                if (!html) html = '<p class="text-secondary">No entities registered yet.</p>';
+                document.getElementById('assign-entity-list').innerHTML = html;
+            })
+            .catch(err => {
+                document.getElementById('assign-entity-list').innerHTML = '<p class="text-danger">Failed to load entities.</p>';
+            });
+    };
+
+    window.assignEntity = function (taskId, entityId, btn) {
+        btn.disabled = true;
+        btn.textContent = '...';
+        // Use correct endpoint /ui/tasks/.../assign
+        fetch('/ui/tasks/' + taskId + '/assign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entity_id: entityId, action: 'assign' })
+        })
+            .then(r => { if (!r.ok) throw new Error('Failed'); })
+            .then(() => {
+                showToast('Assigned!', 'success');
+                closeModal('assign-modal');
+                location.reload();
+            })
+            .catch(err => { showToast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Assign'; });
+    };
+
+    window.unassignEntity = function (taskId, entityId, badge) {
+        fetch('/ui/tasks/' + taskId + '/assign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entity_id: entityId, action: 'unassign' })
+        })
+            .then(r => { if (!r.ok) throw new Error('Failed'); })
+            .then(() => {
+                badge.remove();
+                showToast('Unassigned', 'success');
+            })
+            .catch(err => showToast('Error: ' + err.message, 'error'));
+    };
+
+    // Project
+    window.editProject = function () {
+        document.getElementById('project-modal').style.display = 'flex';
+    };
+
+    window.submitProjectEdit = function () {
+        // Implementation preserved
+        var name = document.getElementById('project-form-name').value.trim();
+        var desc = document.getElementById('project-form-desc').value.trim();
+        if (!name) return;
+        fetch('/ui/projects/' + PROJECT_ID + '/edit', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, description: desc })
+        }).then(r => { if (!r.ok) throw new Error('Failed'); location.reload(); });
+    };
+
+    // Autopilot
+    window.openAutopilotModal = function () {
+        document.getElementById('autopilot-modal').style.display = 'flex';
+        // Load agents
+        fetch('/ui/api/entities').then(r => r.json()).then(ents => {
+            var sel = document.getElementById('autopilot-manager-select');
+            sel.innerHTML = '<option value="">Select an agent...</option>';
+            ents.filter(e => e.entity_type === 'agent').forEach(e => {
+                sel.innerHTML += '<option value="' + e.id + '">' + e.name + '</option>';
+            });
+        });
+    };
+
+    window.saveAutopilotConfig = function () {
+        var agentId = document.getElementById('autopilot-manager-select').value;
+        // Placeholder for actual save logic if implemented in backend
+        // For now we just toggle the global flag via UI
+        fetch('/ui/api/settings/auto-pilot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: true, manager_id: agentId })
+        }).then(r => r.json()).then(d => {
+            showToast('Autopilot configured!', 'success');
+            closeModal('autopilot-modal');
+        });
+    };
+
+    // Initialize
+    initDragDrop();
+</script>
 {% endblock %}

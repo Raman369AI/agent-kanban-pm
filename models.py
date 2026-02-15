@@ -28,9 +28,9 @@ class TaskStatus(str, enum.Enum):
 
 
 class ApprovalStatus(str, enum.Enum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class Entity(Base):
@@ -106,6 +106,20 @@ class Task(Base):
     assignees = relationship("Entity", secondary=task_assignments, back_populates="assigned_tasks")
     subtasks = relationship("Task", backref="parent_task", remote_side=[id])
     comments = relationship("Comment", back_populates="task", cascade="all, delete-orphan")
+    logs = relationship("TaskLog", back_populates="task", cascade="all, delete-orphan")
+
+
+class TaskLog(Base):
+    __tablename__ = "task_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey('tasks.id', ondelete='CASCADE'))
+    message = Column(Text, nullable=False)
+    log_type = Column(String(50), default="info")  # info, error, thought, action
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    task = relationship("Task", back_populates="logs")
 
 
 class Comment(Base):

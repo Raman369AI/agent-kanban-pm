@@ -1,70 +1,152 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Agent Kanban PM{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="/static/js/theme.js"></script>
     {% block extra_css %}{% endblock %}
 </head>
-<body>
-    <!-- Theme and Layout Controls -->
-    <div class="preferences-bar">
-        <div class="container">
-            <div class="preferences-controls">
-                <div class="theme-switcher">
-                    <button id="theme-toggle" class="btn-icon" title="Toggle theme">
-                        <span class="icon">🌙</span>
-                    </button>
-                    <span class="label">Theme</span>
-                </div>
-                <div class="view-switcher">
-                    <button id="view-toggle" class="btn-icon" title="Toggle view">
-                        <span class="icon">📊</span>
-                    </button>
-                    <span class="label">View</span>
-                </div>
-                <div class="density-switcher">
-                    <select id="density-select" class="select-small">
-                        <option value="comfortable">Comfortable</option>
-                        <option value="compact">Compact</option>
-                        <option value="spacious">Spacious</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-    </div>
 
-    <!-- Navigation -->
-    <nav class="navbar">
-        <div class="container">
+<!-- Layout Wrapper -->
+<div class="layout-wrapper">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
             <div class="nav-brand">
-                <h1>🤖 Agent Kanban PM</h1>
+                <h1>🤖 Agent PM</h1>
             </div>
-            <ul class="nav-menu">
-                <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Dashboard</a></li>
-                <li><a href="/ui/projects" class="{% if '/projects' in request.url.path %}active{% endif %}">Projects</a></li>
-                <li><a href="/docs" target="_blank">API Docs</a></li>
+        </div>
+
+        <nav class="sidebar-nav">
+            <ul>
+                <li>
+                    <a href="/" class="nav-link {% if request.url.path == '/' %}active{% endif %}">
+                        <span class="nav-icon">🏠</span>
+                        <span class="nav-text">Dashboard</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/ui/projects" class="nav-link {% if '/projects' in request.url.path %}active{% endif %}">
+                        <span class="nav-icon">📂</span>
+                        <span class="nav-text">Projects</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/ui/users" class="nav-link {% if '/users' in request.url.path %}active{% endif %}">
+                        <span class="nav-icon">👥</span>
+                        <span class="nav-text">Team</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/ui/register" class="nav-link {% if '/register' in request.url.path %}active{% endif %}">
+                        <span class="nav-icon">📝</span>
+                        <span class="nav-text">Register</span>
+                    </a>
+                </li>
             </ul>
-        </div>
-    </nav>
 
-    <!-- Main Content -->
-    <main class="main-content">
-        <div class="container">
-            {% block content %}{% endblock %}
-        </div>
-    </main>
+            <div class="nav-separator"></div>
 
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="container">
-            <p>&copy; 2025 Agent Kanban PM - Platform Agnostic Project Management</p>
-        </div>
-    </footer>
+            <ul>
+                <li>
+                    <a href="/docs" target="_blank" class="nav-link">
+                        <span class="nav-icon">📚</span>
+                        <span class="nav-text">API Docs</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
 
-    <script src="/static/js/main.js"></script>
-    {% block extra_js %}{% endblock %}
+        <div class="sidebar-footer">
+            <div class="auto-pilot-toggle">
+                <label class="toggle-label" for="auto-pilot-switch">
+                    <span class="nav-icon">🚀</span>
+                    <span class="nav-text">Auto-Pilot</span>
+                    <input type="checkbox" id="auto-pilot-switch" class="toggle-input"
+                        onchange="toggleAutoPilot(this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="content-area">
+        <!-- Header Bar -->
+        <header class="header-bar">
+            <div class="container-fluid">
+                <div class="header-content">
+                    <div class="page-context">
+                        {% block page_title %}{% endblock %}
+                    </div>
+                    <div class="header-actions">
+                        <div class="preferences-controls">
+                            <div class="theme-switcher">
+                                <button id="theme-toggle" class="btn-icon" title="Toggle theme">
+                                    <span class="icon">🌙</span>
+                                </button>
+                            </div>
+                            <div class="view-switcher">
+                                <button id="view-toggle" class="btn-icon" title="Toggle view">
+                                    <span class="icon">📊</span>
+                                </button>
+                            </div>
+                            <div class="density-switcher">
+                                <select id="density-select" class="select-small">
+                                    <option value="comfortable">Comfortable</option>
+                                    <option value="compact">Compact</option>
+                                    <option value="spacious">Spacious</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <div class="container-fluid">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+
+        <footer class="footer">
+            <div class="container-fluid">
+                <p>&copy; 2025 Agent PM</p>
+            </div>
+        </footer>
+    </div>
+</div>
+
+<script src="/static/js/main.js"></script>
+<script>
+    function toggleAutoPilot(enabled) {
+        fetch('/ui/api/settings/auto-pilot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            var label = document.querySelector('.auto-pilot-toggle .label');
+            if (label) label.textContent = data.auto_pilot ? 'Auto-Pilot ON' : 'Auto-Pilot';
+        });
+    }
+    // Load auto-pilot state on page load
+    fetch('/ui/api/settings').then(function (r) { return r.json(); }).then(function (data) {
+        var sw = document.getElementById('auto-pilot-switch');
+        if (sw) sw.checked = data.auto_pilot;
+        var label = document.querySelector('.auto-pilot-toggle .label');
+        if (label && data.auto_pilot) label.textContent = 'Auto-Pilot ON';
+    }).catch(function () { });
+</script>
+{% block extra_js %}{% endblock %}
 </body>
+
 </html>

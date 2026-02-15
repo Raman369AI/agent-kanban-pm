@@ -12,6 +12,7 @@ A platform-agnostic project management application with Kanban board functionali
 - 🔄 **Real-Time Updates**: WebSocket support for live collaboration
 - 🌐 **Platform Agnostic**: RESTful API accessible from any client
 - 📝 **Comments & Collaboration**: Built-in commenting system
+- 🔌 **MCP Integration**: Model Context Protocol support for AI assistants (Claude, ChatGPT, etc.)
 
 ## Architecture
 
@@ -67,6 +68,30 @@ python main.py
 ```
 
 The API will be available at `http://localhost:8000`
+
+## MCP Server (Optional)
+
+For AI agents to connect using the Model Context Protocol (MCP), you can run a separate MCP server:
+
+1. Create a separate virtual environment:
+```bash
+python -m venv venv-mcp
+source venv-mcp/bin/activate
+```
+
+2. Install MCP dependencies:
+```bash
+pip install -r requirements-mcp.txt
+```
+
+3. Run the MCP server:
+```bash
+python mcp_server.py
+```
+
+4. Configure your AI assistant (e.g., Claude Desktop) to connect to the MCP server.
+
+For detailed MCP setup instructions, see [MCP_SETUP.md](./MCP_SETUP.md).
 
 ## API Documentation
 
