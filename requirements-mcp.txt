@@ -1,0 +1,5 @@
+# MCP Server Requirements
+# Install in a separate virtual environment to avoid conflicts with FastAPI
+
+mcp>=1.0.0
+anyio>=4.5.0
