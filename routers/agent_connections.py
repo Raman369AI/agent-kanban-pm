@@ -1,170 +1,212 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.responses import StreamingResponse
+"""
+Agent Connection Management
+Endpoints for managing how agents connect to the system (WebSocket, Webhook, MCP, A2A).
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List
-import json
-import asyncio
+from typing import List, Optional
 from datetime import datetime
+import json
 
 from database import get_db
-from models import AgentConnection, Entity, ProtocolType, ConnectionStatus, PendingEvent
+from models import Entity, EntityType, AgentConnection, ProtocolType, ConnectionStatus
 from schemas import AgentConnectionCreate, AgentConnectionResponse
-from auth import get_current_agent
-from event_bus import event_bus, EventType
 
-router = APIRouter(prefix="/agents", tags=["Agent Connections"])
+router = APIRouter(prefix="/agent-connections", tags=["agent-connections"])
 
 
-@router.post("/connect", response_model=AgentConnectionResponse)
-async def register_connection(
-    connection_in: AgentConnectionCreate,
-    db: AsyncSession = Depends(get_db),
-    current_agent: Entity = Depends(get_current_agent)
+@router.get("", response_model=List[AgentConnectionResponse])
+async def list_connections(
+    entity_id: Optional[int] = None,
+    protocol: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
 ):
-    """Register or update an agent's connection preferences"""
-    connection = AgentConnection(
-        entity_id=current_agent.id,
-        protocol=connection_in.protocol,
-        config=json.dumps(connection_in.config),
-        subscribed_events=json.dumps(connection_in.subscribed_events),
-        subscribed_projects=json.dumps(connection_in.subscribed_projects) if connection_in.subscribed_projects else None,
-        status=ConnectionStatus.ONLINE if connection_in.protocol == "websocket" else ConnectionStatus.OFFLINE,
-        last_seen=datetime.utcnow()
-    )
-
-    db.add(connection)
-    await db.commit()
-    await db.refresh(connection)
-
-    return {
-        "id": connection.id,
-        "entity_id": connection.entity_id,
-        "protocol": connection.protocol,
-        "config": connection_in.config,
-        "subscribed_events": connection_in.subscribed_events,
-        "subscribed_projects": connection_in.subscribed_projects,
-        "status": connection.status,
-        "last_seen": connection.last_seen
-    }
-
-
-@router.get("/connections", response_model=List[AgentConnectionResponse])
-async def get_connections(
-    db: AsyncSession = Depends(get_db),
-    current_agent: Entity = Depends(get_current_agent)
-):
-    """List all connection preferences for the current agent"""
-    result = await db.execute(
-        select(AgentConnection).filter(AgentConnection.entity_id == current_agent.id)
-    )
+    """List all agent connections"""
+    query = select(AgentConnection)
+    
+    if entity_id:
+        query = query.filter(AgentConnection.entity_id == entity_id)
+    if protocol:
+        query = query.filter(AgentConnection.protocol == protocol)
+    
+    result = await db.execute(query)
     connections = result.scalars().all()
+    
+    return [
+        AgentConnectionResponse(
+            id=c.id,
+            entity_id=c.entity_id,
+            protocol=c.protocol.value if hasattr(c.protocol, 'value') else c.protocol,
+            config=json.loads(c.config or "{}"),
+            subscribed_events=json.loads(c.subscribed_events or "[]"),
+            subscribed_projects=json.loads(c.subscribed_projects or "null"),
+            status=c.status.value if hasattr(c.status, 'value') else c.status,
+            last_seen=c.last_seen
+        )
+        for c in connections
+    ]
 
-    out = []
-    for conn in connections:
-        out.append({
-            "id": conn.id,
-            "entity_id": conn.entity_id,
-            "protocol": conn.protocol,
-            "config": json.loads(conn.config) if conn.config else {},
-            "subscribed_events": json.loads(conn.subscribed_events) if conn.subscribed_events else [],
-            "subscribed_projects": json.loads(conn.subscribed_projects) if conn.subscribed_projects else None,
-            "status": conn.status,
-            "last_seen": conn.last_seen
-        })
-    return out
 
-
-@router.patch("/connections/{connection_id}", response_model=AgentConnectionResponse)
-async def update_connection(
-    connection_id: int,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    current_agent: Entity = Depends(get_current_agent)
+@router.post("", response_model=AgentConnectionResponse, status_code=status.HTTP_201_CREATED)
+async def create_connection(
+    connection: AgentConnectionCreate,
+    entity_id: int,  # In production, get from auth
+    db: AsyncSession = Depends(get_db)
 ):
-    """Update an agent connection's subscriptions or config"""
+    """Create a new agent connection"""
+    # Verify entity exists and is an agent
     result = await db.execute(
-        select(AgentConnection).filter(
-            AgentConnection.id == connection_id,
-            AgentConnection.entity_id == current_agent.id
+        select(Entity).filter(
+            Entity.id == entity_id,
+            Entity.entity_type == EntityType.AGENT
         )
     )
-    conn = result.scalar_one_or_none()
-    if not conn:
-        raise HTTPException(status_code=404, detail="Connection not found")
-
-    body = await request.json()
-
-    if "subscribed_events" in body:
-        conn.subscribed_events = json.dumps(body["subscribed_events"])
-    if "subscribed_projects" in body:
-        conn.subscribed_projects = json.dumps(body["subscribed_projects"]) if body["subscribed_projects"] else None
-    if "config" in body:
-        conn.config = json.dumps(body["config"])
-
-    conn.last_seen = datetime.utcnow()
-    await db.commit()
-    await db.refresh(conn)
-
-    return {
-        "id": conn.id,
-        "entity_id": conn.entity_id,
-        "protocol": conn.protocol,
-        "config": json.loads(conn.config) if conn.config else {},
-        "subscribed_events": json.loads(conn.subscribed_events) if conn.subscribed_events else [],
-        "subscribed_projects": json.loads(conn.subscribed_projects) if conn.subscribed_projects else None,
-        "status": conn.status,
-        "last_seen": conn.last_seen
+    entity = result.scalar_one_or_none()
+    
+    if not entity:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Map protocol string to enum
+    protocol_map = {
+        "websocket": ProtocolType.WEBSOCKET,
+        "webhook": ProtocolType.WEBHOOK,
+        "mcp": ProtocolType.MCP,
+        "a2a": ProtocolType.A2A
     }
-
-
-@router.delete("/disconnect")
-async def disconnect_agent(
-    db: AsyncSession = Depends(get_db),
-    current_agent: Entity = Depends(get_current_agent)
-):
-    """Revoke all connection preferences for the agent"""
-    result = await db.execute(
-        select(AgentConnection).filter(AgentConnection.entity_id == current_agent.id)
+    
+    protocol_enum = protocol_map.get(connection.protocol.lower())
+    if not protocol_enum:
+        raise HTTPException(status_code=400, detail=f"Invalid protocol: {connection.protocol}")
+    
+    # Create connection
+    db_connection = AgentConnection(
+        entity_id=entity_id,
+        protocol=protocol_enum,
+        config=json.dumps(connection.config),
+        subscribed_events=json.dumps(connection.subscribed_events),
+        subscribed_projects=json.dumps(connection.subscribed_projects) if connection.subscribed_projects else None,
+        status=ConnectionStatus.ONLINE,
+        last_seen=datetime.utcnow()
     )
-    connections = result.scalars().all()
-    for conn in connections:
-        await db.delete(conn)
+    
+    db.add(db_connection)
     await db.commit()
-    return {"message": "All agent connections revoked"}
+    await db.refresh(db_connection)
+    
+    return AgentConnectionResponse(
+        id=db_connection.id,
+        entity_id=db_connection.entity_id,
+        protocol=db_connection.protocol.value,
+        config=connection.config,
+        subscribed_events=connection.subscribed_events,
+        subscribed_projects=connection.subscribed_projects,
+        status=db_connection.status.value,
+        last_seen=db_connection.last_seen
+    )
 
 
-@router.get("/events")
-async def agent_event_stream(
-    db: AsyncSession = Depends(get_db),
-    current_agent: Entity = Depends(get_current_agent)
+@router.get("/{connection_id}", response_model=AgentConnectionResponse)
+async def get_connection(
+    connection_id: int,
+    db: AsyncSession = Depends(get_db)
 ):
-    """Returns pending events for the agent from the database queue."""
-
-    # Update connection status
+    """Get a specific agent connection"""
     result = await db.execute(
-        select(AgentConnection).filter(AgentConnection.entity_id == current_agent.id)
+        select(AgentConnection).filter(AgentConnection.id == connection_id)
     )
-    connections = result.scalars().all()
-    for conn in connections:
-        conn.status = ConnectionStatus.ONLINE
-        conn.last_seen = datetime.utcnow()
-
-    # Read pending events from DB
-    evt_result = await db.execute(
-        select(PendingEvent)
-        .filter(PendingEvent.agent_id == current_agent.id)
-        .order_by(PendingEvent.created_at.asc())
+    c = result.scalar_one_or_none()
+    
+    if not c:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    
+    return AgentConnectionResponse(
+        id=c.id,
+        entity_id=c.entity_id,
+        protocol=c.protocol.value if hasattr(c.protocol, 'value') else c.protocol,
+        config=json.loads(c.config or "{}"),
+        subscribed_events=json.loads(c.subscribed_events or "[]"),
+        subscribed_projects=json.loads(c.subscribed_projects or "null"),
+        status=c.status.value if hasattr(c.status, 'value') else c.status,
+        last_seen=c.last_seen
     )
-    pending = evt_result.scalars().all()
 
-    events = []
-    for pe in pending:
-        try:
-            events.append(json.loads(pe.payload))
-        except Exception:
-            pass
-        await db.delete(pe)
 
+@router.patch("/{connection_id}", response_model=AgentConnectionResponse)
+async def update_connection(
+    connection_id: int,
+    subscribed_events: Optional[List[str]] = None,
+    subscribed_projects: Optional[List[int]] = None,
+    config: Optional[dict] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update an agent connection"""
+    result = await db.execute(
+        select(AgentConnection).filter(AgentConnection.id == connection_id)
+    )
+    connection = result.scalar_one_or_none()
+    
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    
+    if subscribed_events is not None:
+        connection.subscribed_events = json.dumps(subscribed_events)
+    if subscribed_projects is not None:
+        connection.subscribed_projects = json.dumps(subscribed_projects)
+    if config is not None:
+        connection.config = json.dumps(config)
+    
+    connection.last_seen = datetime.utcnow()
     await db.commit()
-    return {"agent_id": current_agent.id, "events": events}
+    await db.refresh(connection)
+    
+    return AgentConnectionResponse(
+        id=connection.id,
+        entity_id=connection.entity_id,
+        protocol=connection.protocol.value if hasattr(connection.protocol, 'value') else connection.protocol,
+        config=json.loads(connection.config or "{}"),
+        subscribed_events=json.loads(connection.subscribed_events or "[]"),
+        subscribed_projects=json.loads(connection.subscribed_projects or "null"),
+        status=connection.status.value if hasattr(connection.status, 'value') else connection.status,
+        last_seen=connection.last_seen
+    )
+
+
+@router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_connection(
+    connection_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete an agent connection"""
+    result = await db.execute(
+        select(AgentConnection).filter(AgentConnection.id == connection_id)
+    )
+    connection = result.scalar_one_or_none()
+    
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    
+    await db.delete(connection)
+    await db.commit()
+
+
+@router.post("/{connection_id}/heartbeat")
+async def connection_heartbeat(
+    connection_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update the last_seen timestamp for a connection"""
+    result = await db.execute(
+        select(AgentConnection).filter(AgentConnection.id == connection_id)
+    )
+    connection = result.scalar_one_or_none()
+    
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    
+    connection.last_seen = datetime.utcnow()
+    connection.status = ConnectionStatus.ONLINE
+    await db.commit()
+    
+    return {"ok": True, "last_seen": connection.last_seen.isoformat()}

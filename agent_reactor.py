@@ -1,273 +1,131 @@
 """
-Agent Workers - Background polling workers that act as real agents.
-
-Each registered agent gets a background async loop that:
-1. Polls GET /agents/events via HTTP (same path external agents use)
-2. Processes events and takes actions via HTTP API calls
-3. Runs independently — can be stopped/started per agent
-
-This is NOT the server faking comments. These are real HTTP-client workers
-that go through the same API as Gemini CLI or any external agent.
+Agent Reactor - Makes agents react to events automatically.
+This enables autonomous agent behavior in response to system events.
 """
 
 import asyncio
-import logging
 import json
+from typing import Optional
 from datetime import datetime
-from typing import Dict, Any, Optional
 
-import httpx
-from sqlalchemy import select
-
+from event_bus import event_bus, EventType
 from database import async_session_maker
-from models import Entity, EntityType
-
-logger = logging.getLogger("agent_workers")
-
-BASE_URL = "http://127.0.0.1:8000"
-
-# Track running workers so we can stop them
-_running_workers: Dict[int, asyncio.Task] = {}
+from models import Entity, Task, AgentConnection, ProtocolType, TaskStatus, TaskLog
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 
-class AgentWorker:
-    """A real background agent that polls events via HTTP and takes actions via API."""
-
-    def __init__(self, agent_id: int, agent_name: str, api_key: str):
-        self.agent_id = agent_id
-        self.name = agent_name
-        self.api_key = api_key
-        self.headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
-        self._running = False
-
-    def log(self, msg: str):
-        logger.info(f"[{self.name}] {msg}")
-        print(f"[AGENT:{self.name}] {msg}")
-
-    async def poll_events(self) -> list:
-        """Poll for pending events via HTTP — same as any external agent."""
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{BASE_URL}/agents/events",
-                    headers=self.headers,
-                    timeout=5.0
-                )
-                if resp.status_code == 200:
-                    return resp.json().get("events", [])
-                else:
-                    self.log(f"Poll failed: {resp.status_code}")
-        except Exception as e:
-            self.log(f"Poll error: {e}")
-        return []
-
-    async def add_comment(self, task_id: int, content: str) -> bool:
-        """Post a comment via HTTP API."""
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{BASE_URL}/comments",
-                    headers=self.headers,
-                    json={"task_id": task_id, "content": content},
-                    timeout=5.0
-                )
-                return resp.status_code == 201
-        except Exception as e:
-            self.log(f"Comment error: {e}")
-            return False
-
-    async def self_assign(self, task_id: int) -> bool:
-        """Self-assign to a task via HTTP API."""
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{BASE_URL}/tasks/{task_id}/self-assign",
-                    headers=self.headers,
-                    json={"entity_id": self.agent_id},
-                    timeout=5.0
-                )
-                return resp.status_code == 200
-        except Exception as e:
-            self.log(f"Self-assign error: {e}")
-            return False
-
-    async def move_task(self, task_id: int, stage_id: int, status: str) -> bool:
-        """Move a task via HTTP API."""
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.patch(
-                    f"{BASE_URL}/ui/tasks/{task_id}/move",
-                    headers=self.headers,
-                    json={"stage_id": stage_id, "status": status},
-                    timeout=5.0
-                )
-                return resp.status_code == 200
-        except Exception as e:
-            self.log(f"Move task error: {e}")
-            return False
-
-    async def get_task(self, task_id: int) -> Optional[dict]:
-        """Fetch task details via HTTP API."""
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{BASE_URL}/tasks/{task_id}",
-                    headers=self.headers,
-                    timeout=5.0
-                )
-                if resp.status_code == 200:
-                    return resp.json()
-        except Exception as e:
-            self.log(f"Get task error: {e}")
-        return None
-
-    # ---- Event Handlers ----
-
-    async def handle_task_created(self, data: dict):
-        task_id = data.get("task_id")
-        title = data.get("title", "")
-        self.log(f"NEW TASK #{task_id}: \"{title}\" — standing by for assignment")
-
-    async def handle_task_assigned(self, data: dict):
-        task_id = data.get("task_id")
-        entity_id = data.get("entity_id")
-
-        if entity_id != self.agent_id:
-            return  # Not assigned to me
-
-        task = await self.get_task(task_id)
+async def handle_task_created(event: dict):
+    """React to task creation - agents may want to self-assign"""
+    data = event.get("data", {})
+    task_id = data.get("task_id")
+    project_id = event.get("project_id")
+    
+    if not task_id:
+        return
+    
+    async with async_session_maker() as session:
+        # Get the task
+        result = await session.execute(
+            select(Task).filter(Task.id == task_id).options(selectinload(Task.assignees))
+        )
+        task = result.scalar_one_or_none()
+        
         if not task:
             return
-
-        self.log(f"ASSIGNED to Task #{task_id}: \"{task['title']}\"")
-        await self.add_comment(
-            task_id,
-            f"[{self.name}] I've been assigned to this task. "
-            f"Reviewing requirements for: \"{task['title']}\""
-        )
-
-    async def handle_task_moved(self, data: dict):
-        task_id = data.get("task_id")
-        title = data.get("title", "")
-        new_status = data.get("status", "")
-
-        # Check if I'm assigned to this task
-        task = await self.get_task(task_id)
-        if not task:
+        
+        # Check if task already has assignees
+        if task.assignees:
             return
-
-        my_assignee = any(
-            a["id"] == self.agent_id
-            for a in task.get("assignees", [])
-        )
-
-        if new_status == "in_progress":
-            if my_assignee:
-                self.log(f"WORKING on Task #{task_id}: \"{title}\"")
-                await self.add_comment(
-                    task_id,
-                    f"[{self.name}] Task is now In Progress. "
-                    f"I'm actively working on: \"{title}\""
-                )
-            else:
-                # Unassigned task moved to in_progress — volunteer
-                self.log(f"VOLUNTEERING for unassigned Task #{task_id}: \"{title}\"")
-                if await self.self_assign(task_id):
-                    self.log(f"Self-assigned to Task #{task_id}")
-                    await self.add_comment(
-                        task_id,
-                        f"[{self.name}] Auto-assigned and starting work on: \"{title}\""
-                    )
-
-        elif new_status == "in_review" and my_assignee:
-            self.log(f"REVIEW requested for Task #{task_id}: \"{title}\"")
-            await self.add_comment(
-                task_id,
-                f"[{self.name}] Task submitted for review: \"{title}\""
-            )
-
-        elif new_status == "completed" and my_assignee:
-            self.log(f"COMPLETED Task #{task_id}: \"{title}\"")
-
-        elif new_status == "blocked" and my_assignee:
-            self.log(f"BLOCKED Task #{task_id}: \"{title}\" — waiting for resolution")
-            await self.add_comment(
-                task_id,
-                f"[{self.name}] Task is blocked. Waiting for resolution: \"{title}\""
-            )
-
-    # ---- Main Loop ----
-
-    async def run(self):
-        """Main polling loop — runs until cancelled."""
-        self._running = True
-        self.log(f"Worker started (id={self.agent_id}) — polling {BASE_URL}")
-
-        while self._running:
-            try:
-                events = await self.poll_events()
-                for event in events:
-                    event_type = event.get("event_type")
-                    data = event.get("data") or event.get("payload", {})
-
-                    if event_type == "task_created":
-                        await self.handle_task_created(data)
-                    elif event_type == "task_assigned":
-                        await self.handle_task_assigned(data)
-                    elif event_type == "task_moved":
-                        await self.handle_task_moved(data)
-                    elif event_type == "task_updated":
-                        self.log(f"Task #{data.get('task_id')} updated: {data.get('status')}")
-
-            except asyncio.CancelledError:
-                self.log("Worker cancelled")
-                break
-            except Exception as e:
-                self.log(f"Loop error: {e}")
-
-            await asyncio.sleep(3)
-
-        self.log("Worker stopped")
-
-    def stop(self):
-        self._running = False
-
-
-async def start_agent_workers():
-    """Start a background worker for every registered agent.
-    Called after the server is fully ready to accept HTTP requests.
-    """
-    # Small delay to let uvicorn bind the port
-    await asyncio.sleep(2)
-
-    async with async_session_maker() as db:
-        result = await db.execute(
-            select(Entity).filter(
-                Entity.entity_type == EntityType.AGENT,
-                Entity.is_active == True,
-                Entity.api_key.isnot(None)
-            )
+        
+        # Find agents with matching skills who are online
+        required_skills = (task.required_skills or "").split(",")
+        required_skills = [s.strip().lower() for s in required_skills if s.strip()]
+        
+        result = await session.execute(
+            select(Entity).filter(Entity.entity_type == "agent", Entity.is_active == True)
         )
         agents = result.scalars().all()
+        
+        # Score agents by skill match
+        best_agent = None
+        best_score = -1
+        
+        for agent in agents:
+            agent_skills = (agent.skills or "").lower().split(",")
+            agent_skills = [s.strip() for s in agent_skills]
+            
+            # Calculate match score
+            score = sum(1 for skill in required_skills if skill in agent_skills)
+            
+            if score > best_score:
+                best_score = score
+                best_agent = agent
+        
+        # Auto-assign if we found a good match (score > 0 or no skills required)
+        if best_agent and (best_score > 0 or not required_skills):
+            task.assignees.append(best_agent)
+            
+            # Log the auto-assignment
+            log = TaskLog(
+                task_id=task.id,
+                message=f"Agent Reactor: Auto-assigned to {best_agent.name} (skill match: {best_score})",
+                log_type="action"
+            )
+            session.add(log)
+            await session.commit()
+            print(f"Agent Reactor: Auto-assigned task {task_id} to {best_agent.name}")
 
-    if not agents:
-        logger.info("No agents found — no workers to start")
-        return
 
-    for agent in agents:
-        worker = AgentWorker(agent.id, agent.name, agent.api_key)
-        task = asyncio.create_task(worker.run())
-        _running_workers[agent.id] = task
-        logger.info(f"Started worker for agent '{agent.name}' (id={agent.id})")
+async def handle_task_assigned(event: dict):
+    """React to task assignment - notify the assigned agent"""
+    data = event.get("data", {})
+    task_id = data.get("task_id")
+    entity_id = data.get("entity_id")
+    
+    # This could trigger notifications, emails, etc.
+    print(f"Agent Reactor: Task {task_id} assigned to entity {entity_id}")
 
-    print(f"\n{'='*60}")
-    print(f"  AGENT WORKERS: {len(agents)} agents polling for events")
-    for a in agents:
-        print(f"    - {a.name} (id={a.id})")
-    print(f"{'='*60}\n")
+
+async def handle_project_created(event: dict):
+    """React to project creation - set up initial structure"""
+    project_id = event.get("project_id")
+    data = event.get("data", {})
+    
+    print(f"Agent Reactor: Project {project_id} created - {data.get('name', 'Unknown')}")
+
+
+async def handle_event(event: dict):
+    """Main event handler that routes to specific handlers"""
+    event_type = event.get("event_type")
+    
+    handlers = {
+        EventType.TASK_CREATED.value: handle_task_created,
+        EventType.TASK_ASSIGNED.value: handle_task_assigned,
+        EventType.PROJECT_CREATED.value: handle_project_created,
+    }
+    
+    handler = handlers.get(event_type)
+    if handler:
+        try:
+            await handler(event)
+        except Exception as e:
+            print(f"Agent Reactor error handling {event_type}: {e}")
 
 
 def register_agent_reactor():
-    """Schedule agent workers to start after the server is ready."""
-    asyncio.ensure_future(start_agent_workers())
-    logger.info("Agent workers scheduled to start")
+    """
+    Register the agent reactor with the event bus.
+    Called during application startup.
+    """
+    # Subscribe to relevant events
+    for event_type in [
+        EventType.TASK_CREATED.value,
+        EventType.TASK_ASSIGNED.value,
+        EventType.PROJECT_CREATED.value,
+        EventType.TASK_UPDATED.value,
+        EventType.TASK_MOVED.value,
+    ]:
+        event_bus.subscribe(event_type, handle_event)
+    
+    print("Agent Reactor registered")
