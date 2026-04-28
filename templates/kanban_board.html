@@ -3,29 +3,39 @@
 {% block title %}{{ project.name }} - Kanban Board{% endblock %}
 
 {% block content %}
-<link rel="stylesheet" href="/static/css/kanban_premium.css">
+<link rel="stylesheet" href="/static/css/kanban_premium.css?v=5">
 
-<div class="header-section mb-4">
+<div class="board-shell">
+<section class="board-main">
+<div class="header-section">
     <div class="d-flex justify-content-between align-items-start">
-        <div>
-            <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="header-main-content">
+            <div class="d-flex align-items-center gap-3 mb-2">
                 <h2 id="project-title" class="m-0">{{ project.name }}</h2>
-                <button class="btn-icon btn-sm" onclick="editProject()" title="Edit project">✏️</button>
+                <button class="btn-icon btn-sm" onclick="editProject()" title="Edit project name/description">✏️</button>
             </div>
-            <p class="text-secondary" id="project-desc">{{ project.description }}</p>
-            <div class="d-flex align-items-center gap-2 mt-2">
-                <span class="badge badge-success">{{ project.approval_status }}</span>
-                {% if project.creator.name == 'Antigravity' %}
-                <div class="antigravity-manager-badge" title="Antigravity is handling the heavy lifting">
-                    <span class="icon">🌌</span>
-                    <span class="text">Managed by Antigravity</span>
+            <p class="text-secondary mb-3" id="project-desc">{{ project.description }}</p>
+            <div class="d-flex align-items-center gap-3">
+                <span class="badge badge-success" title="Project Approval Status">📦 {{ project.approval_status }}</span>
+                <span class="badge" title="Project workspace folder">📁 <code id="project-path-label">{{ project.path or 'No folder selected' }}</code></span>
+                {% if project.path %}
+                <button class="btn-icon btn-sm" onclick="openWorkspace('{{ project.path }}')" title="Open workspace folder">📂</button>
+                {% endif %}
+                <button class="btn-icon btn-sm" onclick="syncGithub()" title="Sync GitHub PRs/issues">⇄ GitHub</button>
+                {% if project.creator and project.creator.entity_type == 'agent' %}
+                <div id="project-managed-badge" class="agent-managed-badge">
+                    <span class="icon">🤖</span>
+                    <span class="text">Managed by <strong>{{ project.creator.name }}</strong></span>
                     <div class="pulse"></div>
                 </div>
                 {% endif %}
             </div>
         </div>
         <div class="header-actions">
-            <button class="btn btn-primary" onclick="openAutopilotModal()">
+            <button class="btn btn-secondary" onclick="openTeamModal()">
+                <span class="icon">⚙️</span> Roles
+            </button>
+            <button class="btn btn-primary autopilot-btn" onclick="openAutopilotModal()">
                 <span class="icon">🤖</span> Configure Autopilot
             </button>
         </div>
@@ -33,45 +43,293 @@
 </div>
 
 <style>
-    /* Gradient badge specific to Antigravity */
-    .antigravity-manager-badge {
-        display: inline-flex;
+    .board-shell {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 380px;
+        gap: 1.5rem;
+        align-items: start;
+        padding: 0.5rem;
+    }
+    .board-main {
+        min-width: 0;
+    }
+    .header-section {
+        background: var(--glass-bg);
+        backdrop-filter: blur(var(--glass-blur));
+        -webkit-backdrop-filter: blur(var(--glass-blur));
+        border: 1px solid var(--glass-border);
+        border-radius: var(--radius-xl);
+        margin-bottom: 1.5rem;
+        padding: 1.5rem;
+        box-shadow: var(--shadow);
+    }
+    .kanban-container {
+        display: grid;
+        grid-template-columns: repeat({{ project.stages|length }}, minmax(280px, 1fr));
+        gap: 1.25rem;
+        height: calc(100vh - 220px);
+        min-height: 600px;
+        overflow-x: auto;
+        padding-bottom: 1rem;
+        align-items: stretch;
+    }
+    .kanban-column {
+        min-width: 280px;
+        max-height: 100%;
+        border-radius: var(--radius-xl);
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        box-shadow: var(--shadow-sm);
+    }
+    .kanban-column-header {
+        padding: 1.25rem;
+        font-size: 1rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.025em;
+    }
+    .kanban-drop-zone {
+        padding: 1rem;
+    }
+    .kanban-task {
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        border-radius: var(--radius-lg);
+        background: var(--bg-card);
+        border: 1px solid var(--glass-border);
+        border-left: 4px solid var(--accent-primary);
+        box-shadow: var(--shadow-sm);
+        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .kanban-task:hover:not(.static) {
+        transform: translateY(-4px) scale(1.02);
+        box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.1);
+        background: var(--bg-secondary);
+    }
+    .task-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+    .header-main-content {
+        min-width: 0;
+    }
+    #project-title {
+        font-size: 1.75rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, var(--text-primary), var(--accent-primary));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    #project-desc {
+        font-size: 1rem;
+        color: var(--text-secondary);
+        max-width: 800px;
+    }
+    .workbench {
+        background: var(--glass-bg);
+        backdrop-filter: blur(var(--glass-blur));
+        -webkit-backdrop-filter: blur(var(--glass-blur));
+        border: 1px solid var(--glass-border);
+        border-radius: var(--radius-xl);
+        padding: 1.5rem;
+        position: sticky;
+        top: calc(var(--header-height) + 1.5rem);
+        max-height: calc(100vh - var(--header-height) - 3rem);
+        overflow-y: auto;
+        box-shadow: var(--shadow-lg);
+    }
+    .workbench h4 {
+        margin-bottom: 1.25rem;
+        font-weight: 800;
+        font-size: 1.1rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-primary);
+        display: flex;
         align-items: center;
+        gap: 0.75rem;
+    }
+    .workbench h4::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        background: var(--accent-primary);
+        border-radius: 50%;
+        display: inline-block;
+        box-shadow: 0 0 10px var(--accent-primary);
+    }
+    .workbench-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
         gap: 0.5rem;
-        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        margin-bottom: 1.5rem;
+        padding: 0.4rem;
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: var(--radius);
+        border: 1px solid var(--border-color);
+    }
+    .workbench-tab {
+        border: 0;
+        border-radius: var(--radius-sm);
+        padding: 0.6rem 0.4rem;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 0.75rem;
+        font-weight: 700;
+        transition: all 0.2s;
+        text-align: center;
+    }
+    .workbench-tab.active {
+        background: var(--accent-primary);
         color: white;
-        padding: 0.4rem 1rem;
-        border-radius: 2rem;
-        font-size: 0.85rem;
-        font-weight: 600;
-        position: relative;
-        box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+        box-shadow: 0 4px 10px rgba(var(--accent-primary-rgb), 0.3);
+    }
+    .workbench-pane { display: none; animation: fadeIn 0.3s ease-out; }
+    .workbench-pane.active { display: block; }
+    
+    .agent-card {
+        background: rgba(var(--accent-primary-rgb), 0.03);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius);
+        padding: 1rem;
+        margin-bottom: 1rem;
+        transition: all 0.2s;
+    }
+    .agent-card:hover {
+        border-color: var(--accent-primary);
+        background: rgba(var(--accent-primary-rgb), 0.06);
+    }
+    
+    .agent-terminal {
+        background: #020617;
+        color: #10b981;
+        border-radius: var(--radius);
+        border: 1px solid #1e293b;
+        box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+    }
+    
+    .activity-entry {
+        background: rgba(0, 0, 0, 0.03);
+        border-left: 3px solid var(--accent-primary);
+        border-radius: 4px;
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
     }
 
-    .antigravity-manager-badge .pulse {
+    .agent-managed-badge .pulse {
         position: absolute;
-        inset: 0;
+        width: 100%;
+        height: 100%;
+        top: 0;
+        left: 0;
         border-radius: 2rem;
-        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
-        animation: pulse 2s infinite;
+        background: inherit;
+        z-index: -1;
+        opacity: 0.5;
+        animation: badge-pulse 2s infinite;
     }
-
-    @keyframes pulse {
-        0% {
-            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+    @keyframes badge-pulse {
+        0% { transform: scale(1); opacity: 0.5; }
+        100% { transform: scale(1.1, 1.3); opacity: 0; }
+    }
+    @media (max-width: 1500px) {
+        .kanban-container {
+            grid-template-columns: repeat({{ project.stages|length }}, minmax(165px, 1fr));
         }
-
-        70% {
-            box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
+    }
+    @media (max-width: 1280px) {
+        .board-shell {
+            grid-template-columns: 1fr;
         }
-
-        100% {
-            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+        .kanban-container {
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            height: auto;
+            min-height: 0;
+        }
+    }
+    @media (max-width: 760px) {
+        .header-section .d-flex.justify-content-between {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.85rem;
+        }
+        .header-section .d-flex.align-items-center.gap-3 {
+            flex-wrap: wrap;
+        }
+        .header-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 0.5rem;
+        }
+        #project-path-label {
+            max-width: 72vw;
         }
     }
 </style>
 
-<div class="kanban-container {% if project.creator.name == 'Antigravity' %}heavy-lifting-mode{% endif %}">
+<!-- Chat-style task creation -->
+<div id="chat-task-bar" class="chat-task-bar">
+    <div class="chat-task-input-wrap">
+        <span class="chat-task-icon">✨</span>
+        <input type="text" id="chat-task-input" class="form-input chat-input" placeholder="What needs to be done? (Describe a task...)"
+            onkeydown="if(event.key==='Enter') createTaskFromChat()">
+        <button class="btn btn-primary chat-btn" onclick="createTaskFromChat()">
+            <span class="icon">🚀</span> Create
+        </button>
+    </div>
+</div>
+
+<style>
+.chat-task-bar {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-xl);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+    box-shadow: var(--shadow);
+    transition: all 0.3s ease;
+}
+.chat-task-bar:focus-within {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 4px rgba(var(--accent-primary-rgb), 0.1), var(--shadow-lg);
+    transform: translateY(-2px);
+}
+.chat-task-input-wrap {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+.chat-task-icon {
+    font-size: 1.5rem;
+    filter: drop-shadow(0 0 5px rgba(var(--accent-primary-rgb), 0.3));
+}
+.chat-input {
+    flex: 1;
+    background: transparent !important;
+    border: none !important;
+    padding: 0.75rem 0.5rem !important;
+    font-size: 1.05rem !important;
+    font-weight: 500;
+    box-shadow: none !important;
+}
+.chat-input:focus {
+    outline: none !important;
+}
+.chat-btn {
+    border-radius: var(--radius-lg);
+    padding: 0.6rem 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    box-shadow: 0 4px 12px rgba(var(--accent-primary-rgb), 0.3);
+}
+</style>
+
+
+<div class="kanban-container">
     {% for stage in project.stages %}
     <div class="kanban-column" data-stage-id="{{ stage.id }}" data-stage-name="{{ stage.name }}">
         <div class="kanban-column-header">
@@ -81,7 +339,7 @@
 
         <div class="kanban-drop-zone" data-stage-id="{{ stage.id }}">
             {% for task in stage.tasks %}
-            <div class="kanban-task" draggable="true" data-task-id="{{ task.id }}" data-current-stage="{{ stage.id }}">
+            <div class="kanban-task" draggable="true" data-task-id="{{ task.id }}" data-current-stage="{{ stage.id }}" data-priority="P{{ task.priority }}">
                 <div class="task-header">
                     <strong class="task-title">{{ task.title }}</strong>
                     <div class="task-actions">
@@ -95,44 +353,51 @@
                 </div>
 
                 <div class="task-meta">
-                    <span class="badge badge-{{ task.status }}" id="status-task-{{ task.id }}">{{
-                        task.status }}</span>
+                    <span class="badge badge-{{ task.status }}" id="status-task-{{ task.id }}">
+                        {% if task.status == 'completed' %}✅{% elif task.status == 'in_progress' %}⚡{% else %}⏳{% endif %} {{ task.status }}
+                    </span>
                     {% if task.priority > 5 %}
-                    <span class="badge badge-warning">P{{ task.priority }}</span>
+                    <span class="badge badge-warning">🔥 P{{ task.priority }}</span>
                     {% elif task.priority > 0 %}
-                    <span class="badge">P{{ task.priority }}</span>
+                    <span class="badge">📌 P{{ task.priority }}</span>
                     {% endif %}
                 </div>
 
                 {% if task.description %}
-                <div class="mb-2 text-secondary">
-                    <small>{{ task.description[:80] }}{% if task.description|length > 80 %}...{% endif %}</small>
+                <div class="task-description mb-3 text-secondary">
+                    <small>{{ task.description[:100] }}{% if task.description|length > 100 %}...{% endif %}</small>
                 </div>
                 {% endif %}
 
                 {% if task.assignees %}
-                <div class="task-meta">
+                <div class="task-assignees mb-3">
                     {% for assignee in task.assignees %}
                     <span class="badge badge-assignee badge-{{ assignee.entity_type }}"
-                        data-entity-id="{{ assignee.id }}">
-                        {% if assignee.entity_type == 'agent' %}🤖{% else %}👤{% endif %} {{ assignee.name }}
+                        data-entity-id="{{ assignee.id }}" title="{{ assignee.name }} ({{ assignee.entity_type }})">
+                        {% if assignee.entity_type == 'agent' %}🤖{% else %}👤{% endif %} {{ assignee.name|truncate(15) }}
                         <button class="btn-remove-assignee"
-                            onclick="event.stopPropagation();unassignEntity({{ task.id }}, {{ assignee.id }}, this.closest('.badge'))">&times;</button>
+                            onclick="event.stopPropagation();unassignEntity({{ task.id }}, {{ assignee.id }}, this.closest('.badge'))"
+                            title="Unassign">&times;</button>
                     </span>
                     {% endfor %}
                 </div>
                 {% endif %}
 
                 <div class="task-footer">
-                    <button class="btn-link" onclick="event.stopPropagation();openAssignModal({{ task.id }})">+
-                        Assign</button>
+                    <button class="btn-link" onclick="event.stopPropagation();openAssignModal({{ task.id }})">
+                        <span>👤</span> Assign
+                    </button>
+                    <button class="btn-link" onclick="event.stopPropagation();openTaskTerminal({{ task.id }})" title="Open the active agent's terminal for this task">
+                        <span>🖥️</span> Terminal
+                    </button>
                 </div>
             </div>
             {% endfor %}
 
             {% if not stage.tasks %}
-            <div class="kanban-empty-placeholder text-center text-secondary" style="padding: 2rem;">
-                <small>Drop tasks here</small>
+            <div class="kanban-empty-placeholder text-center text-secondary">
+                <small>✨ Ready for new tasks</small>
+                <small style="font-size: 0.7rem; margin-top: 0.5rem; opacity: 0.7;">Drop here</small>
             </div>
             {% endif %}
         </div>
@@ -143,6 +408,330 @@
     </div>
     {% endfor %}
 </div>
+</section>
+
+<!-- Agent Activity Sidebar -->
+<aside id="agent-activity-panel" class="agent-activity-sidebar">
+    <div class="activity-panel-header">
+        <h4>Agent Workbench</h4>
+        <span id="activity-panel-count" class="badge">0 active</span>
+    </div>
+    <div class="workbench-tabs" role="tablist">
+        <button class="workbench-tab active" data-tab="live" onclick="switchWorkbenchTab('live')">Live</button>
+        <button class="workbench-tab" data-tab="terminal" onclick="switchWorkbenchTab('terminal')">Terminal</button>
+        <button class="workbench-tab" data-tab="approvals" onclick="switchWorkbenchTab('approvals')">
+            Approvals <span id="approvals-badge" class="badge" style="display:none;">0</span>
+        </button>
+        <button class="workbench-tab" data-tab="decisions" onclick="switchWorkbenchTab('decisions')">Decisions</button>
+        <button class="workbench-tab" data-tab="reviews" onclick="switchWorkbenchTab('reviews')">Reviews</button>
+        <button class="workbench-tab" data-tab="contrib" onclick="switchWorkbenchTab('contrib')">GitHub</button>
+    </div>
+
+    <section id="workbench-tab-live" class="workbench-pane active">
+        <div id="agent-status-cards" class="agent-status-cards"></div>
+        <div class="activity-log-header">
+            <h5>Active Sessions</h5>
+            <button class="btn-icon-sm" onclick="fetchAgentSessions()">↻</button>
+        </div>
+        <div id="agent-session-list" class="agent-session-list"></div>
+        <div class="activity-log-header">
+            <h5>Project Feed</h5>
+            <button class="btn-icon-sm" onclick="toggleActivityLog()">📋</button>
+        </div>
+        <div id="activity-log" class="activity-log"></div>
+    </section>
+
+    <section id="workbench-tab-terminal" class="workbench-pane">
+        <div class="terminal-header">
+            <div>
+                <h5 id="terminal-title">Select a session</h5>
+                <div id="terminal-subtitle" class="activity-detail">Click an active session in Live.</div>
+            </div>
+            <button class="btn-icon-sm" onclick="refreshSelectedTerminal()">↻</button>
+        </div>
+        <pre id="agent-terminal" class="agent-terminal">No session selected.</pre>
+    </section>
+
+    <section id="workbench-tab-approvals" class="workbench-pane">
+        <div class="activity-log-header">
+            <h5>Pending Approvals</h5>
+            <button class="btn-icon-sm" onclick="fetchAgentApprovals()">↻</button>
+        </div>
+        <div id="approval-pending-list" class="insight-list">
+            <p class="text-secondary" style="font-size:0.8rem;">No pending approvals.</p>
+        </div>
+        <div class="activity-log-header">
+            <h5>Recent Decisions</h5>
+        </div>
+        <div id="approval-recent-list" class="insight-list">
+            <p class="text-secondary" style="font-size:0.8rem;">No resolved approvals yet.</p>
+        </div>
+    </section>
+
+    <section id="workbench-tab-decisions" class="workbench-pane">
+        <div class="activity-log-header">
+            <h5>Manager Decisions</h5>
+            <button class="btn-icon-sm" onclick="fetchProjectContext()">↻</button>
+        </div>
+        <div id="decision-list" class="insight-list"></div>
+        <div class="activity-log-header">
+            <h5>Summaries</h5>
+        </div>
+        <div id="summary-list" class="insight-list"></div>
+    </section>
+
+    <section id="workbench-tab-reviews" class="workbench-pane">
+        <div class="activity-log-header">
+            <h5>Diff Reviews</h5>
+            <button class="btn-icon-sm" onclick="fetchDiffReviews()">↻</button>
+        </div>
+        <div id="diff-review-list" class="insight-list">
+            <p class="text-secondary" style="font-size:0.8rem;">No reviews yet. MCP agents request reviews for critical code paths.</p>
+        </div>
+    </section>
+
+    <section id="workbench-tab-contrib" class="workbench-pane">
+        <div class="activity-log-header">
+            <h5>PRs, Issues, Commits</h5>
+            <div style="display:flex;gap:0.35rem;">
+                <button class="btn-icon-sm" onclick="syncGithubContributions()" title="Sync GitHub PRs and issues">⇄</button>
+                <button class="btn-icon-sm" onclick="fetchProjectContext()">↻</button>
+            </div>
+        </div>
+        <div id="github-sync-status" class="activity-detail" style="margin-bottom:0.5rem;"></div>
+        <div id="contribution-list" class="insight-list"></div>
+        <div class="activity-log-header">
+            <h5>Active Leases</h5>
+        </div>
+        <div id="lease-list" class="insight-list"></div>
+    </section>
+</aside>
+</div>
+
+<style>
+    /* Agent Activity Sidebar */
+    .agent-activity-sidebar {
+        position: sticky;
+        top: 76px;
+        width: 100%;
+        height: calc(100vh - 92px);
+        background: var(--card-bg, #fff);
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 8px;
+        padding: 1rem;
+        overflow-y: auto;
+        z-index: 100;
+        box-shadow: var(--shadow-sm);
+    }
+    @media (max-width: 1280px) {
+        .agent-activity-sidebar {
+            position: static;
+            width: 100%;
+            height: auto;
+            margin-top: 1rem;
+            border-left: 0;
+            border-top: 1px solid var(--border-color, #e5e7eb);
+        }
+    }
+    .activity-panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-color, #e5e7eb);
+    }
+    .activity-panel-header h4 { margin: 0; font-size: 1rem; }
+    .agent-status-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .agent-card {
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--border-color, #e5e7eb);
+        background: var(--bg-color, #f9fafb);
+        transition: opacity 0.3s ease;
+    }
+    .agent-card.stale { opacity: 0.5; }
+    .agent-card.fade-out { opacity: 0.2; }
+    .agent-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.25rem;
+    }
+    .agent-name { font-weight: 600; font-size: 0.9rem; }
+    .agent-status-badge {
+        font-size: 0.7rem;
+        padding: 0.15rem 0.4rem;
+        border-radius: 1rem;
+        text-transform: uppercase;
+        font-weight: 600;
+    }
+    .agent-status-badge.idle { background: #e5e7eb; color: #374151; }
+    .agent-status-badge.thinking { background: #dbeafe; color: #1e40af; }
+    .agent-status-badge.working { background: #d1fae5; color: #065f46; }
+    .agent-status-badge.blocked { background: #fee2e2; color: #991b1b; }
+    .agent-status-badge.waiting { background: #fef3c7; color: #92400e; }
+    .agent-status-badge.done { background: #e0e7ff; color: #3730a3; }
+    .agent-task-link {
+        font-size: 0.8rem;
+        color: var(--link-color, #2563eb);
+        text-decoration: none;
+    }
+    .agent-message {
+        font-size: 0.8rem;
+        color: var(--text-secondary, #6b7280);
+        margin-top: 0.25rem;
+    }
+    .agent-timestamp {
+        font-size: 0.7rem;
+        color: var(--text-muted, #9ca3af);
+        margin-top: 0.25rem;
+    }
+    .activity-log-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid var(--border-color, #e5e7eb);
+    }
+    .activity-log-header h5 { margin: 0; font-size: 0.85rem; }
+    .activity-log {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    .workbench-tabs {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 0.25rem;
+        margin-bottom: 0.9rem;
+        padding: 0.25rem;
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 0.5rem;
+        background: var(--bg-color, #f9fafb);
+    }
+    .workbench-tab .badge {
+        margin-left: 0.25rem;
+        background: #ef4444;
+        color: #fff;
+        padding: 0.05rem 0.35rem;
+        border-radius: 0.65rem;
+        font-size: 0.6rem;
+    }
+    .workbench-tab {
+        border: 0;
+        border-radius: 0.35rem;
+        padding: 0.45rem 0.3rem;
+        background: transparent;
+        color: var(--text-secondary, #6b7280);
+        cursor: pointer;
+        font-size: 0.75rem;
+        font-weight: 700;
+    }
+    .workbench-tab.active {
+        background: var(--card-bg, #fff);
+        color: var(--text-primary, #111827);
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+    }
+    .workbench-pane { display: none; }
+    .workbench-pane.active { display: block; }
+    .agent-session-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        margin-bottom: 1rem;
+    }
+    .agent-session {
+        padding: 0.55rem;
+        border-radius: 0.4rem;
+        background: var(--bg-color, #f9fafb);
+        border: 1px solid var(--border-color, #e5e7eb);
+        font-size: 0.78rem;
+        cursor: pointer;
+    }
+    .agent-session:hover,
+    .agent-session.selected {
+        border-color: var(--accent-primary, #2563eb);
+        background: rgba(var(--accent-primary-rgb, 37, 99, 235), 0.08);
+    }
+    .agent-session strong,
+    .activity-entry strong {
+        font-size: 0.78rem;
+    }
+    .activity-detail {
+        color: var(--text-muted, #9ca3af);
+        margin-top: 0.2rem;
+        overflow-wrap: anywhere;
+    }
+    .activity-log.collapsed { max-height: 0; overflow: hidden; }
+    .activity-entry {
+        padding: 0.5rem;
+        border-radius: 0.25rem;
+        margin-bottom: 0.25rem;
+        font-size: 0.8rem;
+        background: var(--bg-color, #f9fafb);
+    }
+    .activity-entry .activity-meta {
+        display: flex;
+        justify-content: space-between;
+        color: var(--text-muted, #9ca3af);
+        font-size: 0.7rem;
+        margin-top: 0.25rem;
+    }
+    .terminal-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        align-items: flex-start;
+        margin-bottom: 0.75rem;
+    }
+    .terminal-header h5 {
+        margin: 0;
+        font-size: 0.9rem;
+    }
+    .agent-terminal {
+        min-height: 520px;
+        max-height: calc(100vh - 210px);
+        overflow: auto;
+        margin: 0;
+        padding: 0.85rem;
+        border-radius: 0.5rem;
+        border: 1px solid #1f2937;
+        background: #020617;
+        color: #d1fae5;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.76rem;
+        line-height: 1.45;
+        white-space: pre-wrap;
+    }
+    .insight-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        margin-bottom: 1rem;
+    }
+    .insight-item {
+        padding: 0.65rem;
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 0.45rem;
+        background: var(--bg-color, #f9fafb);
+        font-size: 0.78rem;
+    }
+    .insight-title {
+        font-weight: 700;
+        overflow-wrap: anywhere;
+    }
+    .insight-meta {
+        margin-top: 0.25rem;
+        color: var(--text-muted, #9ca3af);
+        font-size: 0.7rem;
+    }
+</style>
 
 <!-- Toast notification -->
 <div id="toast" class="toast" style="display:none;"></div>
@@ -195,6 +784,15 @@
                     <input type="text" id="task-form-skills" class="form-input" placeholder="python,react,testing">
                 </div>
 
+                <div id="task-comments-section"
+                    style="display:none; margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                    <h4>Activity & Comments</h4>
+                    <div id="task-comments-list"
+                        style="max-height: 200px; overflow-y: auto; margin-bottom: 1rem; font-size: 0.9rem;">
+                        <!-- Comments will be injected here -->
+                    </div>
+                </div>
+
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeModal('task-modal')">Cancel</button>
                     <button type="button" class="btn btn-primary" onclick="submitTaskForm()">Save</button>
@@ -209,7 +807,7 @@
     onclick="if(event.target===this)closeModal('assign-modal')">
     <div class="modal-card modal-small">
         <div class="modal-header">
-            <h3>Assign to Task</h3>
+            <h3>Assign Role to Task</h3>
             <button class="btn-icon" onclick="closeModal('assign-modal')">&times;</button>
         </div>
         <input type="hidden" id="assign-task-id">
@@ -235,6 +833,15 @@
         <div class="form-group">
             <label>Description</label>
             <textarea id="project-form-desc" class="form-input" rows="3">{{ project.description }}</textarea>
+        </div>
+        <div class="form-group">
+            <label>Project Folder</label>
+            <div style="display:flex;gap:0.5rem;">
+                <input type="text" id="project-form-path" class="form-input" value="{{ project.path or '' }}"
+                    placeholder="Choose a local folder" readonly>
+                <button type="button" class="btn" onclick="openFolderPicker('project-form-path')">Browse</button>
+            </div>
+            <small class="text-secondary">CLI agent sessions and hooks use this as the workspace path.</small>
         </div>
         <div class="form-actions">
             <button class="btn" onclick="closeModal('project-modal')">Cancel</button>
@@ -265,12 +872,62 @@
         </div>
     </div>
 </div>
+</div>
+
+<!-- Team Management Modal -->
+<div id="team-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('team-modal')">
+    <div class="modal-card modal-small">
+        <div class="modal-header">
+            <h3>Role CLI Tools</h3>
+            <button class="btn-icon" onclick="closeModal('team-modal')">&times;</button>
+        </div>
+        <div id="team-list" class="entity-list" style="max-height: 300px; overflow-y: auto;">
+            <!-- Role assignments injected here -->
+        </div>
+        <div class="modal-footer"
+            style="padding-top: 1rem; border-top: 1px solid var(--border-color); margin-top: 1rem;">
+            <small class="text-secondary">Assign CLI tools to roles. Discovered CLIs are candidates only; role assignment is the working team.</small>
+        </div>
+    </div>
+</div>
+
+<!-- Folder Picker Modal -->
+<div id="folder-picker-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeFolderPicker()">
+    <div class="modal-card modal-small">
+        <div class="modal-header">
+            <h3>Select Project Folder</h3>
+            <button class="btn-icon" onclick="closeFolderPicker()">&times;</button>
+        </div>
+        <div class="form-group mb-2">
+            <label>Current Folder</label>
+            <div style="display:flex;gap:0.5rem;">
+                <input id="folder-picker-current" class="form-input" type="text">
+                <button type="button" class="btn" onclick="loadFolderFromInput()">Go</button>
+            </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+            <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerParent)">Up</button>
+            <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerHome)">Home</button>
+            <button type="button" class="btn btn-sm btn-primary" onclick="selectCurrentFolder()">Use This Folder</button>
+        </div>
+        <div id="folder-picker-list" class="entity-list" style="max-height:320px;overflow-y:auto;">
+            <p class="text-secondary">Loading...</p>
+        </div>
+    </div>
+</div>
 
 {% endblock %}
 
 {% block extra_js %}
 <script>
-        var PROJECT_ID = {{ project.id }};
+    var PROJECT_ID = {{ project.id }};
+    var CURRENT_ENTITY_ID = {{ current_entity.id if current_entity else 'null' }};
+    var folderPickerTarget = null;
+    var folderPickerCurrent = '';
+    var folderPickerParent = null;
+    var folderPickerHome = '';
 
     var STAGE_STATUS_MAP = {
         'Backlog': 'pending',
@@ -305,8 +962,7 @@
         if (dropZone.querySelectorAll('.kanban-task').length === 0) {
             var div = document.createElement('div');
             div.className = 'kanban-empty-placeholder text-center text-secondary';
-            div.style.padding = '2rem';
-            div.innerHTML = '<small>Drop tasks here</small>';
+            div.innerHTML = '<small>✨ Ready for new tasks</small><small style="font-size: 0.7rem; margin-top: 0.5rem; opacity: 0.7;">Drop here</small>';
             dropZone.appendChild(div);
         }
     }
@@ -314,6 +970,52 @@
     window.closeModal = function (id) {
         document.getElementById(id).style.display = 'none';
     };
+
+    function closeFolderPicker() {
+        document.getElementById('folder-picker-modal').style.display = 'none';
+    }
+
+    function openFolderPicker(targetInputId) {
+        folderPickerTarget = document.getElementById(targetInputId);
+        document.getElementById('folder-picker-modal').style.display = 'flex';
+        loadFolder(folderPickerTarget.value || '');
+    }
+
+    function loadFolderFromInput() {
+        loadFolder(document.getElementById('folder-picker-current').value);
+    }
+
+    function loadFolder(path) {
+        var url = '/ui/api/folders' + (path ? '?path=' + encodeURIComponent(path) : '');
+        document.getElementById('folder-picker-list').innerHTML = '<p class="text-secondary">Loading...</p>';
+        fetch(url)
+            .then(function (r) { if (!r.ok) throw new Error('Failed to load folders'); return r.json(); })
+            .then(function (data) {
+                folderPickerCurrent = data.path;
+                folderPickerParent = data.parent;
+                folderPickerHome = data.home;
+                document.getElementById('folder-picker-current').value = data.path;
+                var list = document.getElementById('folder-picker-list');
+                if (!data.folders.length) {
+                    list.innerHTML = '<p class="text-secondary">No folders found here.</p>';
+                    return;
+                }
+                list.innerHTML = data.folders.map(function (folder) {
+                    return '<button type="button" class="entity-item" style="width:100%;text-align:left;border:0;background:transparent;cursor:pointer;" onclick="loadFolder(' + JSON.stringify(folder.path).replace(/"/g, '&quot;') + ')">'
+                        + '<strong>' + folder.name + '</strong>'
+                        + '<div class="text-secondary"><small>' + folder.path + '</small></div>'
+                        + '</button>';
+                }).join('');
+            })
+            .catch(function (err) {
+                document.getElementById('folder-picker-list').innerHTML = '<p class="text-danger">' + err.message + '</p>';
+            });
+    }
+
+    function selectCurrentFolder() {
+        if (folderPickerTarget) folderPickerTarget.value = folderPickerCurrent;
+        closeFolderPicker();
+    }
 
     // Drag and Drop
     function initDragDrop() {
@@ -393,7 +1095,7 @@
             // BACKEND API CALL
             fetch('/ui/tasks/' + taskId + '/move', {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
                 body: JSON.stringify({ stage_id: parseInt(newStageId), status: newStatus })
             })
                 .then(function (response) {
@@ -424,6 +1126,10 @@
         document.getElementById('task-form-priority').value = '0';
         document.getElementById('task-form-status').value = 'pending';
         document.getElementById('task-form-skills').value = '';
+
+        // Hide comments section for new tasks
+        document.getElementById('task-comments-section').style.display = 'none';
+
         document.getElementById('task-modal').style.display = 'flex';
         document.getElementById('task-form-title').focus();
     };
@@ -444,8 +1150,51 @@
         var statusBadge = taskEl.querySelector('[id^="status-task-"]');
         document.getElementById('task-form-status').value = statusBadge ? statusBadge.textContent.trim() : 'pending';
 
-        document.getElementById('task-form-priority').value = '0'; // Default, logic to parse explicit value would be complex without data attr
+        document.getElementById('task-form-priority').value = '0'; // Default
         document.getElementById('task-form-skills').value = '';
+
+        // Reset and hide comments initially
+        var commentsList = document.getElementById('task-comments-list');
+        commentsList.innerHTML = '<p class="text-secondary">Loading activity...</p>';
+        document.getElementById('task-comments-section').style.display = 'block';
+
+        // Fetch full task details including comments
+        console.log('Fetching details for task:', taskId);
+        fetch('/tasks/' + taskId) // Use public API for details
+            .then(r => {
+                console.log('Response status:', r.status);
+                if (r.headers.get('content-type').includes('application/json')) return r.json();
+                // Fallback if UI route returns HTML (unlikely for specific resource but checking)
+                return fetch('/tasks/' + taskId).then(res => res.json());
+            })
+            .then(data => {
+                if (data.priority !== undefined) document.getElementById('task-form-priority').value = data.priority;
+                if (data.required_skills) document.getElementById('task-form-skills').value = data.required_skills;
+
+                // Render Comments
+                var html = '';
+                if (data.comments && data.comments.length > 0) {
+                    data.comments.forEach(c => {
+                        // Simple formatting
+                        var author = c.author ? c.author.name : 'Unknown';
+                        var date = new Date(c.created_at).toLocaleString();
+                        var icon = c.author && c.author.entity_type === 'agent' ? '🤖' : '👤';
+                        html += '<div style="margin-bottom: 0.5rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px;">' +
+                            '<div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; justify-content: space-between;">' +
+                            '<span>' + icon + ' <strong>' + author + '</strong></span>' +
+                            '<span>' + date + '</span></div>' +
+                            '<div style="margin-top: 0.25rem;">' + c.content + '</div>' +
+                            '</div>';
+                    });
+                } else {
+                    html = '<p class="text-secondary">No comments yet.</p>';
+                }
+                commentsList.innerHTML = html;
+            })
+            .catch(err => {
+                console.error(err);
+                commentsList.innerHTML = '<p class="text-secondary">Could not load details.</p>';
+            });
 
         document.getElementById('task-modal').style.display = 'flex';
     };
@@ -467,13 +1216,13 @@
             data.project_id = PROJECT_ID;
             data.stage_id = parseInt(document.getElementById('task-form-stage-id').value);
 
-            fetch('/ui/tasks/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+            fetch('/ui/tasks/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) })
                 .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
                 .then(() => { showToast('Task created!', 'success'); closeModal('task-modal'); location.reload(); })
                 .catch(err => showToast('Error: ' + err.message, 'error'));
         } else {
             var taskId = document.getElementById('task-form-id').value;
-            fetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+            fetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) })
                 .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
                 .then(() => { showToast('Task updated!', 'success'); closeModal('task-modal'); location.reload(); })
                 .catch(err => showToast('Error: ' + err.message, 'error'));
@@ -483,7 +1232,7 @@
     window.deleteTask = function (taskId, taskEl) {
         if (!confirm('Delete this task?')) return;
         var stageId = taskEl.dataset.currentStage;
-        fetch('/ui/tasks/' + taskId, { method: 'DELETE' })
+        fetch('/ui/tasks/' + taskId, { method: 'DELETE', headers: { 'x-entity-id': CURRENT_ENTITY_ID } })
             .then(r => { if (!r.ok) throw new Error('Failed'); })
             .then(() => {
                 var dropZone = taskEl.parentElement;
@@ -498,28 +1247,46 @@
     // Assignment
     window.openAssignModal = function (taskId) {
         document.getElementById('assign-task-id').value = taskId;
-        document.getElementById('assign-entity-list').innerHTML = '<p class="text-secondary">Loading...</p>';
+        document.getElementById('assign-entity-list').innerHTML = '<p class="text-secondary">Loading roles...</p>';
         document.getElementById('assign-modal').style.display = 'flex';
 
-        fetch('/ui/api/entities')
+        fetch('/ui/api/roles')
             .then(r => r.json())
-            .then(entities => {
+            .then(data => {
                 var html = '';
-                entities.forEach(function (e) {
-                    var icon = e.entity_type === 'agent' ? '🤖' : '👤';
+                (data.roles || []).forEach(function (r) {
+                    var disabled = r.installed ? '' : 'disabled';
+                    var model = r.model ? ' · ' + r.model : '';
                     html += '<div class="entity-item">'
-                        + '<span>' + icon + ' <strong>' + e.name + '</strong>'
-                        + (e.skills ? ' <small class="text-secondary">(' + e.skills + ')</small>' : '')
+                        + '<span><strong>' + r.role + '</strong> → ' + r.display_name
+                        + '<small class="text-secondary"> (' + r.command + model + ')</small>'
                         + '</span>'
-                        + '<button class="btn btn-sm btn-primary" onclick="assignEntity(' + taskId + ',' + e.id + ',this)">Assign</button>'
+                        + '<button class="btn btn-sm btn-primary" ' + disabled + ' onclick="assignRoleToTask(' + taskId + ',\'' + r.role + '\',this)">Assign</button>'
                         + '</div>';
                 });
-                if (!html) html = '<p class="text-secondary">No entities registered yet.</p>';
+                if (!html) html = '<p class="text-secondary">No roles configured. Open Roles to assign CLI tools.</p>';
                 document.getElementById('assign-entity-list').innerHTML = html;
             })
             .catch(err => {
-                document.getElementById('assign-entity-list').innerHTML = '<p class="text-danger">Failed to load entities.</p>';
+                document.getElementById('assign-entity-list').innerHTML = '<p class="text-danger">Failed to load roles.</p>';
             });
+    };
+
+    window.assignRoleToTask = function (taskId, roleName, btn) {
+        btn.disabled = true;
+        btn.textContent = '...';
+        fetch('/ui/tasks/' + taskId + '/assign-role', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
+            body: JSON.stringify({ role: roleName })
+        })
+            .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.detail || 'Failed'); }); })
+            .then(() => {
+                showToast('Assigned to ' + roleName, 'success');
+                closeModal('assign-modal');
+                location.reload();
+            })
+            .catch(err => { showToast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Assign'; });
     };
 
     window.assignEntity = function (taskId, entityId, btn) {
@@ -528,7 +1295,7 @@
         // Use correct endpoint /ui/tasks/.../assign
         fetch('/ui/tasks/' + taskId + '/assign', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
             body: JSON.stringify({ entity_id: entityId, action: 'assign' })
         })
             .then(r => { if (!r.ok) throw new Error('Failed'); })
@@ -543,7 +1310,7 @@
     window.unassignEntity = function (taskId, entityId, badge) {
         fetch('/ui/tasks/' + taskId + '/assign', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
             body: JSON.stringify({ entity_id: entityId, action: 'unassign' })
         })
             .then(r => { if (!r.ok) throw new Error('Failed'); })
@@ -563,11 +1330,12 @@
         // Implementation preserved
         var name = document.getElementById('project-form-name').value.trim();
         var desc = document.getElementById('project-form-desc').value.trim();
+        var path = document.getElementById('project-form-path').value.trim();
         if (!name) return;
         fetch('/ui/projects/' + PROJECT_ID + '/edit', {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name, description: desc })
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
+            body: JSON.stringify({ name: name, description: desc, path: path })
         }).then(r => { if (!r.ok) throw new Error('Failed'); location.reload(); });
     };
 
@@ -590,7 +1358,7 @@
         // For now we just toggle the global flag via UI
         fetch('/ui/api/settings/auto-pilot', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
             body: JSON.stringify({ enabled: true, manager_id: agentId })
         }).then(r => r.json()).then(d => {
             showToast('Autopilot configured!', 'success');
@@ -598,7 +1366,744 @@
         });
     };
 
+    // Role CLI assignment
+    window.openTeamModal = function () {
+        document.getElementById('team-modal').style.display = 'flex';
+        document.getElementById('team-list').innerHTML = '<p class="text-secondary">Loading roles...</p>';
+
+        fetch('/ui/api/roles')
+            .then(r => r.json())
+            .then(data => {
+                renderRoleCliPanel(data);
+            })
+            .catch(err => {
+                document.getElementById('team-list').innerHTML = '<p class="text-danger">Failed to load roles.</p>';
+            });
+    };
+
+    function renderRoleCliPanel(data) {
+        var roles = ['orchestrator', 'ui', 'architecture', 'worker', 'test', 'diff_review', 'git_pr'];
+        var assigned = {};
+        (data.roles || []).forEach(function (r) { assigned[r.role] = r; });
+        var candidates = (data.candidates || []).filter(function (c) { return c.installed; });
+        var html = roles.map(function (roleName) {
+            var current = assigned[roleName];
+            var options = candidates.map(function (c) {
+                var selected = current && current.agent === c.agent ? 'selected' : '';
+                return '<option value="' + c.agent + '" data-command="' + c.command + '" data-models="' + (c.models || []).join(',') + '" ' + selected + '>'
+                    + c.display_name + ' (' + c.command + ')' + '</option>';
+            }).join('');
+            var model = current ? current.model : '';
+            return '<div class="entity-item" style="display:grid;grid-template-columns:1fr;gap:0.5rem;padding:0.75rem;border-bottom:1px solid var(--border-color);">'
+                + '<div><strong>' + roleName + '</strong>'
+                + (current ? '<small class="text-secondary"> → ' + current.display_name + ' · ' + current.command + '</small>' : '<small class="text-secondary"> unassigned</small>')
+                + '</div>'
+                + '<div style="display:grid;grid-template-columns:1fr 0.75fr auto;gap:0.5rem;">'
+                + '<select class="form-input" id="role-agent-' + roleName + '">' + options + '</select>'
+                + '<input class="form-input" id="role-model-' + roleName + '" placeholder="model" value="' + (model || '') + '">'
+                + '<button class="btn btn-sm btn-primary" onclick="saveRoleCli(\'' + roleName + '\')">Assign</button>'
+                + '</div>'
+                + '</div>';
+        }).join('');
+        if (!candidates.length) {
+            html = '<p class="text-secondary">No supported CLI tools found on PATH.</p>';
+        }
+        document.getElementById('team-list').innerHTML = html;
+    };
+
+    window.saveRoleCli = function (roleName) {
+        var select = document.getElementById('role-agent-' + roleName);
+        var modelInput = document.getElementById('role-model-' + roleName);
+        if (!select || !select.value) return;
+        var opt = select.options[select.selectedIndex];
+        var models = opt.getAttribute('data-models') || '';
+        fetch('/ui/api/roles/assign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
+            body: JSON.stringify({
+                role: roleName,
+                agent: select.value,
+                command: opt.getAttribute('data-command') || select.value,
+                model: modelInput.value || null,
+                models: models,
+                mode: 'headless'
+            })
+        })
+            .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.detail || 'Failed'); }); return r.json(); })
+            .then(data => {
+                showToast('Role updated', 'success');
+                renderRoleCliPanel(data);
+            })
+            .catch(err => showToast('Error: ' + err.message, 'error'));
+    };
+
+    // Agent Activity Panel
+    let selectedSessionId = null;
+
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function switchWorkbenchTab(tab) {
+        document.querySelectorAll('.workbench-tab').forEach(function (button) {
+            button.classList.toggle('active', button.dataset.tab === tab);
+        });
+        document.querySelectorAll('.workbench-pane').forEach(function (pane) {
+            pane.classList.toggle('active', pane.id === 'workbench-tab-' + tab);
+        });
+    }
+
+    function toggleActivityLog() {
+        const log = document.getElementById('activity-log');
+        log.classList.toggle('collapsed');
+    }
+
+    function timeAgo(dateStr) {
+        const then = new Date(dateStr);
+        const now = new Date();
+        const seconds = Math.floor((now - then) / 1000);
+        if (seconds < 60) return seconds + 's ago';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + 'm ago';
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + 'h ago';
+        return Math.floor(hours / 24) + 'd ago';
+    }
+
+    function timeUntil(dateStr) {
+        const then = new Date(dateStr);
+        const now = new Date();
+        const seconds = Math.max(0, Math.floor((then - now) / 1000));
+        if (seconds < 60) return seconds + 's';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + 'm';
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + 'h';
+        return Math.floor(hours / 24) + 'd';
+    }
+
+    function renderAgentCard(agent) {
+        const container = document.getElementById('agent-status-cards');
+        let card = document.getElementById('agent-card-' + agent.agent_id);
+        if (!card) {
+            card = document.createElement('div');
+            card.id = 'agent-card-' + agent.agent_id;
+            card.className = 'agent-card';
+            container.appendChild(card);
+        }
+
+        const taskLink = agent.task_id
+            ? `<a class="agent-task-link" href="#" onclick="location.reload(); return false;">Task #${agent.task_id}</a>`
+            : '';
+
+        card.innerHTML = `
+            <div class="agent-card-header">
+                <span class="agent-name">${agent.agent_name || 'Agent ' + agent.agent_id}</span>
+                <span class="agent-status-badge ${agent.status_type}">${agent.status_type}</span>
+            </div>
+            ${taskLink}
+            <div class="agent-message">${agent.message || ''}</div>
+            <div class="agent-timestamp" data-updated="${agent.updated_at}">${timeAgo(agent.updated_at)}</div>
+        `;
+
+        card.classList.remove('stale', 'fade-out');
+        card.dataset.updatedAt = agent.updated_at;
+    }
+
+    function addActivityEntry(entry) {
+        const log = document.getElementById('activity-log');
+        const div = document.createElement('div');
+        div.className = 'activity-entry';
+        const detailBits = [];
+        if (entry.workspace_path) detailBits.push('workspace: ' + entry.workspace_path);
+        if (entry.file_path) detailBits.push('file: ' + entry.file_path);
+        if (entry.command) detailBits.push('command: ' + entry.command);
+        if (entry.task_id) detailBits.push('task #' + entry.task_id);
+        div.innerHTML = `
+            <div>${escapeHtml(entry.message)}</div>
+            ${detailBits.length ? `<div class="activity-detail">${escapeHtml(detailBits.join(' · '))}</div>` : ''}
+            <div class="activity-meta">
+                <span>${escapeHtml(entry.source || entry.activity_type || entry.status_type || 'update')}</span>
+                <span>${timeAgo(entry.created_at || entry.updated_at || new Date().toISOString())}</span>
+            </div>
+        `;
+        log.insertBefore(div, log.firstChild);
+        // Keep only last 50 entries
+        while (log.children.length > 50) {
+            log.removeChild(log.lastChild);
+        }
+    }
+
+    function renderAgentSessions(sessions) {
+        const list = document.getElementById('agent-session-list');
+        if (!sessions.length) {
+            list.innerHTML = '<div class="text-secondary" style="font-size:0.8rem;">No active sessions</div>';
+            return;
+        }
+        list.innerHTML = sessions.map(function (s) {
+            return `
+                <div class="agent-session ${selectedSessionId === s.id ? 'selected' : ''}" onclick="openSessionTerminal(${s.id})">
+                    <strong>Agent ${s.agent_id}</strong>
+                    <span class="agent-status-badge ${s.status}">${escapeHtml(s.status)}</span>
+                    <div class="activity-detail">${escapeHtml(s.workspace_path)}</div>
+                    ${s.task_id ? `<div class="activity-detail">Task #${s.task_id}</div>` : ''}
+                    ${s.command ? `<div class="activity-detail">${escapeHtml(s.command)}</div>` : ''}
+                    <div class="agent-timestamp">${timeAgo(s.last_seen_at)}</div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    async function openSessionTerminal(sessionId) {
+        selectedSessionId = sessionId;
+        switchWorkbenchTab('terminal');
+        await refreshSelectedTerminal();
+        document.querySelectorAll('.agent-session').forEach(function (item) {
+            item.classList.remove('selected');
+        });
+    }
+
+    async function openTaskTerminal(taskId) {
+        try {
+            const res = await fetch('/agents/tasks/' + taskId + '/active-session');
+            if (!res.ok) {
+                showToast('No active agent session for task #' + taskId, 'info');
+                switchWorkbenchTab('terminal');
+                return;
+            }
+            const session = await res.json();
+            if (!session || !session.id) {
+                showToast('No agent has claimed task #' + taskId + ' yet', 'info');
+                switchWorkbenchTab('terminal');
+                return;
+            }
+            await openSessionTerminal(session.id);
+        } catch (e) {
+            showToast('Could not open task terminal: ' + e.message, 'error');
+        }
+    }
+
+    async function refreshSelectedTerminal() {
+        const terminal = document.getElementById('agent-terminal');
+        if (!selectedSessionId) {
+            terminal.textContent = 'No session selected.';
+            return;
+        }
+        terminal.textContent = 'Loading session #' + selectedSessionId + '...';
+        try {
+            const res = await fetch('/agents/sessions/' + selectedSessionId + '/terminal?limit=200');
+            if (!res.ok) throw new Error('Failed to load session terminal');
+            const data = await res.json();
+            const s = data.session;
+            document.getElementById('terminal-title').textContent = 'Agent ' + s.agent_id + ' session #' + s.id;
+            const subtitleParts = [];
+            if (s.workspace_path) subtitleParts.push(s.workspace_path);
+            if (s.task_id) subtitleParts.push('task #' + s.task_id);
+            if (s.mode) subtitleParts.push('mode: ' + s.mode);
+            if (s.status) subtitleParts.push('status: ' + s.status);
+            document.getElementById('terminal-subtitle').textContent = subtitleParts.join(' · ');
+            const lines = [];
+            lines.push('$ ' + (s.command || 'agent session started'));
+            lines.push('# workspace: ' + s.workspace_path);
+            if (s.task_id) lines.push('# task: #' + s.task_id);
+            lines.push('');
+            data.activities.forEach(function (entry) {
+                const stamp = entry.created_at ? new Date(entry.created_at).toLocaleTimeString() : '';
+                const label = entry.activity_type || entry.source || 'event';
+                lines.push('[' + stamp + '] ' + label);
+                if (entry.command) lines.push('$ ' + entry.command);
+                lines.push(entry.message || '');
+                if (entry.file_path) lines.push('file: ' + entry.file_path);
+                lines.push('');
+            });
+            terminal.textContent = lines.join('\n').trim() || 'No terminal activity recorded for this session yet.';
+            terminal.scrollTop = terminal.scrollHeight;
+        } catch (e) {
+            terminal.textContent = e.message;
+        }
+    }
+
+    async function fetchAgentSessions() {
+        try {
+            const res = await fetch('/agents/sessions?project_id=' + PROJECT_ID + '&active_only=true');
+            renderAgentSessions(await res.json());
+        } catch (e) {
+            console.error('Failed to fetch agent sessions:', e);
+        }
+    }
+
+    async function fetchProjectActivity() {
+        try {
+            const res = await fetch('/agents/activity?project_id=' + PROJECT_ID + '&limit=50');
+            const entries = await res.json();
+            const log = document.getElementById('activity-log');
+            log.innerHTML = '';
+            entries.reverse().forEach(addActivityEntry);
+        } catch (e) {
+            console.error('Failed to fetch project activity:', e);
+        }
+    }
+
+    async function fetchAgentStatuses() {
+        try {
+            const res = await fetch('/agents/status');
+            const agents = await res.json();
+            agents.forEach(renderAgentCard);
+            document.getElementById('activity-panel-count').textContent = agents.length + ' active';
+        } catch (e) {
+            console.error('Failed to fetch agent statuses:', e);
+        }
+    }
+
+    function renderInsightList(id, items, emptyText, renderItem) {
+        const el = document.getElementById(id);
+        if (!items || !items.length) {
+            el.innerHTML = '<div class="text-secondary" style="font-size:0.8rem;">' + emptyText + '</div>';
+            return;
+        }
+        el.innerHTML = items.map(renderItem).join('');
+    }
+
+    async function fetchProjectContext() {
+        try {
+            const [decisionsRes, summariesRes, contributionsRes, leasesRes] = await Promise.all([
+                fetch('/agents/projects/' + PROJECT_ID + '/decisions?limit=30'),
+                fetch('/agents/projects/' + PROJECT_ID + '/summaries?limit=10'),
+                fetch('/agents/projects/' + PROJECT_ID + '/contributions?limit=30'),
+                fetch('/agents/projects/' + PROJECT_ID + '/leases?active_only=true')
+            ]);
+            const decisions = await decisionsRes.json();
+            const summaries = await summariesRes.json();
+            const contributions = await contributionsRes.json();
+            const leases = await leasesRes.json();
+
+            renderInsightList('decision-list', decisions, 'No manager decisions recorded yet.', function (d) {
+                return `<div class="insight-item">
+                    <div class="insight-title">${escapeHtml(d.decision_type)}</div>
+                    <div>${escapeHtml(d.rationale)}</div>
+                    <div class="insight-meta">${timeAgo(d.created_at)}</div>
+                </div>`;
+            });
+            renderInsightList('summary-list', summaries, 'No summaries yet.', function (s) {
+                return `<div class="insight-item">
+                    <div>${escapeHtml(s.summary)}</div>
+                    <div class="insight-meta">${s.task_id ? 'Task #' + s.task_id + ' · ' : ''}${timeAgo(s.created_at)}</div>
+                </div>`;
+            });
+            renderInsightList('contribution-list', contributions, 'No PRs, issues, commits, or reviews recorded yet.', function (c) {
+                const title = c.url ? `<a href="${escapeHtml(c.url)}" target="_blank" rel="noreferrer">${escapeHtml(c.title)}</a>` : escapeHtml(c.title);
+                return `<div class="insight-item">
+                    <div class="insight-title">${title}</div>
+                    <div class="insight-meta">${escapeHtml(c.provider)} · ${escapeHtml(c.contribution_type)}${c.status ? ' · ' + escapeHtml(c.status) : ''}</div>
+                </div>`;
+            });
+            renderInsightList('lease-list', leases, 'No active task leases.', function (l) {
+                return `<div class="insight-item">
+                    <div class="insight-title">Task #${l.task_id}</div>
+                    <div class="insight-meta">Agent ${l.agent_id}${l.session_id ? ' · session #' + l.session_id : ''} · expires in ${timeUntil(l.expires_at)}</div>
+                </div>`;
+            });
+        } catch (e) {
+            console.error('Failed to fetch project context:', e);
+        }
+    }
+
+    async function syncGithubContributions() {
+        const status = document.getElementById('github-sync-status');
+        if (!CURRENT_ENTITY_ID) {
+            status.textContent = 'Authentication required to sync GitHub.';
+            return;
+        }
+        status.textContent = 'Syncing GitHub PRs and issues...';
+        try {
+            const res = await fetch('/agents/projects/' + PROJECT_ID + '/contributions/sync/github', {
+                method: 'POST',
+                headers: { 'x-entity-id': CURRENT_ENTITY_ID }
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'GitHub sync failed');
+            status.textContent = 'Synced ' + data.seen + ' items from ' + data.repos.join(', ') + '.';
+            await fetchProjectContext();
+        } catch (e) {
+            status.textContent = e.message;
+        }
+    }
+
+    function checkStaleCards() {
+        const now = new Date();
+        const staleThreshold = 60 * 1000; // 60 seconds (2 * default heartbeat_interval)
+        document.querySelectorAll('.agent-card').forEach(card => {
+            const updated = new Date(card.dataset.updatedAt);
+            const age = now - updated;
+            if (age > staleThreshold * 2) {
+                card.classList.add('fade-out');
+            } else if (age > staleThreshold) {
+                card.classList.add('stale');
+            }
+        });
+    }
+
+    // Real-time Updates via WebSocket
+    function initWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = protocol + '//' + window.location.host + '/ws/projects/' + PROJECT_ID;
+        console.log('Connecting to project updates:', wsUrl);
+
+        const socket = new WebSocket(wsUrl);
+
+        socket.onmessage = function (event) {
+            const msg = JSON.parse(event.data);
+            console.log('WS Message:', msg);
+
+            if (msg.event_type === 'task_updated' || msg.event_type === 'task_moved') {
+                const data = msg.data;
+                const statusLabel = data.status ? data.status.replace('_', ' ') : 'Updated';
+                showToast(`Task #${data.task_id}: ${statusLabel}`, 'info');
+
+                // Update badge if in view
+                const badge = document.getElementById('status-task-' + data.task_id);
+                if (badge && data.status) {
+                    badge.className = 'badge badge-' + data.status;
+                    badge.textContent = statusLabel;
+                }
+
+                // Refresh board if significant move
+                if (msg.event_type === 'task_moved' || data.status === 'completed') {
+                    setTimeout(() => location.reload(), 2000);
+                }
+            } else if (msg.event_type === 'task_commented') {
+                const data = msg.data;
+                showToast(`💬 Task #${data.task_id}: ${data.comment.substring(0, 30)}...`, 'info');
+            } else if (msg.event_type === 'task_assigned') {
+                showToast(`👤 Task #${msg.data.task_id} assigned`, 'info');
+                setTimeout(() => location.reload(), 1500);
+            } else if (msg.event_type === 'agent_status_updated') {
+                const data = msg.data;
+                renderAgentCard({
+                    agent_id: data.agent_id,
+                    agent_name: data.agent_name,
+                    status_type: data.status_type,
+                    message: data.message,
+                    task_id: data.task_id,
+                    updated_at: new Date().toISOString()
+                });
+                addActivityEntry({
+                    message: data.message || `Status: ${data.status_type}`,
+                    status_type: data.status_type,
+                    task_id: data.task_id,
+                    workspace_path: data.workspace_path,
+                    updated_at: new Date().toISOString()
+                });
+                fetchAgentSessions();
+            } else if (msg.event_type === 'agent_activity_logged') {
+                const data = msg.data;
+                addActivityEntry({
+                    message: data.message,
+                    activity_type: data.activity_type,
+                    source: data.source,
+                    task_id: data.task_id,
+                    workspace_path: data.workspace_path,
+                    file_path: data.file_path,
+                    command: data.command,
+                    created_at: new Date().toISOString()
+                });
+                fetchAgentSessions();
+                if (selectedSessionId && data.session_id === selectedSessionId) refreshSelectedTerminal();
+            } else if (
+                msg.event_type === 'orchestration_decision_logged' ||
+                msg.event_type === 'activity_summary_created' ||
+                msg.event_type === 'user_contribution_logged' ||
+                msg.event_type === 'task_lease_updated'
+            ) {
+                fetchProjectContext();
+            }
+            if (msg.event_type === 'diff_review_requested' || msg.event_type === 'diff_review_completed') {
+                fetchDiffReviews();
+            }
+            if (msg.event_type === 'agent_approval_requested') {
+                showToast(`🛂 Approval needed: ${msg.data.title || msg.data.approval_type}`, 'warning');
+                fetchAgentApprovals();
+            } else if (msg.event_type === 'agent_approval_resolved') {
+                showToast(`Approval #${msg.data.approval_id} ${msg.data.status}`, 'info');
+                fetchAgentApprovals();
+            }
+        };
+
+        socket.onclose = function () {
+            console.log('WS Connection closed. Retrying in 5s...');
+            setTimeout(initWebSocket, 5000);
+        };
+
+        socket.onerror = function (err) {
+            console.error('WS Error:', err);
+        };
+    }
+
     // Initialize
     initDragDrop();
+    initWebSocket();
+    fetchAgentStatuses();
+    fetchAgentSessions();
+    fetchProjectActivity();
+    fetchProjectContext();
+    setInterval(checkStaleCards, 30000); // Check for stale cards every 30s
+    setInterval(fetchAgentStatuses, 30000); // Refresh statuses every 30s
+    setInterval(fetchAgentSessions, 30000); // Refresh sessions every 30s
+    setInterval(fetchProjectContext, 45000); // Refresh coordination context
+
+    // --- Chat-style task creation ---
+    const chatInput = document.getElementById('chat-task-input');
+    if (chatInput) {
+        chatInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                createTaskFromChat();
+            }
+        });
+    }
+
+    async function createTaskFromChat() {
+        const input = document.getElementById('chat-task-input');
+        if (!input) return;
+        const text = input.value.trim();
+        if (!text) return;
+
+        const firstStage = document.querySelector('.kanban-column [data-stage-id]');
+        const stageId = firstStage ? firstStage.getAttribute('data-stage-id') : null;
+        if (!stageId) { showToast('No stage found', 'error'); return; }
+
+        const lines = text.split('\n');
+        const title = lines[0].substring(0, 255);
+        const description = lines.slice(1).join('\n') || '';
+
+        try {
+            const resp = await fetch('/ui/tasks/create', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''},
+                body: JSON.stringify({
+                    project_id: PROJECT_ID,
+                    title: title,
+                    description: description,
+                    stage_id: parseInt(stageId),
+                    priority: 0,
+                }),
+            });
+            if (!resp.ok) throw new Error('Failed to create task');
+            input.value = '';
+            showToast('Task created', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    // --- Open workspace folder ---
+    async function openWorkspace(path) {
+        if (!path) { showToast('No workspace folder set for this project', 'warning'); return; }
+        try {
+            const res = await fetch('/ui/api/open-workspace', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''},
+                body: JSON.stringify({path: path}),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                showToast('Opened ' + (data.path || path), 'success');
+            } else {
+                showToast('Could not open: ' + (data.detail || res.statusText), 'error');
+            }
+        } catch (e) {
+            showToast('Open failed: ' + e.message, 'error');
+        }
+    }
+
+    // --- Sync GitHub PRs from board ---
+    async function syncGithub() {
+        showToast('Syncing GitHub contributions...', 'info');
+        try {
+            const resp = await fetch(`/agents/projects/${PROJECT_ID}/contributions/sync/github`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''},
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                showToast(`Synced ${data.created || 0} new items (${data.seen || 0} total)`, 'success');
+                fetchProjectContext();
+            } else {
+                showToast('Sync failed: ' + (data.detail || 'Unknown error'), 'error');
+            }
+        } catch (err) {
+            showToast('Sync error: ' + err.message, 'error');
+        }
+    }
+
+    // --- Diff Reviews ---
+    async function fetchDiffReviews() {
+        try {
+            const resp = await fetch(`/agents/projects/${PROJECT_ID}/diff-reviews`);
+            if (!resp.ok) return;
+            const reviews = await resp.json();
+            const container = document.getElementById('diff-review-list');
+            if (!container) return;
+            if (!reviews.length) {
+                container.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">No reviews yet.</p>';
+                return;
+            }
+            container.innerHTML = reviews.map(r => {
+                const statusColors = {pending:'#fbbf24', approved:'#34d399', rejected:'#f87171', changes_requested:'#60a5fa'};
+                const color = statusColors[r.status] || '#9ca3af';
+                const time = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+                return `<div class="insight-item">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span class="insight-title">Review #${r.id}</span>
+                        <span style="background:${color};color:#111;padding:0.1rem 0.5rem;border-radius:1rem;font-size:0.7rem;font-weight:700;">${r.status}</span>
+                    </div>
+                    ${r.summary ? '<p style="font-size:0.78rem;margin:0.3rem 0;">' + r.summary.substring(0,120) + '</p>' : ''}
+                    ${r.is_critical ? '<span style="color:#ef4444;font-size:0.75rem;">Critical path</span>' : ''}
+                    <div class="insight-meta">${time}${r.reviewer_id ? ' · Reviewed by #' + r.reviewer_id : ''}</div>
+                </div>`;
+            }).join('');
+        } catch (e) { console.error('fetchDiffReviews', e); }
+    }
+
+    // Initial diff review fetch
+    fetchDiffReviews();
+
+    // --- Approval Queue ---
+    async function fetchAgentApprovals() {
+        try {
+            const [pendingResp, recentResp] = await Promise.all([
+                fetch(`/agents/approvals?project_id=${PROJECT_ID}&status_filter=pending&limit=50`, {
+                    headers: {'X-Entity-ID': CURRENT_ENTITY_ID || ''},
+                }),
+                fetch(`/agents/approvals?project_id=${PROJECT_ID}&limit=20`, {
+                    headers: {'X-Entity-ID': CURRENT_ENTITY_ID || ''},
+                }),
+            ]);
+            const pending = pendingResp.ok ? await pendingResp.json() : [];
+            const allRecent = recentResp.ok ? await recentResp.json() : [];
+            const recent = allRecent.filter(a => a.status !== 'pending').slice(0, 10);
+            renderApprovalList('approval-pending-list', pending, true,
+                'No pending approvals.');
+            renderApprovalList('approval-recent-list', recent, false,
+                'No resolved approvals yet.');
+            updateApprovalsBadge(pending.length);
+        } catch (e) {
+            console.error('fetchAgentApprovals', e);
+        }
+    }
+
+    function updateApprovalsBadge(count) {
+        const badge = document.getElementById('approvals-badge');
+        if (!badge) return;
+        if (count > 0) {
+            badge.textContent = count;
+            badge.style.display = '';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
+    function renderApprovalList(elementId, approvals, withControls, emptyText) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        if (!approvals.length) {
+            el.innerHTML = `<p class="text-secondary" style="font-size:0.8rem;">${emptyText}</p>`;
+            return;
+        }
+        el.innerHTML = approvals.map(a => {
+            const statusColors = {
+                pending: '#fbbf24', approved: '#34d399', rejected: '#f87171',
+                cancelled: '#9ca3af', expired: '#9ca3af',
+            };
+            const color = statusColors[a.status] || '#9ca3af';
+            const time = a.requested_at ? timeAgo(a.requested_at) : '';
+            const cmd = a.command ? `<pre class="approval-command">${escapeHtml(a.command)}</pre>` : '';
+            const diff = a.diff_content
+                ? `<details><summary>diff</summary><pre class="approval-diff">${escapeHtml(a.diff_content.substring(0, 4000))}</pre></details>`
+                : '';
+            const controls = withControls
+                ? `<div class="approval-controls">
+                       <input type="text" id="approval-note-${a.id}" placeholder="Optional note" class="approval-note"/>
+                       <button class="btn btn-success btn-sm" onclick="resolveApproval(${a.id}, 'approved')">Approve</button>
+                       <button class="btn btn-danger btn-sm" onclick="resolveApproval(${a.id}, 'rejected')">Reject</button>
+                   </div>`
+                : (a.response_message
+                    ? `<div class="activity-detail">"${escapeHtml(a.response_message)}"</div>`
+                    : '');
+            return `<div class="insight-item">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
+                    <span class="insight-title">${escapeHtml(a.title)}</span>
+                    <span style="background:${color};color:#111;padding:0.1rem 0.5rem;border-radius:1rem;font-size:0.7rem;font-weight:700;">${a.status}</span>
+                </div>
+                <div class="activity-detail">${escapeHtml(a.approval_type)} · agent #${a.agent_id}${a.task_id ? ' · task #' + a.task_id : ''}${a.session_id ? ' · session #' + a.session_id : ''}</div>
+                <div style="margin-top:0.35rem;font-size:0.8rem;">${escapeHtml(a.message)}</div>
+                ${cmd}
+                ${diff}
+                <div class="insight-meta">${time}</div>
+                ${controls}
+            </div>`;
+        }).join('');
+    }
+
+    async function resolveApproval(approvalId, decision) {
+        const note = (document.getElementById('approval-note-' + approvalId) || {}).value || '';
+        try {
+            const resp = await fetch(`/agents/approvals/${approvalId}/resolve`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Entity-ID': CURRENT_ENTITY_ID || '',
+                },
+                body: JSON.stringify({ decision: decision, response_message: note || null }),
+            });
+            if (!resp.ok) {
+                const data = await resp.json().catch(() => ({}));
+                throw new Error(data.detail || 'Failed to resolve approval');
+            }
+            showToast(`Approval ${decision}`, 'success');
+            fetchAgentApprovals();
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    }
+
+    // Initial fetch + periodic refresh
+    fetchAgentApprovals();
+    setInterval(fetchAgentApprovals, 15000);
 </script>
+<style>
+    .approval-command, .approval-diff {
+        margin: 0.35rem 0;
+        padding: 0.35rem 0.5rem;
+        background: rgba(0,0,0,0.05);
+        border-radius: 0.35rem;
+        font-size: 0.72rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 240px;
+        overflow: auto;
+    }
+    .approval-controls {
+        display: flex;
+        gap: 0.4rem;
+        margin-top: 0.5rem;
+        align-items: center;
+    }
+    .approval-note {
+        flex: 1;
+        font-size: 0.75rem;
+        padding: 0.3rem 0.5rem;
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 0.35rem;
+    }
+    .btn-sm { padding: 0.25rem 0.6rem; font-size: 0.75rem; }
+    .btn-success { background: #10b981; color: #fff; border: none; border-radius: 0.35rem; cursor: pointer; }
+    .btn-danger { background: #ef4444; color: #fff; border: none; border-radius: 0.35rem; cursor: pointer; }
+</style>
 {% endblock %}
