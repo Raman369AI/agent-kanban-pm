@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "kanban-pm": {
+      "command": "python3",
+      "args": [
+        "/home/kronos/Desktop/agent-kanban-pm/mcp_server.py"
+      ],
+      "env": {
+        "DATABASE_URL": "sqlite+aiosqlite:///./kanban.db"
+      },
+      "description": "Kanban Project Management - manage tasks and projects"
+    }
+  }
+}

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Agent Kanban PM{% endblock %}
+
+{% block content %}
+<div class="mb-4" style="animation: fadeIn 0.4s ease-out;">
+    <h2 style="font-weight: 800; font-size: 2rem; letter-spacing: -0.02em; background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Dashboard</h2>
+    <p class="text-secondary" style="font-size: 0.95rem; margin-top: 0.25rem;">Welcome to your hybrid agentic project management center.</p>
+</div>
+
+<!-- Stats Overview -->
+<div class="stats-grid">
+    <div class="stat-card glass-card" style="transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);">
+        <div class="stat-value" style="color: var(--accent-primary);">{{ stats.total_projects }}</div>
+        <div class="stat-label">Total Projects</div>
+    </div>
+    <div class="stat-card glass-card" style="transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);">
+        <div class="stat-value" style="color: var(--success);">{{ stats.total_tasks }}</div>
+        <div class="stat-label">Total Tasks</div>
+    </div>
+    <div class="stat-card glass-card" style="transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);">
+        <div class="stat-value" style="color: var(--accent-secondary);">{{ stats.completed_tasks }}</div>
+        <div class="stat-label">Completed</div>
+    </div>
+    <div class="stat-card glass-card" style="transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);">
+        <div class="stat-value" style="color: var(--warning);">{{ stats.total_entities }}</div>
+        <div class="stat-label">Assigned Roles</div>
+    </div>
+</div>
+
+<!-- Recent Projects -->
+<div class="card glass-card mb-4" style="padding: 2rem;">
+    <div class="card-header" style="border-bottom: 1px solid var(--glass-border); padding-bottom: 1.5rem; margin-bottom: 1.5rem;">
+        <h3 class="card-title" style="font-weight: 800; letter-spacing: -0.01em;">Recent Projects</h3>
+        <a href="/ui/projects" class="btn btn-primary" style="border-radius: 2rem; padding: 0.55rem 1.5rem; font-size: 0.85rem;">View All</a>
+    </div>
+    <div class="table-container">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Project</th>
+                    <th>Status</th>
+                    <th>Tasks</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for project in recent_projects %}
+                <tr style="transition: background 0.2s;">
+                    <td>
+                        <a href="/ui/projects/{{ project.id }}/board" style="font-weight: 700; color: var(--text-primary);">{{ project.name }}</a><br>
+                        <small class="text-secondary">{{ (project.description or '')[:80] }}{% if project.description and project.description|length > 80 %}...{% endif %}</small>
+                    </td>
+                    <td>
+                        <span class="badge" style="background: rgba(var(--accent-primary-rgb), 0.1); color: var(--accent-primary); border: 1px solid rgba(var(--accent-primary-rgb), 0.2); border-radius: 2rem; padding: 0.3rem 0.75rem;">
+                            {% if project.approval_status == 'approved' %}📦{% elif project.approval_status == 'pending' %}⏳{% else %}📝{% endif %} {{ project.approval_status }}
+                        </span>
+                    </td>
+                    <td><span style="font-weight: 700;">{{ project.task_count }}</span> tasks</td>
+                    <td class="text-secondary">{{ project.created_at.strftime('%Y-%m-%d') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+
+<!-- Recent Tasks -->
+<div class="card glass-card">
+    <div class="card-header" style="border-bottom: 1px solid var(--glass-border); padding-bottom: 1.5rem; margin-bottom: 1.5rem;">
+        <h3 class="card-title" style="font-weight: 800; letter-spacing: -0.01em;">Recent Tasks</h3>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.25rem;">
+        {% for task in recent_tasks %}
+        <div class="kanban-task static" data-priority="P{{ task.priority }}" style="margin-bottom: 0;">
+            <div class="mb-2">
+                <strong class="task-title" style="font-size: 0.95rem;">{{ task.title }}</strong>
+            </div>
+            <div class="task-meta" style="margin-bottom: 0.75rem;">
+                <span class="badge" style="background: rgba(var(--accent-primary-rgb), 0.1); color: var(--accent-primary); border: 1px solid rgba(var(--accent-primary-rgb), 0.2); border-radius: 2rem; padding: 0.2rem 0.6rem; font-size: 0.7rem;">
+                    {% if task.status == 'completed' %}✅{% elif task.status == 'in_progress' %}⚡{% else %}⏳{% endif %} {{ task.status }}
+                </span>
+                <span class="badge" style="background: var(--glass-bg); border: 1px solid var(--glass-border); color: var(--text-secondary); border-radius: 2rem; padding: 0.2rem 0.6rem; font-size: 0.7rem;">📌 P{{ task.priority }}</span>
+            </div>
+            <div class="text-secondary">
+                <p style="font-size: 0.82rem; line-height: 1.5;">{{ (task.description or '')[:120] }}{% if task.description and task.description|length > 120 %}...{% endif %}</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

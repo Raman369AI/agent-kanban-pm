@@ -1,0 +1,24 @@
+name: opencode
+display_name: "OpenCode"
+version: "1.0"
+
+invoke:
+  command: opencode
+  mcp_flag: "--mcp"
+  info_flag: "--version"
+
+capabilities: [code, debugging, fullstack, testing]
+
+models:
+  - id: opencode-default
+    context_window: 128000
+
+protocol: mcp
+
+auth:
+  type: none
+roles: [worker, test]
+modes: [supervised, auto, headless]
+
+reporting:
+  heartbeat_interval: 30

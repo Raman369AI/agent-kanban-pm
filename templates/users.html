@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Team - Agent Kanban PM{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4" style="animation: fadeIn 0.4s ease-out;">
+    <div>
+        <h2 style="font-weight: 800; font-size: 1.75rem; letter-spacing: -0.02em; margin: 0; background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Team Members</h2>
+        <p class="text-secondary" style="font-size: 0.9rem; margin-top: 0.25rem;">You and the agents working in your workspace</p>
+    </div>
+</div>
+
+<div class="card glass-card" style="padding: 0;">
+    <div class="table-container">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Email / ID</th>
+                    <th>Skills</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr {% if user.name=='Antigravity' %}class="highlight-antigravity" {% endif %}>
+                    <td>
+                        <strong>{{ user.name }}</strong>
+                        {% if user.name == 'Antigravity' %}
+                        <span class="badge badge-warning" style="font-size: 0.65rem; margin-left: 0.35rem;">MANAGER</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge badge-{{ user.entity_type }}">
+                            {{ user.entity_type | capitalize }}
+                        </span>
+                    </td>
+                    <td style="font-size: 0.85rem; color: var(--text-secondary);">{{ user.email or 'N/A' }}</td>
+                    <td>
+                        {% if user.skills %}
+                        {% for skill in user.skills.split(',') %}
+                        <span class="badge" style="background: rgba(var(--accent-primary-rgb), 0.08); color: var(--accent-primary); border: 1px solid rgba(var(--accent-primary-rgb), 0.15); padding: 0.15rem 0.5rem; font-size: 0.72rem; border-radius: 2rem;">{{ skill.strip() }}</span>
+                        {% endfor %}
+                        {% else %}
+                        <small class="text-secondary" style="font-size: 0.8rem;">No skills listed</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 0.4rem;">
+                            <span class="status-indicator {% if user.is_active %}status-online{% else %}status-offline{% endif %}"></span>
+                            <span style="font-size: 0.85rem; font-weight: 500;">{{ 'Active' if user.is_active else 'Inactive' }}</span>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    .highlight-antigravity {
+        background: linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.06), transparent) !important;
+        border-left: 3px solid var(--accent-primary);
+    }
+
+    .highlight-antigravity:hover td {
+        background: rgba(var(--accent-primary-rgb), 0.04) !important;
+    }
+
+    .status-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+    }
+
+    .status-online {
+        background-color: var(--success);
+        box-shadow: 0 0 6px rgba(var(--success-rgb), 0.4);
+    }
+
+    .status-offline {
+        background-color: var(--danger);
+        box-shadow: 0 0 6px rgba(239, 68, 68, 0.3);
+    }
+</style>
+{% endblock %}

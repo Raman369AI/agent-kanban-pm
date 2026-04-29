@@ -1,0 +1,24 @@
+name: codex
+display_name: "Codex (OpenAI)"
+version: "1.0"
+
+invoke:
+  command: codex
+  mcp_flag: "--mcp"
+  info_flag: "--version"
+
+capabilities: [code, api-design, testing, refactoring]
+
+models:
+  - id: codex-default
+    context_window: 128000
+
+protocol: mcp
+
+auth:
+  type: none
+roles: [worker, ui, test]
+modes: [supervised, auto, headless]
+
+reporting:
+  heartbeat_interval: 30

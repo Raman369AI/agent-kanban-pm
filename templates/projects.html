@@ -1,0 +1,546 @@
+{% extends "base.html" %}
+
+{% block title %}Projects{% endblock %}
+
+{% block extra_css %}
+<style>
+    .projects-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+    }
+
+    .projects-header h2 {
+        margin: 0;
+    }
+
+    .project-modal-overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.25rem;
+        background: rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(8px);
+        z-index: 1000;
+    }
+
+    .project-modal-card {
+        width: min(680px, 100%);
+        max-height: min(760px, 92vh);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        background: var(--glass-bg);
+        backdrop-filter: blur(var(--glass-blur));
+        -webkit-backdrop-filter: blur(var(--glass-blur));
+        border: 1px solid var(--glass-border);
+        border-radius: var(--radius-xl);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.3);
+    }
+
+
+    .project-modal-card.folder-modal {
+        width: min(760px, 100%);
+    }
+
+    .project-modal-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 1.25rem 1.5rem;
+        border-bottom: 1px solid var(--border-color);
+        background: var(--bg-secondary);
+    }
+
+    .project-modal-title {
+        margin: 0;
+        font-size: 1.2rem;
+    }
+
+    .project-modal-subtitle {
+        margin: 0.25rem 0 0;
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+    }
+
+    .project-form {
+        padding: 1.5rem;
+        overflow-y: auto;
+    }
+
+    .project-form-grid {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .project-field label {
+        display: block;
+        margin-bottom: 0.4rem;
+        color: var(--text-primary);
+        font-size: 0.875rem;
+        font-weight: 600;
+    }
+
+    .project-field .field-hint {
+        margin-top: 0.4rem;
+        color: var(--text-secondary);
+        font-size: 0.82rem;
+    }
+
+    .project-input,
+    .project-textarea {
+        width: 100%;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 0.95rem;
+        padding: 0.78rem 0.9rem;
+        transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
+    }
+
+    .project-textarea {
+        resize: vertical;
+        min-height: 92px;
+    }
+
+    .project-input:focus,
+    .project-textarea:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+        box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb), 0.14);
+        background: var(--bg-card);
+    }
+
+    .path-picker-control {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.6rem;
+        align-items: stretch;
+    }
+
+    .path-display {
+        position: relative;
+    }
+
+    .path-display::before {
+        content: "Folder";
+        position: absolute;
+        left: 0.85rem;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        pointer-events: none;
+    }
+
+    .path-display .project-input {
+        padding-left: 4.6rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.86rem;
+        cursor: pointer;
+    }
+
+    .project-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.75rem;
+        padding: 1rem 1.5rem 1.5rem;
+        border-top: 1px solid var(--border-color);
+        background: var(--bg-card);
+    }
+
+    .folder-picker-body {
+        display: grid;
+        gap: 1rem;
+        padding: 1.25rem 1.5rem 1.5rem;
+        overflow: hidden;
+    }
+
+    .folder-toolbar {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.6rem;
+    }
+
+    .folder-shortcuts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .folder-list {
+        min-height: 260px;
+        max-height: 360px;
+        overflow-y: auto;
+        display: grid;
+        gap: 0.45rem;
+        padding: 0.35rem;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--bg-primary);
+    }
+
+    .folder-row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 0.75rem;
+        align-items: center;
+        width: 100%;
+        padding: 0.72rem 0.8rem;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-primary);
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .folder-row:hover,
+    .folder-row:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+        background: var(--bg-card);
+    }
+
+    .folder-icon {
+        display: inline-flex;
+        width: 2rem;
+        height: 2rem;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        background: rgba(var(--accent-primary-rgb), 0.12);
+        color: var(--accent-primary);
+        font-weight: 700;
+    }
+
+    .folder-name {
+        font-weight: 650;
+    }
+
+    .folder-path {
+        display: block;
+        overflow: hidden;
+        color: var(--text-secondary);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.78rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .folder-open {
+        color: var(--text-muted);
+        font-size: 1.15rem;
+    }
+
+    .folder-empty {
+        margin: 0;
+        padding: 2rem;
+        color: var(--text-secondary);
+        text-align: center;
+    }
+
+    @media (max-width: 720px) {
+        .projects-header,
+        .path-picker-control,
+        .folder-toolbar {
+            grid-template-columns: 1fr;
+            display: grid;
+        }
+
+        .projects-header .btn,
+        .path-picker-control .btn,
+        .folder-toolbar .btn {
+            width: 100%;
+        }
+
+        .project-modal-actions {
+            flex-direction: column-reverse;
+        }
+
+        .project-modal-actions .btn {
+            width: 100%;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="projects-header">
+    <div>
+        <h2>Projects</h2>
+        <p class="text-secondary">Manage your projects and track progress</p>
+    </div>
+    <button class="btn btn-primary" onclick="document.getElementById('create-modal').style.display='flex'">+ New
+        Project</button>
+</div>
+
+{% for project in projects %}
+<div class="card glass-card mb-4" id="project-card-{{ project.id }}" style="padding: 2rem; animation: fadeIn 0.4s ease-out;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start; gap: 2rem;">
+        <div style="flex:1;">
+            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                <h3 style="margin:0; font-weight: 800; font-size: 1.5rem; background: linear-gradient(135deg, var(--text-primary), var(--accent-primary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">{{ project.name }}</h3>
+                <span class="badge" style="background: rgba(var(--accent-primary-rgb), 0.1); color: var(--accent-primary); border: 1px solid rgba(var(--accent-primary-rgb), 0.2); border-radius: 2rem; padding: 0.35rem 0.9rem; font-weight: 700; font-size: 0.75rem;">
+                    📦 {{ project.approval_status.value }}
+                </span>
+            </div>
+            <p class="text-secondary" style="font-size: 1rem; margin-bottom: 1.25rem; line-height: 1.6;">{{ project.description }}</p>
+            
+            <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
+                {% if project.path %}
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 1.1rem;">📁</span>
+                    <code style="background: var(--glass-bg); border: 1px solid var(--glass-border); padding: 0.2rem 0.6rem; border-radius: var(--radius-sm); font-size: 0.82rem;">{{ project.path }}</code>
+                </div>
+                {% endif %}
+                <div style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">
+                    <span style="font-size: 1.1rem;">📊</span>
+                    <span style="font-weight: 600;">{{ project.stages|length }}</span> Stages
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-muted); font-size: 0.85rem;">
+                    <span style="font-size: 1.1rem;">📅</span>
+                    <span>{{ project.created_at.strftime('%Y-%m-%d') }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div style="display:flex;gap:0.75rem;margin-top:2rem; border-top: 1px solid var(--glass-border); padding-top: 1.5rem;">
+        <a href="/ui/projects/{{ project.id }}/board" class="btn btn-primary" style="border-radius: 2rem; padding: 0.55rem 1.75rem; font-weight: 700; font-size: 0.85rem;">View Board</a>
+        {% if project.path %}
+        <button class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.25rem; font-size: 0.85rem;" onclick="openProjectFolder('{{ project.path|replace("'", "\\'") }}')">
+            <span style="margin-right: 0.4rem;">📂</span> Open Folder
+        </button>
+        {% endif %}
+        <button class="btn" style="border-radius: 2rem; padding: 0.55rem 1.25rem; color: var(--danger); font-size: 0.85rem;" onclick="deleteProject({{ project.id }})">
+            <span style="margin-right: 0.4rem;">🗑️</span> Delete
+        </button>
+    </div>
+</div>
+{% endfor %}
+
+
+{% if not projects %}
+<div class="card text-center text-secondary" style="padding:3rem;">
+    <p>No projects yet. Create your first project to get started!</p>
+</div>
+{% endif %}
+
+<!-- Create Project Modal -->
+<div id="create-modal" class="project-modal-overlay" style="display:none;"
+    onclick="if(event.target===this)this.style.display='none'">
+    <div class="project-modal-card">
+        <div class="project-modal-header">
+            <div>
+                <h3 class="project-modal-title">Create Project</h3>
+                <p class="project-modal-subtitle">Choose the local workspace folder for this project.</p>
+            </div>
+            <button class="btn-icon"
+                onclick="document.getElementById('create-modal').style.display='none'">&times;</button>
+        </div>
+        <form action="/ui/projects/create" method="POST">
+            <div class="project-form">
+                <div class="project-form-grid">
+            <div class="project-field">
+                <label>Project Name</label>
+                <input type="text" name="name" class="project-input" required placeholder="Agent Kanban PM">
+            </div>
+            <div class="project-field">
+                <label>Description</label>
+                <textarea name="description" class="project-textarea" rows="3"
+                    placeholder="Short project summary"></textarea>
+            </div>
+            <div class="project-field">
+                <label>Project Folder</label>
+                <div class="path-picker-control">
+                    <div class="path-display">
+                        <input type="text" name="path" id="project-path-input" class="project-input"
+                            placeholder="Choose a local folder" readonly onclick="openFolderPicker('project-path-input')">
+                    </div>
+                    <button type="button" class="btn" onclick="openFolderPicker('project-path-input')">Browse</button>
+                </div>
+                <div class="field-hint">Agents use this folder as the workspace for commands, logs, and file context.</div>
+            </div>
+                </div>
+            </div>
+            <div class="project-modal-actions">
+                <button type="button" class="btn"
+                    onclick="document.getElementById('create-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Project</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Folder Picker Modal -->
+<div id="folder-picker-modal" class="project-modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeFolderPicker()">
+    <div class="project-modal-card folder-modal">
+        <div class="project-modal-header">
+            <div>
+                <h3 class="project-modal-title">Select Folder</h3>
+                <p class="project-modal-subtitle">Browse local directories and choose the project workspace.</p>
+            </div>
+            <button class="btn-icon" onclick="closeFolderPicker()">&times;</button>
+        </div>
+        <div class="folder-picker-body">
+            <div class="folder-toolbar">
+                <input id="folder-picker-current" class="project-input" type="text" aria-label="Current folder">
+                <button type="button" class="btn" onclick="loadFolderFromInput()">Go</button>
+            </div>
+            <div class="folder-shortcuts">
+                <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerParent)">Up</button>
+                <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerHome)">Home</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="selectCurrentFolder()">Use This Folder</button>
+            </div>
+            <div id="folder-picker-list" class="folder-list">
+                <p class="folder-empty">Loading...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast" style="display:none;"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    var CURRENT_ENTITY_ID = {{ current_entity.id if current_entity else 'null' }};
+    var folderPickerTarget = null;
+    var folderPickerCurrent = '';
+    var folderPickerParent = null;
+    var folderPickerHome = '';
+
+    function showToast(message, type) {
+        var toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.className = 'toast toast-' + (type || 'info');
+        toast.style.display = 'block';
+        setTimeout(function () { toast.style.display = 'none'; }, 3000);
+    }
+
+    function submitCreateProject(e) {
+        e.preventDefault();
+        if (!CURRENT_ENTITY_ID) {
+            showToast('Authentication required. Please set X-Entity-ID header.', 'error');
+            return;
+        }
+        var form = e.target;
+        var data = {
+            name: form.name.value.trim(),
+            description: form.description.value.trim(),
+            path: form.path.value.trim()
+        };
+        if (!data.name) { showToast('Project name is required', 'error'); return; }
+
+        fetch('/ui/projects/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
+            body: JSON.stringify(data)
+        })
+        .then(function (r) { if (!r.ok) throw new Error('Failed to create project'); return r.json(); })
+        .then(function (project) {
+            showToast('Project created!', 'success');
+            form.reset();
+            document.getElementById('create-modal').style.display = 'none';
+            location.reload();
+        })
+        .catch(function (err) { showToast('Error: ' + err.message, 'error'); });
+    }
+
+    function closeFolderPicker() {
+        document.getElementById('folder-picker-modal').style.display = 'none';
+    }
+
+    function openFolderPicker(targetInputId) {
+        folderPickerTarget = document.getElementById(targetInputId);
+        document.getElementById('folder-picker-modal').style.display = 'flex';
+        loadFolder(folderPickerTarget.value || '');
+    }
+
+    function loadFolderFromInput() {
+        loadFolder(document.getElementById('folder-picker-current').value);
+    }
+
+    function loadFolder(path) {
+        var url = '/ui/api/folders' + (path ? '?path=' + encodeURIComponent(path) : '');
+        document.getElementById('folder-picker-list').innerHTML = '<p class="folder-empty">Loading...</p>';
+        fetch(url)
+            .then(function (r) { if (!r.ok) throw new Error('Failed to load folders'); return r.json(); })
+            .then(function (data) {
+                folderPickerCurrent = data.path;
+                folderPickerParent = data.parent;
+                folderPickerHome = data.home;
+                document.getElementById('folder-picker-current').value = data.path;
+                var list = document.getElementById('folder-picker-list');
+                if (!data.folders.length) {
+                    list.innerHTML = '<p class="folder-empty">No folders found here.</p>';
+                    return;
+                }
+                list.innerHTML = data.folders.map(function (folder) {
+                    return '<button type="button" class="folder-row" onclick="loadFolder(' + JSON.stringify(folder.path).replace(/"/g, '&quot;') + ')">'
+                        + '<span class="folder-icon">/</span>'
+                        + '<span><span class="folder-name">' + folder.name + '</span>'
+                        + '<span class="folder-path">' + folder.path + '</span></span>'
+                        + '<span class="folder-open">›</span>'
+                        + '</button>';
+                }).join('');
+            })
+            .catch(function (err) {
+                document.getElementById('folder-picker-list').innerHTML = '<p class="folder-empty">' + err.message + '</p>';
+            });
+    }
+
+    function selectCurrentFolder() {
+        if (folderPickerTarget) folderPickerTarget.value = folderPickerCurrent;
+        closeFolderPicker();
+    }
+
+    // Wire up the form
+    document.addEventListener('DOMContentLoaded', function () {
+        var form = document.querySelector('#create-modal form');
+        if (form) form.addEventListener('submit', submitCreateProject);
+    });
+
+    function deleteProject(projectId) {
+        if (!confirm('Delete this project and all its tasks?')) return;
+        if (!CURRENT_ENTITY_ID) {
+            showToast('Authentication required', 'error');
+            return;
+        }
+        fetch('/ui/projects/' + projectId, { method: 'DELETE', headers: { 'x-entity-id': CURRENT_ENTITY_ID } })
+            .then(function (r) { if (!r.ok) throw new Error('Failed'); })
+            .then(function () {
+                var card = document.getElementById('project-card-' + projectId);
+                if (card) card.remove();
+                showToast('Project deleted', 'success');
+            })
+            .catch(function (err) { showToast('Error: ' + err.message, 'error'); });
+    }
+
+    function openProjectFolder(path) {
+        fetch('/ui/api/open-workspace', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID || '' },
+            body: JSON.stringify({ path: path }),
+        }).then(async function (r) {
+            const data = await r.json().catch(function () { return {}; });
+            if (r.ok) {
+                showToast('Opened ' + (data.path || path), 'success');
+            } else {
+                showToast('Could not open: ' + (data.detail || r.statusText), 'error');
+            }
+        }).catch(function (err) { showToast('Open failed: ' + err.message, 'error'); });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,1768 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Kanban Board{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/kanban_premium.css?v=6">
+
+<div class="project-sub-nav" style="margin-bottom:0.75rem;">
+  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill active">&#128203; Board</a>
+  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">&#128295; Workbench</a>
+  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Git</a>
+</div>
+
+<div class="board-revamp-shell">
+  <section class="board-header-section">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="header-main-content">
+        <div class="d-flex align-items-center gap-2">
+          <h2 id="project-title" class="m-0">{{ project.name }}</h2>
+          <button class="btn-icon btn-sm" onclick="editProject()" title="Edit project name/description">&#9998;</button>
+          <div id="project-managed-badge-compact" style="margin-left:0.5rem;">
+             {% if project.creator and project.creator.entity_type.value == 'agent' %}
+                <span class="badge badge-agent" title="Managed by {{ project.creator.name }}">&#129302;</span>
+             {% endif %}
+          </div>
+        </div>
+      </div>
+      
+      <div id="header-chat-wrap" class="header-chat-wrap flex-grow-1 mx-4">
+        <div class="chat-task-input-wrap-compact">
+          <input type="text" id="chat-task-input" class="form-input chat-input-compact" placeholder="Quick task: describe what needs to be done..."
+            onkeydown="if(event.key==='Enter') createTaskFromChat()">
+          <button class="btn btn-primary chat-btn-compact" onclick="createTaskFromChat()">
+            <span class="icon">&#128640;</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button class="btn btn-icon" id="header-bell-btn" onclick="toggleBellDropdown()" title="Pending approvals">
+          <span id="header-bell-icon">&#128276;</span> <span id="header-bell-count" class="badge" style="display:none;background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;position:absolute;top:0;right:0;border-radius:1rem;">0</span>
+        </button>
+        <button class="btn btn-secondary" onclick="openTeamModal()" title="Roles & Team">
+          <span class="icon">&#9881;</span>
+        </button>
+        <button class="btn btn-primary autopilot-btn" onclick="openAutopilotModal()" title="Configure Autopilot">
+          <span class="icon">&#129302;</span>
+        </button>
+        <button class="btn btn-secondary notification-settings-btn" onclick="toggleNotificationSettings()" title="Notification settings">
+          &#128276;
+        </button>
+      </div>
+    </div>
+    
+    <div class="d-flex align-items-center gap-3 flex-wrap" style="font-size: 0.85rem;">
+      <span class="badge {% if project.approval_status and project.approval_status.value == 'APPROVED' %}badge-success{% elif project.approval_status and project.approval_status.value == 'REJECTED' %}badge-blocked{% else %}badge-pending{% endif %}" title="Project Approval Status">&#128230; {{ (project.approval_status.value | lower) if project.approval_status else 'pending' }}</span>
+      <span class="text-secondary" title="Project workspace folder">&#128193; <code id="project-path-label">{{ project.path or 'No folder selected' }}</code></span>
+      {% if project.path %}
+      <button class="btn-icon btn-sm" onclick="openWorkspace('{{ project.path }}')" title="Open workspace folder">&#128194;</button>
+      {% endif %}
+      <button class="btn btn-link btn-sm" onclick="syncGithub()" title="Sync GitHub PRs/issues">&#8644; GitHub</button>
+    </div>
+    <div id="bell-dropdown" class="bell-dropdown" style="display:none;">
+      <div class="bell-dropdown-header">
+        <strong>Pending Approvals</strong>
+        <button class="btn-icon-sm" onclick="toggleBellDropdown()">&#10005;</button>
+      </div>
+      <div id="bell-dropdown-list" class="bell-dropdown-list">
+        <p class="text-secondary" style="font-size:0.8rem;">No pending approvals.</p>
+      </div>
+    </div>
+    <div id="notification-settings-panel" class="notification-settings-panel" style="display:none;">
+      <label class="d-flex align-items-center gap-2">
+        <input type="checkbox" id="notifications-enabled" onchange="toggleNotifications(this.checked)">
+        Enable desktop notifications
+      </label>
+      <label class="d-flex align-items-center gap-2">
+        <input type="checkbox" id="notifications-sound" onchange="toggleNotificationSound(this.checked)">
+        Play sound on approval
+      </label>
+    </div>
+  </section>
+
+
+  <section class="board-main-revamp" id="board-main-revamp">
+    <div class="kanban-container-revamp">
+      {% for stage in project.stages %}
+      <div class="kanban-column-revamp" data-stage-id="{{ stage.id }}" data-stage-name="{{ stage.name }}">
+        <div class="kanban-column-header-revamp">
+          <span>{{ stage.name }}</span>
+          <span class="badge" id="count-stage-{{ stage.id }}">{{ stage.tasks|length }}</span>
+        </div>
+
+        <div class="kanban-drop-zone-revamp" data-stage-id="{{ stage.id }}">
+          {% for task in stage.tasks %}
+          <div class="kanban-task-revamp" draggable="true" data-task-id="{{ task.id }}" data-current-stage="{{ stage.id }}" data-priority="P{{ task.priority }}" id="task-card-{{ task.id }}">
+            <div class="task-compact-face" onclick="toggleCardExpansion({{ task.id }})">
+              <div class="task-state-indicators" id="task-indicators-{{ task.id }}"></div>
+              <div class="task-header-revamp">
+                <strong class="task-title-revamp">{{ task.title }}</strong>
+                <div class="task-actions-revamp">
+                  <button class="btn-icon-sm" onclick="event.stopPropagation();openEditModal(this.closest('.kanban-task-revamp'))" title="Edit">&#9998;</button>
+                  <button class="btn-icon-sm btn-danger-sm" onclick="event.stopPropagation();deleteTask({{ task.id }}, this.closest('.kanban-task-revamp'))" title="Delete">&#128465;</button>
+                </div>
+              </div>
+              <div class="task-meta-revamp">
+                <span class="badge badge-{{ task.status.value }}" id="status-task-{{ task.id }}">
+                  {% if task.status.value == 'completed' %}&#9989;{% elif task.status.value == 'in_progress' %}&#9889;{% elif task.status.value == 'in_review' %}&#128269;{% elif task.status.value == 'blocked' %}&#128683;{% else %}&#9203;{% endif %} {{ task.status.value }}
+                </span>
+                {% if task.priority > 5 %}
+                <span class="badge badge-warning">&#128293; P{{ task.priority }}</span>
+                {% elif task.priority > 0 %}
+                <span class="badge">&#128204; P{{ task.priority }}</span>
+                {% endif %}
+                <span class="task-approval-badge" id="task-approval-badge-{{ task.id }}" style="display:none;"></span>
+                <span class="task-session-chip" id="task-session-chip-{{ task.id }}" style="display:none;"></span>
+              </div>
+              {% if task.assignees %}
+              <div class="task-assignees-revamp">
+                {% for assignee in task.assignees %}
+                <span class="badge badge-assignee badge-{{ assignee.entity_type.value }}"
+                  data-entity-id="{{ assignee.id }}" title="{{ assignee.name }} ({{ assignee.entity_type.value }})">
+                  {% if assignee.entity_type.value == 'agent' %}&#129302;{% else %}&#128100;{% endif %} {{ assignee.name|truncate(15) }}
+                  <button class="btn-remove-assignee"
+                    onclick="event.stopPropagation();unassignEntity({{ task.id }}, {{ assignee.id }}, this.closest('.badge'))"
+                    title="Unassign">&times;</button>
+                </span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            <div class="task-expansion-panel" id="task-expansion-{{ task.id }}" style="display:none;">
+              <div class="expansion-tabs">
+                <button type="button" class="expansion-tab active" data-tab="approvals" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'approvals')">&#128272; Approvals <span class="badge" id="task-approvals-count-{{ task.id }}" style="display:none;">0</span></button>
+                <button type="button" class="expansion-tab" data-tab="activity" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'activity')">&#128196; Activity</button>
+                <button type="button" class="expansion-tab" data-tab="reviews" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'reviews')">&#128270; Reviews</button>
+              </div>
+              <div class="expansion-pane active" id="expansion-pane-approvals-{{ task.id }}">
+                <div id="task-approvals-list-{{ task.id }}">
+                  <p class="text-secondary" style="font-size:0.8rem;">Loading&hellip;</p>
+                </div>
+              </div>
+              <div class="expansion-pane" id="expansion-pane-activity-{{ task.id }}">
+                <div class="in-card-activity-header">
+                  <button class="btn-link" style="font-size:0.72rem;" onclick="event.stopPropagation();openActivityPopup({{ task.id }})">&#8599; Expand all</button>
+                </div>
+                <div id="task-activity-list-{{ task.id }}" class="in-card-activity-list">
+                  <p class="text-secondary" style="font-size:0.8rem;">Loading&hellip;</p>
+                </div>
+              </div>
+              <div class="expansion-pane" id="expansion-pane-reviews-{{ task.id }}">
+                <div id="task-reviews-list-{{ task.id }}">
+                  <p class="text-secondary" style="font-size:0.8rem;">Loading&hellip;</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="task-footer-revamp" onclick="event.stopPropagation()">
+              <button class="btn-link" onclick="openAssignModal({{ task.id }})">&#128100; Assign</button>
+            </div>
+          </div>
+          {% endfor %}
+
+          {% if not stage.tasks %}
+          <div class="kanban-empty-placeholder text-center text-secondary">
+            <small>&#10024; Ready for new tasks</small>
+            <small style="font-size: 0.7rem; margin-top: 0.5rem; opacity: 0.7;">Drop here</small>
+          </div>
+          {% endif %}
+        </div>
+
+        <div class="kanban-column-footer-revamp">
+          <button class="btn-add-task" onclick="openAddTaskModal({{ stage.id }}, '{{ stage.name }}')">
+            <span>+</span> Add Task
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- Activity popup modal -->
+  <div id="activity-popup-overlay" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeActivityPopup()">
+    <div class="modal-card" style="max-width:700px;width:95%;max-height:85vh;display:flex;flex-direction:column;">
+      <div class="modal-header">
+        <h3 id="activity-popup-title">Activity</h3>
+        <button class="btn-icon" onclick="closeActivityPopup()">&times;</button>
+      </div>
+      <div id="activity-popup-body" style="flex:1;overflow-y:auto;padding:1rem 1.25rem;"></div>
+    </div>
+  </div>
+</div>
+
+<style>
+  /* Sub-nav */
+  .project-sub-nav{display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap;}
+  .sub-nav-pill{padding:0.35rem 1rem;border-radius:99px;text-decoration:none;font-size:0.8rem;font-weight:600;border:1px solid var(--glass-border);color:var(--text-secondary);background:var(--glass-bg);transition:all 0.2s;}
+  .sub-nav-pill:hover{background:rgba(var(--accent-primary-rgb),0.08);color:var(--text-primary);}
+  .sub-nav-pill.active{background:var(--accent-primary);color:#fff;border-color:var(--accent-primary);}
+
+  /* Activity popup */
+  .in-card-activity-header{display:flex;justify-content:flex-end;margin-bottom:0.35rem;}
+  .act-entry{padding:0.45rem 0.6rem;border-radius:var(--radius-sm);border-left:2px solid var(--glass-border);margin-bottom:0.35rem;background:var(--glass-bg);}
+  .act-entry.act-error{border-left-color:#ef4444;}
+  .act-entry.act-action{border-left-color:var(--accent-primary);}
+  .act-entry.act-result{border-left-color:#10b981;}
+  .act-msg{font-size:0.8rem;color:var(--text-primary);word-break:break-word;}
+  .act-cmd{font-family:monospace;font-size:0.72rem;color:#4ade80;margin-top:0.2rem;}
+  .act-file{font-size:0.72rem;color:#60a5fa;margin-top:0.2rem;}
+  .act-meta{display:flex;justify-content:space-between;font-size:0.68rem;color:var(--text-muted);margin-top:0.2rem;}
+
+  .board-revamp-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - var(--header-height) - 2rem);
+    gap: 0;
+  }
+
+  .board-header-section {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-2xl);
+    margin-bottom: 1rem;
+    padding: 1.5rem 1.75rem;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: visible;
+  }
+  .board-header-section::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary), var(--accent-primary));
+    background-size: 200% 100%;
+    animation: shimmer 3s ease infinite;
+    border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  #project-title {
+    font-size: 1.75rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  #project-desc {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    max-width: 800px;
+    line-height: 1.6;
+  }
+  .header-main-content { min-width: 0; }
+  .header-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+
+  .bell-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    width: 380px;
+    max-height: 420px;
+    overflow-y: auto;
+    background: var(--bg-card);
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    z-index: 2000;
+    margin-top: 0.5rem;
+  }
+  .bell-dropdown-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--glass-border);
+  }
+  .bell-dropdown-list {
+    padding: 0.5rem;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .notification-settings-panel {
+    position: absolute;
+    top: 100%;
+    right: 260px;
+    background: var(--bg-card);
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: 1rem;
+    z-index: 2000;
+    margin-top: 0.5rem;
+    min-width: 250px;
+  }
+  .notification-settings-panel label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+  }
+
+  /* Chat bar */
+  .chat-task-bar {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-2xl);
+    padding: 0.65rem 1rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--shadow);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+  }
+  .chat-task-bar::before {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .chat-task-bar:focus-within {
+    border-color: rgba(var(--accent-primary-rgb), 0.4);
+    box-shadow: 0 0 0 4px rgba(var(--accent-primary-rgb), 0.08), var(--shadow-lg);
+    transform: translateY(-2px);
+  }
+  .chat-task-bar:focus-within::before { opacity: 1; }
+  .chat-task-input-wrap { display: flex; gap: 0.75rem; align-items: center; }
+  .chat-task-icon { font-size: 1.3rem; filter: drop-shadow(0 0 6px rgba(var(--accent-primary-rgb), 0.3)); }
+  .chat-input {
+    flex: 1; background: transparent !important; border: none !important;
+    padding: 0.6rem 0.5rem !important; font-size: 0.95rem !important;
+    font-weight: 500; box-shadow: none !important; color: var(--text-primary) !important;
+  }
+  .chat-input::placeholder { color: var(--text-muted); }
+  .chat-input:focus { outline: none !important; }
+  .chat-btn {
+    border-radius: var(--radius-lg); padding: 0.55rem 1.35rem; font-weight: 700;
+    letter-spacing: 0.02em; font-size: 0.85rem;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    color: white; box-shadow: 0 4px 14px rgba(var(--accent-primary-rgb), 0.35);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .chat-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(var(--accent-primary-rgb), 0.4); }
+
+  .header-chat-wrap {
+    max-width: 600px;
+    position: relative;
+  }
+  .chat-task-input-wrap-compact {
+    display: flex;
+    align-items: center;
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: 0.15rem 0.25rem 0.15rem 1rem;
+    transition: all 0.2s;
+    box-shadow: var(--shadow-sm);
+  }
+  .chat-task-input-wrap-compact:focus-within {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb), 0.1);
+  }
+  .chat-input-compact {
+    flex: 1;
+    background: transparent !important;
+    border: none !important;
+    padding: 0.4rem 0 !important;
+    font-size: 0.85rem !important;
+    color: var(--text-primary) !important;
+    box-shadow: none !important;
+  }
+  .chat-input-compact:focus { outline: none; }
+  .chat-btn-compact {
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--radius);
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    color: white;
+    border: none;
+    cursor: pointer;
+  }
+
+  /* Board: full-width column layout */
+  .board-main-revamp {
+    flex: 1;
+    overflow: hidden;
+  }
+  .kanban-container-revamp {
+    display: flex;
+    gap: 1rem;
+    height: calc(100vh - var(--header-height) - 240px);
+    min-height: 400px;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+    align-items: stretch;
+  }
+
+  /* Column: flex column with sticky header & footer, scrollable drop zone */
+  .kanban-column-revamp {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-width: 260px;
+    max-width: 400px;
+    max-height: 100%;
+    border-radius: var(--radius-xl);
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+    overflow: hidden;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .kanban-column-revamp:hover {
+    background: rgba(255, 255, 255, 0.5);
+    border-color: rgba(var(--accent-primary-rgb), 0.2);
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+  }
+  .kanban-column-header-revamp {
+    padding: 0.75rem 1rem;
+    font-weight: 800;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-family: var(--font-condensed);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--glass-border);
+    background: rgba(var(--accent-primary-rgb), 0.04);
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  .kanban-column-header-revamp .badge {
+    font-size: 0.65rem;
+    padding: 0.1rem 0.4rem;
+  }
+  .kanban-drop-zone-revamp {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+    min-height: 120px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(var(--accent-primary-rgb), 0.3) transparent;
+  }
+  .kanban-drop-zone-revamp::-webkit-scrollbar { width: 5px; }
+  .kanban-drop-zone-revamp::-webkit-scrollbar-track { background: transparent; }
+  .kanban-drop-zone-revamp::-webkit-scrollbar-thumb { background: rgba(var(--accent-primary-rgb), 0.3); border-radius: 3px; }
+
+  .kanban-drop-zone-revamp.drag-over {
+    background: rgba(var(--accent-primary-rgb), 0.06);
+    outline: 2px dashed rgba(var(--accent-primary-rgb), 0.4);
+    outline-offset: -6px;
+    border-radius: var(--radius-lg);
+  }
+
+  .kanban-column-footer-revamp {
+    flex-shrink: 0;
+    padding: 0.5rem 0.75rem 0.75rem;
+    border-top: 1px solid var(--glass-border);
+    background: rgba(var(--accent-primary-rgb), 0.02);
+  }
+  .kanban-column-footer-revamp .btn-add-task {
+    width: 100%;
+    margin: 0;
+    border-radius: var(--radius);
+  }
+
+  /* Task card: compact + expandable */
+  .kanban-task-revamp {
+    background: var(--bg-card);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-left: 2px solid var(--accent-primary);
+    border-radius: var(--radius-lg);
+    margin-bottom: 0.5rem;
+    box-shadow: var(--shadow-sm);
+    cursor: grab;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    user-select: none;
+  }
+  .kanban-task-revamp:hover:not(.static) {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+    border-color: rgba(var(--accent-primary-rgb), 0.3);
+    background: var(--bg-secondary);
+    z-index: 10;
+  }
+  .kanban-task-revamp.static { cursor: default; pointer-events: none; }
+  .kanban-task-revamp.dragging { opacity: 0.4; transform: scale(0.95) rotate(1deg); cursor: grabbing; }
+  .kanban-task-revamp.expanded { border-color: var(--accent-primary); box-shadow: var(--shadow); }
+  .kanban-task-revamp.has-pending-approval { border-color: #fbbf24; box-shadow: 0 0 0 2px rgba(251,191,36,0.2); }
+  .kanban-task-revamp.has-active-session { border-left-color: #10b981; }
+
+  /* State indicators overlay */
+  .task-state-indicators {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: flex;
+    gap: 3px;
+    z-index: 5;
+  }
+  .task-indicator {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    animation: pulse-indicator 2s infinite;
+  }
+  .task-indicator.active-session { background: #10b981; }
+  .task-indicator.pending-approval { background: #fbbf24; animation: pulse-indicator 1.5s infinite; }
+  .task-indicator.blocked-review { background: #ef4444; }
+  .task-indicator.recent-activity { background: var(--accent-primary); opacity: 1; animation: fade-activity 30s forwards; }
+  @keyframes pulse-indicator {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.3); opacity: 0.7; }
+  }
+  @keyframes fade-activity {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  .task-compact-face {
+    padding: 0.65rem 0.75rem;
+    cursor: pointer;
+  }
+  .task-header-revamp {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.25rem;
+    gap: 0.4rem;
+  }
+  .task-title-revamp {
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    line-height: 1.3;
+    flex: 1;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .task-actions-revamp {
+    display: flex;
+    gap: 0.2rem;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .kanban-task-revamp:hover .task-actions-revamp { opacity: 1; }
+  .task-meta-revamp {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-bottom: 0.25rem;
+    align-items: center;
+  }
+  .task-meta-revamp .badge {
+    font-size: 0.6rem;
+    padding: 0.05rem 0.35rem;
+  }
+  /* Show only 2 tags max in summary view */
+  .kanban-task-revamp:not(.expanded) .task-meta-revamp .badge:nth-child(n+3) {
+    display: none;
+  }
+  .task-approval-badge {
+    background: #fbbf24;
+    color: #000;
+    font-weight: 700;
+    font-size: 0.55rem;
+    padding: 0.05rem 0.3rem;
+    border-radius: 0.5rem;
+    animation: pulse-badge 1.5s infinite;
+  }
+  @keyframes pulse-badge {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0.3); }
+    50% { box-shadow: 0 0 0 3px rgba(251,191,36,0); }
+  }
+  .task-session-chip {
+    background: rgba(16,185,129,0.1);
+    color: #10b981;
+    font-weight: 700;
+    font-size: 0.55rem;
+    padding: 0.05rem 0.3rem;
+    border-radius: 0.5rem;
+  }
+  .task-assignees-revamp {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem;
+  }
+  /* Show only 1st assignee in summary view */
+  .kanban-task-revamp:not(.expanded) .task-assignees-revamp .badge-assignee:nth-child(n+2) {
+    display: none;
+  }
+  .task-assignees-revamp .badge-assignee {
+    font-size: 0.6rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 1rem;
+  }
+  .task-footer-revamp {
+    display: none; /* Hide footer in summary view */
+    border-top: 1px solid var(--border-color);
+    margin: 0 0.75rem 0;
+    padding-top: 0.4rem;
+    padding-bottom: 0.5rem;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .kanban-task-revamp.expanded .task-footer-revamp {
+    display: flex;
+  }
+  .task-assignees-revamp .badge-assignee {
+    font-size: 0.6rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 1rem;
+  }
+  .task-footer-revamp {
+    border-top: 1px solid var(--border-color);
+    margin: 0 0.75rem 0;
+    padding-top: 0.4rem;
+    padding-bottom: 0.5rem;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .task-footer-revamp .btn-link {
+    font-size: 0.65rem;
+    padding: 0.2rem 0.5rem;
+  }
+
+  /* Expansion panel */
+  .task-expansion-panel {
+    border-top: 1px solid var(--glass-border);
+    background: rgba(var(--accent-primary-rgb), 0.02);
+  }
+  .expansion-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--glass-border);
+  }
+  .expansion-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.5rem 0.3rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+  }
+  .expansion-tab:hover { color: var(--text-primary); background: rgba(var(--accent-primary-rgb), 0.06); }
+  .expansion-tab.active {
+    color: var(--accent-primary);
+    border-bottom: 2px solid var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.04);
+  }
+  .expansion-pane { display: none; padding: 0.75rem; max-height: 280px; overflow-y: auto; }
+  .expansion-pane.active { display: block; }
+
+  .in-card-activity-list {
+    max-height: 240px;
+    overflow-y: auto;
+  }
+
+  /* Add Task button (same style as kanban_premium.css) */
+  .btn-add-task {
+    background: rgba(var(--accent-primary-rgb), 0.02);
+    border: 2px dashed rgba(var(--accent-primary-rgb), 0.2);
+    width: 100%;
+    padding: 0.7rem;
+    color: var(--text-secondary);
+    font-weight: 700;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    border-radius: var(--radius-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+  }
+  .btn-add-task:hover {
+    background: rgba(var(--accent-primary-rgb), 0.08);
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(var(--accent-primary-rgb), 0.15);
+  }
+
+  .agent-managed-badge {
+    position: relative; display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.25rem 0.75rem; border-radius: 2rem;
+    background: linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.1), rgba(var(--accent-primary-rgb), 0.05));
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.2);
+    font-size: 0.8rem; font-weight: 600;
+  }
+  .agent-managed-badge .pulse {
+    position: absolute; width: 100%; height: 100%; top: 0; left: 0;
+    border-radius: 2rem; background: inherit; z-index: -1; opacity: 0.5;
+    animation: badge-pulse 2s infinite;
+  }
+  @keyframes badge-pulse {
+    0% { transform: scale(1); opacity: 0.5; }
+    100% { transform: scale(1.15, 1.4); opacity: 0; }
+  }
+
+  .approval-command, .approval-diff {
+    margin: 0.35rem 0; padding: 0.35rem 0.5rem;
+    background: rgba(0,0,0,0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    font-size: 0.72rem; white-space: pre-wrap; word-break: break-word;
+    max-height: 240px; overflow: auto;
+  }
+  .approval-controls { display: flex; gap: 0.4rem; margin-top: 0.5rem; align-items: center; }
+  .approval-note {
+    flex: 1; font-size: 0.75rem; padding: 0.3rem 0.5rem;
+    border: 1px solid var(--glass-border); border-radius: var(--radius-sm);
+    background: var(--glass-bg); color: var(--text-primary); transition: border-color 0.2s;
+  }
+  .approval-note:focus { outline: none; border-color: var(--accent-primary); }
+  .btn-sm { padding: 0.25rem 0.6rem; font-size: 0.75rem; }
+  .btn-success { background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: none; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; }
+  .btn-success:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16,185,129,0.3); }
+  .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; border: none; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; }
+  .btn-danger:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(239,68,68,0.3); }
+
+  /* Responsive */
+  @media (max-width: 1500px) {
+    .kanban-container-revamp { grid-template-columns: repeat({{ project.stages|length }}, minmax(260px, 1fr)); }
+  }
+  @media (max-width: 1280px) {
+    .kanban-container-revamp { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); height: auto; }
+  }
+  @media (max-width: 760px) {
+    .board-header-section .d-flex.justify-content-between { flex-direction: column; align-items: stretch; gap: 0.85rem; }
+    .board-header-section .d-flex.align-items-center.gap-3 { flex-wrap: wrap; }
+    .header-actions { display: grid; grid-template-columns: 1fr; gap: 0.5rem; }
+    #project-path-label { max-width: 72vw; }
+  }
+
+</style>
+
+<!-- Toast notification -->
+<div id="toast" class="toast" style="display:none;"></div>
+
+<!-- Task Edit/Create Modal -->
+<div id="task-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('task-modal')">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="task-modal-title">Edit Task</h3>
+      <button class="btn-icon" onclick="closeModal('task-modal')">&times;</button>
+    </div>
+    <div class="tab-content">
+      <form id="task-form" onsubmit="return false;">
+        <input type="hidden" id="task-form-id">
+        <input type="hidden" id="task-form-stage-id">
+        <input type="hidden" id="task-form-mode" value="edit">
+        <div class="form-group">
+          <label for="task-form-title">Title</label>
+          <input type="text" id="task-form-title" class="form-input" required placeholder="Task title">
+        </div>
+        <div class="form-group">
+          <label for="task-form-desc">Description</label>
+          <textarea id="task-form-desc" class="form-input" rows="3" placeholder="What needs to be done?"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="task-form-priority">Priority (0-10)</label>
+            <input type="number" id="task-form-priority" class="form-input" min="0" max="10" value="0">
+          </div>
+          <div class="form-group">
+            <label for="task-form-status">Status</label>
+            <select id="task-form-status" class="form-input">
+              <option value="pending">Pending</option>
+              <option value="in_progress">In Progress</option>
+              <option value="in_review">In Review</option>
+              <option value="completed">Completed</option>
+              <option value="blocked">Blocked</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="task-form-skills">Required Skills</label>
+          <input type="text" id="task-form-skills" class="form-input" placeholder="python,react,testing">
+        </div>
+        <div id="task-comments-section" style="display:none; margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+          <h4>Activity &amp; Comments</h4>
+          <div id="task-comments-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 1rem; font-size: 0.9rem;"></div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" onclick="closeModal('task-modal')">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="submitTaskForm()">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Assign Modal -->
+<div id="assign-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('assign-modal')">
+  <div class="modal-card modal-small">
+    <div class="modal-header">
+      <h3>Assign Role to Task</h3>
+      <button class="btn-icon" onclick="closeModal('assign-modal')">&times;</button>
+    </div>
+    <input type="hidden" id="assign-task-id">
+    <div id="assign-entity-list" class="entity-list">
+      <p class="text-secondary">Loading...</p>
+    </div>
+  </div>
+</div>
+
+<!-- Project Edit Modal -->
+<div id="project-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('project-modal')">
+  <div class="modal-card modal-small">
+    <div class="modal-header">
+      <h3>Edit Project</h3>
+      <button class="btn-icon" onclick="closeModal('project-modal')">&times;</button>
+    </div>
+    <div class="form-group">
+      <label>Project Name</label>
+      <input type="text" id="project-form-name" class="form-input" value="{{ project.name }}">
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="project-form-desc" class="form-input" rows="3">{{ project.description }}</textarea>
+    </div>
+    <div class="form-group">
+      <label>Project Folder</label>
+      <div style="display:flex;gap:0.5rem;">
+        <input type="text" id="project-form-path" class="form-input" value="{{ project.path or '' }}" placeholder="Choose a local folder" readonly>
+        <button type="button" class="btn" onclick="openFolderPicker('project-form-path')">Browse</button>
+      </div>
+      <small class="text-secondary">CLI agent sessions and hooks use this as the workspace path.</small>
+    </div>
+    <div class="form-actions">
+      <button class="btn" onclick="closeModal('project-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitProjectEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Autopilot Config Modal -->
+<div id="autopilot-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('autopilot-modal')">
+  <div class="modal-card modal-small">
+    <div class="modal-header">
+      <h3>Autopilot Settings</h3>
+      <button class="btn-icon" onclick="closeModal('autopilot-modal')">&times;</button>
+    </div>
+    <div class="form-group">
+      <label>Project Manager (Autotune)</label>
+      <p class="text-secondary"><small>Select an agent to take control of task assignment and management.</small></p>
+      <select id="autopilot-manager-select" class="form-input">
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <div class="form-actions">
+      <button class="btn" onclick="closeModal('autopilot-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAutopilotConfig()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Team Management Modal -->
+<div id="team-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeModal('team-modal')">
+  <div class="modal-card modal-small">
+    <div class="modal-header">
+      <h3>Role CLI Tools</h3>
+      <button class="btn-icon" onclick="closeModal('team-modal')">&times;</button>
+    </div>
+    <div id="team-list" class="entity-list" style="max-height: 300px; overflow-y: auto;"></div>
+    <div class="modal-footer" style="padding-top: 1rem; border-top: 1px solid var(--border-color); margin-top: 1rem;">
+      <small class="text-secondary">Assign CLI tools to roles. Discovered CLIs are candidates only; role assignment is the working team.</small>
+    </div>
+  </div>
+</div>
+
+<!-- Folder Picker Modal -->
+<div id="folder-picker-modal" class="modal-overlay" style="display:none;"
+    onclick="if(event.target===this)closeFolderPicker()">
+  <div class="modal-card modal-small">
+    <div class="modal-header">
+      <h3>Select Project Folder</h3>
+      <button class="btn-icon" onclick="closeFolderPicker()">&times;</button>
+    </div>
+    <div class="form-group mb-2">
+      <label>Current Folder</label>
+      <div style="display:flex;gap:0.5rem;">
+        <input id="folder-picker-current" class="form-input" type="text">
+        <button type="button" class="btn" onclick="loadFolderFromInput()">Go</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+      <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerParent)">Up</button>
+      <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerHome)">Home</button>
+      <button type="button" class="btn btn-sm btn-primary" onclick="selectCurrentFolder()">Use This Folder</button>
+    </div>
+    <div id="folder-picker-list" class="entity-list" style="max-height:320px;overflow-y:auto;">
+      <p class="text-secondary">Loading...</p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    var PROJECT_ID = {{ project.id }};
+    var CURRENT_ENTITY_ID = {{ current_entity.id if current_entity else 'null' }};
+    var folderPickerTarget = null;
+    var folderPickerCurrent = '';
+    var folderPickerParent = null;
+    var folderPickerHome = '';
+    var expandedCards = {};
+    var expandedCardTabs = {};
+    var draggedTask = null;
+
+    var STAGE_STATUS_MAP = {
+        'Backlog': 'pending',
+        'To Do': 'pending',
+        'In Progress': 'in_progress',
+        'Review': 'in_review',
+        'Done': 'completed'
+    };
+
+    // --- Notification settings ---
+    function initNotificationSettings() {
+        var enabled = localStorage.getItem('kanban.notifications.enabled') === 'true';
+        var sound = localStorage.getItem('kanban.notifications.sound') === 'true';
+        var cb = document.getElementById('notifications-enabled');
+        var scb = document.getElementById('notifications-sound');
+        if (cb) cb.checked = enabled;
+        if (scb) scb.checked = sound;
+        if (enabled && 'Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }
+    function toggleNotifications(enabled) {
+        localStorage.setItem('kanban.notifications.enabled', enabled);
+        if (enabled && 'Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }
+    function toggleNotificationSound(enabled) {
+        localStorage.setItem('kanban.notifications.sound', enabled);
+    }
+    function sendOSNotification(title, body, taskId) {
+        if (localStorage.getItem('kanban.notifications.enabled') !== 'true') return;
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+        var n = new Notification(title, { body: body, tag: 'kanban-approval-' + taskId });
+        if (taskId) {
+            n.onclick = function() {
+                window.focus();
+                expandCardAndShowApprovals(taskId);
+                n.close();
+            };
+        }
+    }
+    function toggleNotificationSettings() {
+        var panel = document.getElementById('notification-settings-panel');
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    }
+
+    // --- Bell dropdown ---
+    function toggleBellDropdown() {
+        var dd = document.getElementById('bell-dropdown');
+        dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+    }
+    document.addEventListener('click', function(e) {
+        var bell = document.getElementById('header-bell-btn');
+        var dd = document.getElementById('bell-dropdown');
+        if (bell && dd && !bell.contains(e.target) && !dd.contains(e.target)) {
+            dd.style.display = 'none';
+        }
+        var nsp = document.getElementById('notification-settings-panel');
+        var nsb = document.querySelector('.notification-settings-btn');
+        if (nsb && nsp && !nsb.contains(e.target) && !nsp.contains(e.target)) {
+            nsp.style.display = 'none';
+        }
+    });
+
+    // --- Card expansion ---
+    function getExpandedCards() {
+        try {
+            var stored = localStorage.getItem('kanban.expanded.' + PROJECT_ID);
+            return stored ? JSON.parse(stored) : {};
+        } catch(e) { return {}; }
+    }
+    function saveExpandedCards() {
+        try { localStorage.setItem('kanban.expanded.' + PROJECT_ID, JSON.stringify(expandedCards)); } catch(e) {}
+    }
+    function getExpandedCardTabs() {
+        try {
+            var stored = localStorage.getItem('kanban.expandedTabs.' + PROJECT_ID);
+            return stored ? JSON.parse(stored) : {};
+        } catch(e) { return {}; }
+    }
+    function saveExpandedCardTabs() {
+        try { localStorage.setItem('kanban.expandedTabs.' + PROJECT_ID, JSON.stringify(expandedCardTabs)); } catch(e) {}
+    }
+    function initExpandedCards() {
+        expandedCards = getExpandedCards();
+        expandedCardTabs = getExpandedCardTabs();
+        Object.keys(expandedCards).forEach(function(taskId) {
+            if (expandedCards[taskId]) {
+                var panel = document.getElementById('task-expansion-' + taskId);
+                if (panel) {
+                    panel.style.display = '';
+                    var card = document.getElementById('task-card-' + taskId);
+                    if (card) card.classList.add('expanded');
+                }
+            }
+        });
+    }
+    function toggleCardExpansion(taskId) {
+        var panel = document.getElementById('task-expansion-' + taskId);
+        var card = document.getElementById('task-card-' + taskId);
+        if (!panel || !card) return;
+        if (panel.style.display === 'none') {
+            panel.style.display = '';
+            card.classList.add('expanded');
+            expandedCards[taskId] = true;
+            var tab = expandedCardTabs[taskId] || 'approvals';
+            switchExpansionTab(taskId, tab);
+            loadCardData(taskId);
+        } else {
+            panel.style.display = 'none';
+            card.classList.remove('expanded');
+            expandedCards[taskId] = false;
+        }
+        saveExpandedCards();
+    }
+    function expandCardAndShowApprovals(taskId) {
+        var panel = document.getElementById('task-expansion-' + taskId);
+        var card = document.getElementById('task-card-' + taskId);
+        if (panel && card) {
+            panel.style.display = '';
+            card.classList.add('expanded');
+            expandedCards[taskId] = true;
+        }
+        switchExpansionTab(taskId, 'approvals');
+        saveExpandedCards();
+        loadCardData(taskId);
+    }
+    function switchExpansionTab(taskId, tab) {
+        expandedCardTabs[taskId] = tab;
+        var card = document.getElementById('task-card-' + taskId);
+        if (!card) return;
+        card.querySelectorAll('.expansion-tab').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.tab === tab);
+        });
+        card.querySelectorAll('.expansion-pane').forEach(function(pane) {
+            var paneTab = pane.id.replace('expansion-pane-', '').replace('-' + taskId, '');
+            pane.classList.toggle('active', paneTab === tab);
+        });
+        saveExpandedCardTabs();
+    }
+    function loadCardData(taskId) {
+        fetchTaskApprovals(taskId);
+        fetchTaskActivity(taskId);
+        fetchTaskReviews(taskId);
+    }
+
+    // --- Task approvals in card ---
+    async function fetchTaskApprovals(taskId) {
+        try {
+            var resp = await fetch('/agents/approvals?task_id=' + taskId + '&status_filter=pending&limit=20', {
+                headers: {'X-Entity-ID': CURRENT_ENTITY_ID || ''}
+            });
+            if (!resp.ok) return;
+            var approvals = await resp.json();
+            var pending = approvals;
+            var el = document.getElementById('task-approvals-list-' + taskId);
+            if (!el) return;
+            if (!pending.length) {
+                el.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">No pending approvals for this task.</p>';
+            } else {
+                el.innerHTML = pending.slice(0, 10).map(function(a) {
+                    return renderApprovalItem(a, true);
+                }).join('');
+            }
+            var badge = document.getElementById('task-approval-badge-' + taskId);
+            if (badge) {
+                if (pending.length > 0) {
+                    badge.style.display = '';
+                    badge.textContent = '\u{1F6C2} ' + pending.length;
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+            var countBadge = document.getElementById('task-approvals-count-' + taskId);
+            if (countBadge) {
+                if (pending.length > 0) {
+                    countBadge.style.display = '';
+                    countBadge.textContent = pending.length;
+                } else {
+                    countBadge.style.display = 'none';
+                }
+            }
+            updateCardApprovalIndicator(taskId, pending.length);
+        } catch(e) { console.error('fetchTaskApprovals', e); }
+    }
+    function updateCardApprovalIndicator(taskId, pendingCount) {
+        var card = document.getElementById('task-card-' + taskId);
+        if (!card) return;
+        var indicators = card.querySelector('.task-state-indicators');
+        if (!indicators) return;
+        var existingBadge = indicators.querySelector('.task-indicator.pending-approval');
+        if (pendingCount > 0 && !existingBadge) {
+            var dot = document.createElement('span');
+            dot.className = 'task-indicator pending-approval';
+            dot.title = pendingCount + ' pending approval(s)';
+            indicators.appendChild(dot);
+            card.classList.add('has-pending-approval');
+        } else if (pendingCount === 0 && existingBadge) {
+            existingBadge.remove();
+            card.classList.remove('has-pending-approval');
+        }
+    }
+    function renderApprovalItem(a, withControls) {
+        var statusColors = { pending:'#fbbf24', approved:'#34d399', rejected:'#f87171', cancelled:'#9ca3af', expired:'#9ca3af' };
+        var color = statusColors[a.status] || '#9ca3af';
+        var time = a.requested_at ? timeAgo(a.requested_at) : '';
+        var cmd = a.command ? '<pre class="approval-command">' + escapeHtml(a.command) + '</pre>' : '';
+        var diff = a.diff_content ? '<details><summary>diff</summary><pre class="approval-diff">' + escapeHtml(a.diff_content.substring(0, 4000)) + '</pre></details>' : '';
+        var controls = withControls
+            ? '<div class="approval-controls"><input type="text" id="approval-note-' + a.id + '" placeholder="Optional note" class="approval-note"/><button class="btn btn-success btn-sm" onclick="resolveApproval(' + a.id + ', \'approved\')">Approve</button><button class="btn btn-danger btn-sm" onclick="resolveApproval(' + a.id + ', \'rejected\')">Reject</button></div>'
+            : (a.response_message ? '<div class="activity-detail">"' + escapeHtml(a.response_message) + '"</div>' : '');
+        return '<div class="insight-item">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">' +
+            '<span class="insight-title">' + escapeHtml(a.title) + '</span>' +
+            '<span style="background:' + color + ';color:#111;padding:0.1rem 0.5rem;border-radius:1rem;font-size:0.7rem;font-weight:700;">' + a.status + '</span></div>' +
+            '<div class="activity-detail">' + escapeHtml(a.approval_type) + ' · agent #' + a.agent_id + (a.task_id ? ' · task #' + a.task_id : '') + (a.session_id ? ' · session #' + a.session_id : '') + '</div>' +
+            '<div style="margin-top:0.35rem;font-size:0.8rem;">' + escapeHtml(a.message) + '</div>' +
+            cmd + diff +
+            '<div class="insight-meta">' + time + '</div>' +
+            controls + '</div>';
+    }
+
+    // --- Task activity in card ---
+    function renderActivityEntries(entries, compact) {
+        if (!entries.length) return '<p class="text-secondary" style="font-size:0.8rem;">No activity recorded.</p>';
+        return entries.map(function(entry) {
+            var stamp = entry.created_at ? new Date(entry.created_at).toLocaleTimeString() : '';
+            var type = entry.activity_type || entry.source || 'update';
+            var typeClass = type === 'tool_use' ? 'act-cmd' : type === 'file_edit' || type === 'file_read' ? 'act-file' : type === 'error' ? 'act-error' : 'act-msg';
+            var body = '';
+            if (entry.command) body += '<div class="act-cmd">$ ' + escapeHtml(entry.command) + '</div>';
+            if (entry.file_path) body += '<div class="act-file">📄 ' + escapeHtml(entry.file_path) + '</div>';
+            if (entry.message) body += '<div class="' + typeClass + '">' + escapeHtml(entry.message) + '</div>';
+            return '<div class="act-entry"><div class="act-meta"><span class="act-type">' + escapeHtml(type) + '</span><span>' + stamp + '</span></div>' + body + '</div>';
+        }).join('');
+    }
+    async function fetchTaskActivity(taskId) {
+        try {
+            var resp = await fetch('/agents/activity?task_id=' + taskId + '&limit=20');
+            var el = document.getElementById('task-activity-list-' + taskId);
+            if (!el) return;
+            if (!resp.ok) { el.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">No activity recorded.</p>'; return; }
+            var entries = await resp.json();
+            el.innerHTML = renderActivityEntries(entries.reverse(), true);
+        } catch(e) { console.error('fetchTaskActivity', e); }
+    }
+
+    // --- Activity popup ---
+    async function openActivityPopup(taskId) {
+        var overlay = document.getElementById('activity-popup-overlay');
+        var title = document.getElementById('activity-popup-title');
+        var body = document.getElementById('activity-popup-body');
+        if (!overlay) return;
+        title.textContent = 'Activity — Task #' + taskId;
+        body.innerHTML = '<p class="text-secondary">Loading…</p>';
+        overlay.style.display = 'flex';
+        try {
+            var resp = await fetch('/agents/activity?task_id=' + taskId + '&limit=200');
+            if (!resp.ok) { body.innerHTML = '<p class="text-secondary">Failed to load activity.</p>'; return; }
+            var entries = await resp.json();
+            body.innerHTML = renderActivityEntries(entries.reverse(), false);
+        } catch(e) { body.innerHTML = '<p class="text-secondary">' + escapeHtml(e.message) + '</p>'; }
+    }
+    function closeActivityPopup() {
+        var overlay = document.getElementById('activity-popup-overlay');
+        if (overlay) overlay.style.display = 'none';
+    }
+
+    // --- Task reviews in card ---
+    async function fetchTaskReviews(taskId) {
+        try {
+            var resp = await fetch('/agents/projects/' + PROJECT_ID + '/diff-reviews?limit=20');
+            if (!resp.ok) return;
+            var reviews = await resp.json();
+            var el = document.getElementById('task-reviews-list-' + taskId);
+            if (!el) return;
+            var taskReviews = reviews.filter(function(r) { return r.task_id === taskId; });
+            if (!taskReviews.length) {
+                el.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">No diff reviews for this task.</p>';
+                return;
+            }
+            var statusColors = {pending:'#fbbf24', approved:'#34d399', rejected:'#f87171', changes_requested:'#60a5fa'};
+            el.innerHTML = taskReviews.map(function(r) {
+                var color = statusColors[r.status] || '#9ca3af';
+                return '<div class="insight-item"><div style="display:flex;justify-content:space-between;align-items:center;"><span class="insight-title">Review #' + r.id + '</span><span style="background:' + color + ';color:#111;padding:0.1rem 0.5rem;border-radius:1rem;font-size:0.7rem;font-weight:700;">' + r.status + '</span></div>' +
+                    (r.summary ? '<p style="font-size:0.78rem;margin:0.3rem 0;">' + escapeHtml(r.summary.substring(0,120)) + '</p>' : '') +
+                    (r.is_critical ? '<span style="color:#ef4444;font-size:0.75rem;">Critical path</span>' : '') +
+                    '<div class="insight-meta">' + timeAgo(r.created_at) + '</div></div>';
+            }).join('');
+        } catch(e) { console.error('fetchTaskReviews', e); }
+    }
+
+    function updateCardSessionIndicator(taskId, session) {
+        var card = document.getElementById('task-card-' + taskId);
+        if (!card) return;
+        var indicators = card.querySelector('.task-state-indicators');
+        if (!indicators) return;
+        var existingChip = card.querySelector('.task-session-chip');
+        var existingDot = indicators.querySelector('.task-indicator.active-session');
+        if (session) {
+            if (!existingDot) {
+                var dot = document.createElement('span');
+                dot.className = 'task-indicator active-session';
+                dot.title = 'Active session';
+                indicators.appendChild(dot);
+            }
+            card.classList.add('has-active-session');
+            if (existingChip) {
+                existingChip.style.display = '';
+                existingChip.textContent = '\u25B6 live';
+            }
+        } else {
+            if (existingDot) existingDot.remove();
+            card.classList.remove('has-active-session');
+            if (existingChip) existingChip.style.display = 'none';
+        }
+    }
+    // --- Utilities ---
+    function showToast(message, type) {
+        var toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.className = 'toast toast-' + (type || 'info');
+        toast.style.display = 'block';
+        setTimeout(function() { toast.style.display = 'none'; }, 3000);
+    }
+    function timeAgo(dateStr) {
+        var then = new Date(dateStr), now = new Date(), seconds = Math.floor((now - then) / 1000);
+        if (seconds < 60) return seconds + 's ago';
+        var minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + 'm ago';
+        var hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + 'h ago';
+        return Math.floor(hours / 24) + 'd ago';
+    }
+    function timeUntil(dateStr) {
+        var then = new Date(dateStr), now = new Date(), seconds = Math.max(0, Math.floor((then - now) / 1000));
+        if (seconds < 60) return seconds + 's';
+        var minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + 'm';
+        var hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + 'h';
+        return Math.floor(hours / 24) + 'd';
+    }
+    function updateColumnCount(stageId, delta) {
+        var badge = document.getElementById('count-stage-' + stageId);
+        if (badge) badge.textContent = parseInt(badge.textContent) + delta;
+    }
+    function clearPlaceholder(dropZone) {
+        var ph = dropZone.querySelector('.kanban-empty-placeholder');
+        if (ph) ph.remove();
+    }
+    function addPlaceholderIfEmpty(dropZone) {
+        if (dropZone.querySelectorAll('.kanban-task-revamp').length === 0) {
+            var div = document.createElement('div');
+            div.className = 'kanban-empty-placeholder text-center text-secondary';
+            div.innerHTML = '<small>\u2728 Ready for new tasks</small><small style="font-size: 0.7rem; margin-top: 0.5rem; opacity: 0.7;">Drop here</small>';
+            dropZone.appendChild(div);
+        }
+    }
+    window.closeModal = function(id) { document.getElementById(id).style.display = 'none'; };
+    function closeFolderPicker() { document.getElementById('folder-picker-modal').style.display = 'none'; }
+    function openFolderPicker(targetInputId) {
+        folderPickerTarget = document.getElementById(targetInputId);
+        document.getElementById('folder-picker-modal').style.display = 'flex';
+        loadFolder(folderPickerTarget.value || '');
+    }
+    function loadFolderFromInput() { loadFolder(document.getElementById('folder-picker-current').value); }
+    function loadFolder(path) {
+        var url = '/ui/api/folders' + (path ? '?path=' + encodeURIComponent(path) : '');
+        document.getElementById('folder-picker-list').innerHTML = '<p class="text-secondary">Loading...</p>';
+        fetch(url)
+            .then(function(r) { if (!r.ok) throw new Error('Failed to load folders'); return r.json(); })
+            .then(function(data) {
+                folderPickerCurrent = data.path;
+                folderPickerParent = data.parent;
+                folderPickerHome = data.home;
+                document.getElementById('folder-picker-current').value = data.path;
+                var list = document.getElementById('folder-picker-list');
+                if (!data.folders.length) { list.innerHTML = '<p class="text-secondary">No folders found here.</p>'; return; }
+                list.innerHTML = data.folders.map(function(folder) {
+                    return '<button type="button" class="entity-item" style="width:100%;text-align:left;border:0;background:transparent;cursor:pointer;" onclick="loadFolder(' + JSON.stringify(folder.path).replace(/"/g, '&quot;') + ')"><strong>' + folder.name + '</strong><div class="text-secondary"><small>' + folder.path + '</small></div></button>';
+                }).join('');
+            })
+            .catch(function(err) { document.getElementById('folder-picker-list').innerHTML = '<p class="text-danger">' + err.message + '</p>'; });
+    }
+    function selectCurrentFolder() { if (folderPickerTarget) folderPickerTarget.value = folderPickerCurrent; closeFolderPicker(); }
+    function escapeHtml(value) {
+        return String(value || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+    }
+
+    // --- Drag and Drop ---
+    function initDragDrop() {
+        document.querySelectorAll('.kanban-task-revamp').forEach(function(task) { bindDragEvents(task); });
+        document.querySelectorAll('.kanban-drop-zone-revamp').forEach(function(zone) { bindDropZone(zone); });
+    }
+    function bindDragEvents(task) {
+        task.addEventListener('dragstart', function(e) {
+            draggedTask = this;
+            this.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', this.dataset.taskId);
+            var self = this;
+            setTimeout(function() { if (draggedTask) draggedTask.style.opacity = '0.4'; }, 0);
+        });
+        task.addEventListener('dragend', function() {
+            this.classList.remove('dragging');
+            this.style.opacity = '';
+            document.querySelectorAll('.kanban-drop-zone-revamp').forEach(function(zone) { zone.classList.remove('drag-over'); });
+            draggedTask = null;
+        });
+    }
+    function bindDropZone(zone) {
+        zone.addEventListener('dragover', function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; this.classList.add('drag-over'); });
+        zone.addEventListener('dragleave', function(e) { if (!this.contains(e.relatedTarget)) this.classList.remove('drag-over'); });
+        zone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            this.classList.remove('drag-over');
+            if (!draggedTask) return;
+            var taskId = draggedTask.dataset.taskId;
+            var oldStageId = draggedTask.dataset.currentStage;
+            var newStageId = this.dataset.stageId;
+            if (oldStageId === newStageId) return;
+            var column = this.closest('.kanban-column-revamp');
+            var stageName = column.dataset.stageName;
+            var newStatus = STAGE_STATUS_MAP[stageName] || 'pending';
+            var moveSummary = window.prompt('Handoff summary for the next agent: what changed, why is it moving, and what should happen next?');
+            if (!moveSummary || !moveSummary.trim()) { showToast('Move cancelled: handoff summary is required', 'warning'); return; }
+            var oldZone = draggedTask.parentElement;
+            clearPlaceholder(this);
+            this.appendChild(draggedTask);
+            draggedTask.dataset.currentStage = newStageId;
+            draggedTask.style.opacity = '';
+            var statusBadge = draggedTask.querySelector('[id^="status-task-"]');
+            if (statusBadge) { statusBadge.textContent = newStatus; statusBadge.className = 'badge badge-' + newStatus; }
+            addPlaceholderIfEmpty(oldZone);
+            updateColumnCount(oldStageId, -1);
+            updateColumnCount(newStageId, 1);
+            var movedTask = draggedTask;
+            fetch('/ui/tasks/' + taskId + '/move', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
+                body: JSON.stringify({ stage_id: parseInt(newStageId), status: newStatus, summary: moveSummary.trim() })
+            }).then(function(response) {
+                if (!response.ok) throw new Error('Failed to update task');
+                showToast('Task moved to ' + stageName, 'success');
+            }).catch(function(err) {
+                clearPlaceholder(oldZone);
+                oldZone.appendChild(movedTask);
+                movedTask.dataset.currentStage = oldStageId;
+                addPlaceholderIfEmpty(oldZone);
+                updateColumnCount(oldStageId, 1);
+                updateColumnCount(newStageId, -1);
+                showToast('Failed to move task: ' + err.message, 'error');
+            });
+        });
+    }
+
+    // --- Task CRUD ---
+    window.openAddTaskModal = function(stageId, stageName) {
+        document.getElementById('task-modal-title').textContent = 'Add Task to ' + stageName;
+        document.getElementById('task-form-mode').value = 'create';
+        document.getElementById('task-form-id').value = '';
+        document.getElementById('task-form-stage-id').value = stageId;
+        document.getElementById('task-form-title').value = '';
+        document.getElementById('task-form-desc').value = '';
+        document.getElementById('task-form-priority').value = '0';
+        document.getElementById('task-form-status').value = 'pending';
+        document.getElementById('task-form-skills').value = '';
+        document.getElementById('task-comments-section').style.display = 'none';
+        document.getElementById('task-modal').style.display = 'flex';
+        document.getElementById('task-form-title').focus();
+    };
+    window.openEditModal = function(taskEl) {
+        var taskId = taskEl.dataset.taskId;
+        document.getElementById('task-modal-title').textContent = 'Edit Task #' + taskId;
+        document.getElementById('task-form-mode').value = 'edit';
+        document.getElementById('task-form-id').value = taskId;
+        document.getElementById('task-form-stage-id').value = taskEl.dataset.currentStage;
+        var title = taskEl.querySelector('.task-title-revamp');
+        document.getElementById('task-form-title').value = title ? title.textContent.trim() : '';
+        var desc = taskEl.querySelector('.task-description-revamp');
+        document.getElementById('task-form-desc').value = desc ? desc.textContent.trim().replace(/\.\.\.$/, '') : '';
+        var statusBadge = taskEl.querySelector('[id^="status-task-"]');
+        document.getElementById('task-form-status').value = statusBadge ? statusBadge.textContent.trim() : 'pending';
+        document.getElementById('task-form-priority').value = '0';
+        document.getElementById('task-form-skills').value = '';
+        var commentsList = document.getElementById('task-comments-list');
+        commentsList.innerHTML = '<p class="text-secondary">Loading activity...</p>';
+        document.getElementById('task-comments-section').style.display = 'block';
+        fetch('/tasks/' + taskId).then(function(r) { return r.json(); }).then(function(data) {
+            if (data.priority !== undefined) document.getElementById('task-form-priority').value = data.priority;
+            if (data.required_skills) document.getElementById('task-form-skills').value = data.required_skills;
+            var html = '';
+            if (data.comments && data.comments.length > 0) {
+                data.comments.forEach(function(c) {
+                    var author = c.author ? c.author.name : 'Unknown';
+                    var date = new Date(c.created_at).toLocaleString();
+                    var icon = c.author && c.author.entity_type === 'agent' ? '\u{1F916}' : '\u{1F464}';
+                    html += '<div style="margin-bottom: 0.5rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px;"><div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; justify-content: space-between;"><span>' + icon + ' <strong>' + author + '</strong></span><span>' + date + '</span></div><div style="margin-top: 0.25rem;">' + c.content + '</div></div>';
+                });
+            } else { html = '<p class="text-secondary">No comments yet.</p>'; }
+            commentsList.innerHTML = html;
+        }).catch(function() { commentsList.innerHTML = '<p class="text-secondary">Could not load details.</p>'; });
+        document.getElementById('task-modal').style.display = 'flex';
+    };
+    window.submitTaskForm = function() {
+        var mode = document.getElementById('task-form-mode').value;
+        var title = document.getElementById('task-form-title').value.trim();
+        if (!title) { showToast('Title is required', 'error'); return; }
+        var data = { title: title, description: document.getElementById('task-form-desc').value.trim(), priority: parseInt(document.getElementById('task-form-priority').value) || 0, status: document.getElementById('task-form-status').value, required_skills: document.getElementById('task-form-skills').value.trim() };
+        if (mode === 'create') {
+            data.project_id = PROJECT_ID;
+            data.stage_id = parseInt(document.getElementById('task-form-stage-id').value);
+            fetch('/ui/tasks/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) })
+                .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
+                .then(function() { showToast('Task created!', 'success'); closeModal('task-modal'); location.reload(); })
+                .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
+        } else {
+            var taskId = document.getElementById('task-form-id').value;
+            fetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) })
+                .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
+                .then(function() { showToast('Task updated!', 'success'); closeModal('task-modal'); location.reload(); })
+                .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
+        }
+    };
+    window.deleteTask = function(taskId, taskEl) {
+        if (!confirm('Delete this task?')) return;
+        var stageId = taskEl.dataset.currentStage;
+        fetch('/ui/tasks/' + taskId, { method: 'DELETE', headers: { 'x-entity-id': CURRENT_ENTITY_ID } })
+            .then(function(r) { if (!r.ok) throw new Error('Failed'); })
+            .then(function() { var dropZone = taskEl.parentElement; taskEl.remove(); addPlaceholderIfEmpty(dropZone); updateColumnCount(stageId, -1); showToast('Task deleted', 'success'); })
+            .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
+    };
+
+    // --- Assignment ---
+    window.openAssignModal = function(taskId) {
+        document.getElementById('assign-task-id').value = taskId;
+        document.getElementById('assign-entity-list').innerHTML = '<p class="text-secondary">Loading roles...</p>';
+        document.getElementById('assign-modal').style.display = 'flex';
+        fetch('/ui/api/roles').then(function(r) { return r.json(); }).then(function(data) {
+            var html = '';
+            (data.roles || []).forEach(function(r) {
+                var disabled = r.installed ? '' : 'disabled';
+                var model = r.model ? ' \u00B7 ' + r.model : '';
+                html += '<div class="entity-item"><span><strong>' + r.role + '</strong> \u2192 ' + r.display_name + '<small class="text-secondary"> (' + r.command + model + ')</small></span><button class="btn btn-sm btn-primary" ' + disabled + ' onclick="assignRoleToTask(' + taskId + ',\'' + r.role + '\',this)">Assign</button></div>';
+            });
+            if (!html) html = '<p class="text-secondary">No roles configured.</p>';
+            document.getElementById('assign-entity-list').innerHTML = html;
+        }).catch(function() { document.getElementById('assign-entity-list').innerHTML = '<p class="text-danger">Failed to load roles.</p>'; });
+    };
+    window.assignRoleToTask = function(taskId, roleName, btn) {
+        btn.disabled = true; btn.textContent = '...';
+        fetch('/ui/tasks/' + taskId + '/assign-role', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ role: roleName }) })
+            .then(function(r) { if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'Failed'); }); return r.json(); })
+            .then(function() { showToast('Assigned to ' + roleName, 'success'); closeModal('assign-modal'); location.reload(); })
+            .catch(function(err) { showToast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Assign'; });
+    };
+    window.assignEntity = function(taskId, entityId, btn) {
+        btn.disabled = true; btn.textContent = '...';
+        fetch('/ui/tasks/' + taskId + '/assign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ entity_id: entityId, action: 'assign' }) })
+            .then(function(r) { if (!r.ok) throw new Error('Failed'); })
+            .then(function() { showToast('Assigned!', 'success'); closeModal('assign-modal'); location.reload(); })
+            .catch(function(err) { showToast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Assign'; });
+    };
+    window.unassignEntity = function(taskId, entityId, badge) {
+        fetch('/ui/tasks/' + taskId + '/assign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ entity_id: entityId, action: 'unassign' }) })
+            .then(function(r) { if (!r.ok) throw new Error('Failed'); })
+            .then(function() { badge.remove(); showToast('Unassigned', 'success'); })
+            .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
+    };
+
+    // --- Project ---
+    window.editProject = function() { document.getElementById('project-modal').style.display = 'flex'; };
+    window.submitProjectEdit = function() {
+        var name = document.getElementById('project-form-name').value.trim();
+        var desc = document.getElementById('project-form-desc').value.trim();
+        var path = document.getElementById('project-form-path').value.trim();
+        if (!name) return;
+        fetch('/ui/projects/' + PROJECT_ID + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ name: name, description: desc, path: path }) })
+            .then(function(r) { if (!r.ok) throw new Error('Failed'); location.reload(); });
+    };
+    window.openAutopilotModal = function() {
+        document.getElementById('autopilot-modal').style.display = 'flex';
+        fetch('/ui/api/entities').then(function(r) { return r.json(); }).then(function(ents) {
+            var sel = document.getElementById('autopilot-manager-select');
+            sel.innerHTML = '<option value="">Select an agent...</option>';
+            ents.filter(function(e) { return e.entity_type === 'agent'; }).forEach(function(e) { sel.innerHTML += '<option value="' + e.id + '">' + e.name + '</option>'; });
+        });
+    };
+    window.saveAutopilotConfig = function() {
+        var agentId = document.getElementById('autopilot-manager-select').value;
+        fetch('/ui/api/settings/auto-pilot', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ enabled: true, manager_id: agentId }) })
+            .then(function(r) { return r.json(); }).then(function() { showToast('Autopilot configured!', 'success'); closeModal('autopilot-modal'); });
+    };
+    window.openTeamModal = function() {
+        document.getElementById('team-modal').style.display = 'flex';
+        document.getElementById('team-list').innerHTML = '<p class="text-secondary">Loading roles...</p>';
+        fetch('/ui/api/roles').then(function(r) { return r.json(); }).then(function(data) { renderRoleCliPanel(data); }).catch(function() { document.getElementById('team-list').innerHTML = '<p class="text-danger">Failed to load roles.</p>'; });
+    };
+    function renderRoleCliPanel(data) {
+        var roles = ['orchestrator', 'ui', 'architecture', 'worker', 'test', 'diff_review', 'git_pr'];
+        var assigned = {};
+        (data.roles || []).forEach(function(r) { assigned[r.role] = r; });
+        var candidates = (data.candidates || []).filter(function(c) { return c.installed; });
+        var html = roles.map(function(roleName) {
+            var current = assigned[roleName];
+            var options = candidates.map(function(c) {
+                var selected = current && current.agent === c.agent ? 'selected' : '';
+                return '<option value="' + c.agent + '" data-command="' + c.command + '" data-models="' + (c.models || []).join(',') + '" ' + selected + '>' + c.display_name + ' (' + c.command + ')</option>';
+            }).join('');
+            var model = current ? current.model : '';
+            return '<div class="entity-item" style="display:grid;grid-template-columns:1fr;gap:0.5rem;padding:0.75rem;border-bottom:1px solid var(--border-color);"><div><strong>' + roleName + '</strong>' + (current ? '<small class="text-secondary"> \u2192 ' + current.display_name + ' \u00B7 ' + current.command + '</small>' : '<small class="text-secondary"> unassigned</small>') + '</div><div style="display:grid;grid-template-columns:1fr 0.75fr auto;gap:0.5rem;"><select class="form-input" id="role-agent-' + roleName + '">' + options + '</select><input class="form-input" id="role-model-' + roleName + '" placeholder="model" value="' + (model || '') + '"><button class="btn btn-sm btn-primary" onclick="saveRoleCli(\'' + roleName + '\')">Assign</button></div></div>';
+        }).join('');
+        if (!candidates.length) html = '<p class="text-secondary">No supported CLI tools found on PATH.</p>';
+        document.getElementById('team-list').innerHTML = html;
+    }
+    window.saveRoleCli = function(roleName) {
+        var select = document.getElementById('role-agent-' + roleName);
+        var modelInput = document.getElementById('role-model-' + roleName);
+        if (!select || !select.value) return;
+        var opt = select.options[select.selectedIndex];
+        var models = opt.getAttribute('data-models') || '';
+        fetch('/ui/api/roles/assign', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
+            body: JSON.stringify({ role: roleName, agent: select.value, command: opt.getAttribute('data-command') || select.value, model: modelInput.value || null, models: models, mode: 'headless' })
+        }).then(function(r) { if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'Failed'); }); return r.json(); })
+            .then(function(data) { showToast('Role updated', 'success'); renderRoleCliPanel(data); })
+            .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
+    };
+
+    // --- Approval Queue ---
+    var allPendingApprovals = [];
+    async function fetchAgentApprovals() {
+        try {
+            var response = await fetch('/agents/approvals?project_id=' + PROJECT_ID + '&status_filter=pending&limit=50', { headers: {'X-Entity-ID': CURRENT_ENTITY_ID || ''} });
+            var pending = response.ok ? await response.json() : [];
+            updateApprovalsBadge(pending.length);
+            allPendingApprovals = pending;
+            updateHeaderBell(pending);
+
+            // Update per-task approval indicators
+            document.querySelectorAll('.kanban-task-revamp').forEach(function(card) {
+                updateCardApprovalIndicator(parseInt(card.dataset.taskId), 0);
+            });
+            var taskApprovalCounts = {};
+            pending.forEach(function(a) { if (a.task_id) taskApprovalCounts[a.task_id] = (taskApprovalCounts[a.task_id] || 0) + 1; });
+            Object.keys(taskApprovalCounts).forEach(function(tid) { updateCardApprovalIndicator(parseInt(tid), taskApprovalCounts[tid]); });
+        } catch(e) { console.error('fetchAgentApprovals', e); }
+    }
+    function updateApprovalsBadge(count) {
+        var badge = document.getElementById('approvals-badge');
+        if (!badge) return;
+        if (count > 0) { badge.textContent = count; badge.style.display = ''; } else { badge.style.display = 'none'; }
+    }
+    function updateHeaderBell(pending) {
+        var countEl = document.getElementById('header-bell-count');
+        var listEl = document.getElementById('bell-dropdown-list');
+        if (countEl) {
+            if (pending.length > 0) { countEl.textContent = pending.length; countEl.style.display = ''; }
+            else { countEl.style.display = 'none'; }
+        }
+        if (listEl) {
+            if (!pending.length) { listEl.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">No pending approvals.</p>'; }
+            else {
+                listEl.innerHTML = pending.slice(0, 10).map(function(a) {
+                    return '<div class="insight-item" style="cursor:pointer;" onclick="expandCardAndShowApprovals(' + (a.task_id || 'null') + ')"><div style="display:flex;justify-content:space-between;align-items:center;"><span class="insight-title">' + escapeHtml(a.title || a.approval_type) + '</span><span style="background:#fbbf24;color:#111;padding:0.1rem 0.5rem;border-radius:1rem;font-size:0.7rem;font-weight:700;">pending</span></div><div class="insight-meta">' + escapeHtml(a.approval_type) + ' \u00B7 ' + timeAgo(a.requested_at) + '</div></div>';
+                }).join('');
+            }
+        }
+    }
+    function renderApprovalList(elementId, approvals, withControls, emptyText) {
+        var el = document.getElementById(elementId);
+        if (!el) return;
+        if (!approvals.length) { el.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">' + emptyText + '</p>'; return; }
+        el.innerHTML = approvals.map(function(a) { return renderApprovalItem(a, withControls); }).join('');
+    }
+    async function resolveApproval(approvalId, decision) {
+        var note = (document.getElementById('approval-note-' + approvalId) || {}).value || '';
+        try {
+            var resp = await fetch('/agents/approvals/' + approvalId + '/resolve', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || '' },
+                body: JSON.stringify({ decision: decision, response_message: note || null })
+            });
+            if (!resp.ok) { var data = await resp.json().catch(function() { return {}; }); throw new Error(data.detail || 'Failed to resolve approval'); }
+            showToast('Approval ' + decision, 'success');
+            fetchAgentApprovals();
+            // Refresh in-card approvals for any expanded cards
+            document.querySelectorAll('[id^="task-approvals-list-"]').forEach(function(el) {
+                var taskId = el.id.replace('task-approvals-list-', '');
+                fetchTaskApprovals(parseInt(taskId));
+            });
+        } catch(e) { showToast('Error: ' + e.message, 'error'); }
+    }
+
+    // --- Open workspace ---
+    async function openWorkspace(path) {
+        if (!path) { showToast('No workspace folder set for this project', 'warning'); return; }
+        try {
+            var res = await fetch('/ui/api/open-workspace', { method: 'POST', headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''}, body: JSON.stringify({path: path}) });
+            var data = await res.json().catch(function() { return {}; });
+            if (res.ok) showToast('Opened ' + (data.path || path), 'success');
+            else showToast('Could not open: ' + (data.detail || res.statusText), 'error');
+        } catch(e) { showToast('Open failed: ' + e.message, 'error'); }
+    }
+    async function syncGithub() {
+        showToast('Syncing GitHub contributions...', 'info');
+        try {
+            var resp = await fetch('/agents/projects/' + PROJECT_ID + '/contributions/sync/github', { method: 'POST', headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''} });
+            var data = await resp.json();
+            if (resp.ok) { showToast('Synced ' + (data.created || 0) + ' new items (' + (data.seen || 0) + ' total)', 'success'); }
+            else showToast('Sync failed: ' + (data.detail || 'Unknown error'), 'error');
+        } catch(err) { showToast('Sync error: ' + err.message, 'error'); }
+    }
+
+    // --- Chat task creation ---
+    var chatInput = document.getElementById('chat-task-input');
+    if (chatInput) {
+        chatInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); createTaskFromChat(); }
+        });
+    }
+    async function createTaskFromChat() {
+        var input = document.getElementById('chat-task-input');
+        if (!input) return;
+        var text = input.value.trim();
+        if (!text) return;
+        try {
+            var resp = await fetch('/ui/tasks/chat-plan', { method: 'POST', headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''}, body: JSON.stringify({ project_id: PROJECT_ID, message: text }) });
+            if (!resp.ok) { var error = await resp.json().catch(function() { return {}; }); throw new Error(error.detail || 'Failed to create backlog plan'); }
+            var data = await resp.json();
+            input.value = '';
+            showToast('Created ' + data.tasks.length + ' backlog cards', 'success');
+            setTimeout(function() { location.reload(); }, 1000);
+        } catch(err) { showToast('Error: ' + err.message, 'error'); }
+    }
+
+    // --- WebSocket ---
+    function initWebSocket() {
+        var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var wsUrl = protocol + '//' + window.location.host + '/ws/projects/' + PROJECT_ID;
+        console.log('Connecting to project updates:', wsUrl);
+        var socket = new WebSocket(wsUrl);
+        socket.onmessage = function(event) {
+            var msg = JSON.parse(event.data);
+            console.log('WS Message:', msg);
+            if (msg.event_type === 'task_updated' || msg.event_type === 'task_moved') {
+                var data = msg.data;
+                var statusLabel = data.status ? data.status.replace('_', ' ') : 'Updated';
+                showToast('Task #' + data.task_id + ': ' + statusLabel, 'info');
+                var badge = document.getElementById('status-task-' + data.task_id);
+                if (badge && data.status) { badge.className = 'badge badge-' + data.status; badge.textContent = statusLabel; }
+                if (msg.event_type === 'task_moved' || data.status === 'completed') { setTimeout(function() { location.reload(); }, 2000); }
+            } else if (msg.event_type === 'task_commented') {
+                showToast('\u{1F4AC} Task #' + msg.data.task_id + ': ' + msg.data.comment.substring(0, 30) + '...', 'info');
+            } else if (msg.event_type === 'task_assigned') {
+                showToast('\u{1F464} Task #' + msg.data.task_id + ' assigned', 'info');
+                setTimeout(function() { location.reload(); }, 1500);
+            } else if (msg.event_type === 'agent_status_updated') {
+                var data = msg.data;
+                // Update card session indicator
+                if (data.task_id) updateCardSessionIndicator(data.task_id, data.status_type === 'working' || data.status_type === 'thinking' ? {id: data.session_id, agent_id: data.agent_id, status: data.status_type} : null);
+            } else if (msg.event_type === 'agent_activity_logged') {
+                var data = msg.data;
+                // Add recent-activity dot on card
+                if (data.task_id) {
+                    var card = document.getElementById('task-card-' + data.task_id);
+                    if (card) {
+                        var indicators = card.querySelector('.task-state-indicators');
+                        var existingDot = indicators ? indicators.querySelector('.task-indicator.recent-activity') : null;
+                        if (indicators && !existingDot) {
+                            var dot = document.createElement('span');
+                            dot.className = 'task-indicator recent-activity';
+                            dot.title = 'Recent activity';
+                            indicators.appendChild(dot);
+                        }
+                    }
+                }
+            }
+            if (msg.event_type === 'diff_review_requested' || msg.event_type === 'diff_review_completed') {
+                // Refresh in-card reviews for expanded cards
+                document.querySelectorAll('[id^="task-reviews-list-"]').forEach(function(el) {
+                    var taskId = el.id.replace('task-reviews-list-', '');
+                    fetchTaskReviews(parseInt(taskId));
+                });
+            }
+            if (msg.event_type === 'agent_approval_requested') {
+                showToast('\u{1F6C2} Approval needed: ' + (msg.data.title || msg.data.approval_type), 'warning');
+                fetchAgentApprovals();
+                sendOSNotification('Approval Requested', msg.data.title || msg.data.approval_type, msg.data.task_id);
+                // Toast should scroll to the card
+                var toastEl = document.getElementById('toast');
+                if (toastEl) {
+                    var linkBtn = document.createElement('button');
+                    linkBtn.textContent = 'Open Card';
+                    linkBtn.className = 'btn btn-sm';
+                    linkBtn.style.marginLeft = '0.5rem';
+                    linkBtn.onclick = function() { expandCardAndShowApprovals(msg.data.task_id); };
+                    toastEl.appendChild(linkBtn);
+                }
+            } else if (msg.event_type === 'agent_approval_resolved') {
+                showToast('Approval #' + msg.data.approval_id + ' ' + msg.data.status, 'info');
+                fetchAgentApprovals();
+                if (msg.data.task_id) fetchTaskApprovals(msg.data.task_id);
+            }
+        };
+        socket.onclose = function() { console.log('WS Connection closed. Retrying in 5s...'); setTimeout(initWebSocket, 5000); };
+        socket.onerror = function(err) { console.error('WS Error:', err); };
+    }
+
+    // --- Initialize ---
+    initDragDrop();
+    initWebSocket();
+    initExpandedCards();
+    initNotificationSettings();
+    fetchAgentApprovals();
+    setInterval(fetchAgentApprovals, 15000);
+</script>
+{% endblock %}
