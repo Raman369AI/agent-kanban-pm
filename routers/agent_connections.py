@@ -7,13 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
-from datetime import datetime
+from datetime import UTC, datetime
 import json
 import logging
 
 from database import get_db
 from models import Entity, EntityType, AgentConnection, ProtocolType, ConnectionStatus
 from schemas import AgentConnectionCreate, AgentConnectionResponse
+from auth import get_current_entity, require_worker, require_manager, is_owner_or_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agent-connections", tags=["agent-connections"])
@@ -23,9 +24,10 @@ router = APIRouter(prefix="/agent-connections", tags=["agent-connections"])
 async def list_connections(
     entity_id: Optional[int] = None,
     protocol: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_entity: Entity = Depends(require_worker),
 ):
-    """List all agent connections"""
+    """List all agent connections. Requires WORKER+ role."""
     query = select(AgentConnection)
 
     if entity_id:
@@ -55,9 +57,10 @@ async def list_connections(
 async def create_connection(
     connection: AgentConnectionCreate,
     entity_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_entity: Entity = Depends(require_manager),
 ):
-    """Create a new agent connection"""
+    """Create a new agent connection. Requires MANAGER+ role."""
     result = await db.execute(
         select(Entity).filter(
             Entity.id == entity_id,
@@ -87,7 +90,7 @@ async def create_connection(
         subscribed_events=json.dumps(connection.subscribed_events),
         subscribed_projects=json.dumps(connection.subscribed_projects) if connection.subscribed_projects else None,
         status=ConnectionStatus.ONLINE,
-        last_seen=datetime.utcnow()
+        last_seen=datetime.now(UTC)
     )
 
     db.add(db_connection)
@@ -111,9 +114,10 @@ async def create_connection(
 @router.get("/{connection_id}", response_model=AgentConnectionResponse)
 async def get_connection(
     connection_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_entity: Entity = Depends(require_worker),
 ):
-    """Get a specific agent connection"""
+    """Get a specific agent connection. Requires WORKER+ role."""
     result = await db.execute(
         select(AgentConnection).filter(AgentConnection.id == connection_id)
     )
@@ -140,9 +144,10 @@ async def update_connection(
     subscribed_events: Optional[List[str]] = None,
     subscribed_projects: Optional[List[int]] = None,
     config: Optional[dict] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_entity: Entity = Depends(require_manager),
 ):
-    """Update an agent connection"""
+    """Update an agent connection. Requires MANAGER+ role."""
     result = await db.execute(
         select(AgentConnection).filter(AgentConnection.id == connection_id)
     )
@@ -158,7 +163,7 @@ async def update_connection(
     if config is not None:
         connection.config = json.dumps(config)
 
-    connection.last_seen = datetime.utcnow()
+    connection.last_seen = datetime.now(UTC)
     await db.commit()
     await db.refresh(connection)
 
@@ -177,9 +182,10 @@ async def update_connection(
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_connection(
     connection_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_entity: Entity = Depends(require_manager),
 ):
-    """Delete an agent connection"""
+    """Delete an agent connection. Requires MANAGER+ role."""
     result = await db.execute(
         select(AgentConnection).filter(AgentConnection.id == connection_id)
     )
@@ -195,9 +201,10 @@ async def delete_connection(
 @router.post("/{connection_id}/heartbeat")
 async def connection_heartbeat(
     connection_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_entity: Entity = Depends(require_worker),
 ):
-    """Update the last_seen timestamp for a connection"""
+    """Update the last_seen timestamp for a connection. Requires WORKER+ role."""
     result = await db.execute(
         select(AgentConnection).filter(AgentConnection.id == connection_id)
     )
@@ -206,7 +213,7 @@ async def connection_heartbeat(
     if not connection:
         raise HTTPException(status_code=404, detail="Connection not found")
 
-    connection.last_seen = datetime.utcnow()
+    connection.last_seen = datetime.now(UTC)
     connection.status = ConnectionStatus.ONLINE
     await db.commit()
 

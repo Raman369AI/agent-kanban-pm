@@ -1,8 +1,9 @@
 """
 Adapter Registry Loader
 
-Scans ~/.kanban/agents/*.yaml for agent adapter definitions.
-On startup, copies bundled adapters if the user directory is empty.
+Scans ~/.kanban/agents/*.yaml for user adapter definitions.
+On startup, copies bundled adapters from kanban_runtime/data/agents if
+the user directory is empty.
 Upserts Entity rows so adapters become visible to the manager.
 
 No Python changes are needed to add a new agent — just drop a YAML file.
@@ -15,16 +16,17 @@ from pathlib import Path
 from typing import List, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from database import async_session_maker
 from models import Entity, EntityType, Role
 from sqlalchemy import select
 from kanban_runtime.preferences import load_preferences
+from kanban_runtime.paths import bundled_adapters_dir
 
 logger = logging.getLogger(__name__)
 
-BUNDLED_ADAPTERS_DIR = Path(__file__).parent.parent / "agents"
+BUNDLED_ADAPTERS_DIR = bundled_adapters_dir()
 USER_ADAPTERS_DIR = Path.home() / ".kanban" / "agents"
 
 
@@ -48,9 +50,12 @@ POPULAR_CLI_TOOLS = [
 # ---------------------------------------------------------------------------
 
 class InvokeSpec(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     command: str
     mcp_flag: Optional[str] = None
     info_flag: Optional[str] = None
+    model_flag: Optional[str] = None
 
 
 class ModelSpec(BaseModel):
@@ -75,6 +80,19 @@ class ChatDesignerSpec(BaseModel):
     extra_args: List[str] = Field(default_factory=list)
 
 
+class TaskCommandSpec(BaseModel):
+    args: List[str] = Field(default_factory=lambda: ["{prompt}"])
+    prompt_file: Optional[str] = None
+
+
+class PromptPatternSpec(BaseModel):
+    """A single prompt detection rule defined in adapter YAML."""
+    regex: str
+    type: str = "tool_call"
+    approve: str = "y"
+    reject: str = "n"
+
+
 class AdapterSpec(BaseModel):
     name: str
     display_name: str
@@ -88,6 +106,10 @@ class AdapterSpec(BaseModel):
     modes: List[str] = Field(default_factory=lambda: ["supervised", "auto"])
     reporting: ReportingSpec = Field(default_factory=ReportingSpec)
     chat_designer: ChatDesignerSpec = Field(default_factory=ChatDesignerSpec)
+    task_command: TaskCommandSpec = Field(default_factory=TaskCommandSpec)
+    prompt_patterns: List[PromptPatternSpec] = Field(default_factory=list)
+    owns: List[str] = Field(default_factory=list, description="File/directory patterns this agent owns for handoff routing")
+    review_only: bool = Field(default=False, description="If true, agent only reviews — does not own files")
 
 
 class CliDiscoveryResult(BaseModel):

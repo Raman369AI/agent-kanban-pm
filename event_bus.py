@@ -12,7 +12,7 @@ Supports:
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Dict, List, Optional, Callable, Any, Set
 from enum import Enum
 from sqlalchemy import select
@@ -68,6 +68,11 @@ class EventType(str, Enum):
     AGENT_APPROVAL_REQUESTED = "agent_approval_requested"
     AGENT_APPROVAL_RESOLVED = "agent_approval_resolved"
 
+    # Stage policy events
+    STAGE_POLICY_CREATED = "stage_policy_created"
+    STAGE_POLICY_UPDATED = "stage_policy_updated"
+    TASK_TRANSITION_BLOCKED = "task_transition_blocked"
+
     # Catch-all wildcard
     ALL = "*"
 
@@ -102,6 +107,18 @@ class EventBus:
             self._worker_task = None
             logger.info("Event bus worker stopped")
 
+    def reset(self):
+        """Reset internal state for test isolation.
+
+        This singleton is process-scoped by design (local-first SQLite
+        operation).  Call reset() in test fixtures to clear subscribers
+        and stop the worker between tests.
+        """
+        self.stop()
+        self._subscribers.clear()
+        self._websocket_manager = None
+        self._queue = None
+
     def set_websocket_manager(self, manager):
         """Set the websocket manager for real-time broadcasts"""
         self._websocket_manager = manager
@@ -135,7 +152,7 @@ class EventBus:
         """
         event_payload = {
             "event_type": event_type,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "project_id": project_id,
             "entity_id": entity_id,
             "data": data

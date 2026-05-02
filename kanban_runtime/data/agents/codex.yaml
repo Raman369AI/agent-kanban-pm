@@ -1,0 +1,37 @@
+name: codex
+display_name: "Codex (OpenAI)"
+version: "1.0"
+
+invoke:
+  command: codex
+  mcp_flag: "--mcp"
+  info_flag: "--version"
+  model_flag: "--model"
+
+capabilities: [code, api-design, testing, refactoring]
+
+models:
+  - id: codex-default
+    context_window: 128000
+
+protocol: mcp
+
+auth:
+  type: none
+roles: [worker, ui, test]
+modes: [supervised, auto, headless]
+
+reporting:
+  heartbeat_interval: 30
+
+chat_designer:
+  prompt_flag: "-p"
+  stdin: false
+  output_format: "stdout"
+  timeout_seconds: 180
+
+task_command:
+  args: ["--ask-for-approval", "on-request", "-C", "{workspace}", "{prompt}"]
+
+review_only: true
+owns: []

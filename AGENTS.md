@@ -306,7 +306,7 @@ version: "1.0"
 
 invoke:
   command: claude
-  mcp_flag: "--mcp"
+  mcp_flag: "--mcp-config"
   info_flag: "--version"
 
 capabilities: [code, review, planning, testing, writing]
@@ -532,9 +532,9 @@ manager daemon when spawning each agent:
 vars on processes they own.
 
 **Humans** authenticating to the REST UI use `X-Entity-ID` (or session
-cookie). The deprecated default-entity fallback in `auth.py:91` is now
-restricted to safe `GET` requests with a logged warning — mutations
-require explicit identity.
+cookie). The default-entity fallback in `auth.py` is restricted to
+safe `GET` requests only. `/ui/` mutation endpoints get the local
+human OWNER identity. All other mutations require explicit `X-Entity-ID`.
 
 ## 5. Implementation Status
 
@@ -543,7 +543,7 @@ require explicit identity.
 | Pillar / Task | Status | Key files |
 |---|---|---|
 | Adapter registry + Pydantic validation | ✅ | `kanban_runtime/adapter_loader.py` |
-| 4 bundled adapters | ✅ | `agents/*.yaml` |
+| 8 bundled adapters | ✅ | `kanban_runtime/data/agents/*.yaml` |
 | `shutil.which` gate (deactivates missing tools) | ✅ | `adapter_loader.py:145` |
 | Preferences loader + `kanban init` wizard | ✅ | `kanban_runtime/preferences.py`, `kanban_cli/__init__.py` |
 | Manager daemon: restart loop, signals, PID file | ✅ | `kanban_runtime/manager_daemon.py` |
@@ -552,8 +552,8 @@ require explicit identity.
 | `AGENT_STATUS_UPDATED`, `AGENT_ACTIVITY_LOGGED` events | ✅ | `event_bus.py:54-55` |
 | 4 MCP activity tools | ✅ | `mcp_server.py:246-282, 781-895` |
 | Activity REST router | ✅ | `routers/agent_activity.py` |
-| UI activity sidebar + WS handlers | ✅ | `templates/kanban_board.html` |
-| Workspace-aware sessions + project feed | ✅ | `models.py`, `routers/agent_activity.py`, `mcp_server.py`, `templates/kanban_board.html` |
+| UI activity sidebar + WS handlers | ✅ | `kanban_runtime/data/templates/kanban_board.html` |
+| Workspace-aware sessions + project feed | ✅ | `models.py`, `routers/agent_activity.py`, `mcp_server.py`, `kanban_runtime/data/templates/kanban_board.html` |
 | Heartbeat staleness sweeper | ✅ | `main.py:_heartbeat_sweeper` |
 | RBAC: roles, `require_role`, task/project gates | ✅ | `auth.py:130-221` |
 | Default-entity fallback restricted to GET-only | ✅ | `auth.py:93` |
@@ -598,7 +598,7 @@ Concrete changes made:
    `KANBAN_AGENT_NAME` and `KANBAN_AGENT_ROLE`.
 4. ✅ **`auth.py`** — local HTTP identity uses `X-Entity-ID`.
 5. ✅ **`models.py`** — entity identity is name/role based.
-6. ✅ **`test_phase6.py`** — verifies MCP startup fails without
+6. ✅ **`tests/test_phase6.py`** — verifies MCP startup fails without
    `KANBAN_AGENT_NAME` and resolves identity correctly with it.
 
 Done when: a fresh install can run `kanban init`, `kanban daemon`, and
@@ -697,36 +697,40 @@ These apply to anyone (human or agent) writing code in this repo.
 | Concern | File | Status |
 |---|---|---|
 | Adapter registry loader | `kanban_runtime/adapter_loader.py` | ✅ |
-| Bundled adapters | `agents/*.yaml` | ✅ 8 adapters (7-role taxonomy) |
+| Bundled adapters | `kanban_runtime/data/agents/*.yaml` | ✅ 8 adapters (7-role taxonomy) |
 | Read-only CLI discovery | `kanban_runtime/adapter_loader.py`, `kanban_cli/__init__.py` | ✅ |
-| Adapter sync entrypoint | `sync_agents.py` | ✅ thin wrapper |
+| Adapter sync | `kanban_runtime/adapter_loader.py` (called directly from `main.py`) | ✅ |
 | Preferences loader (7-role taxonomy + standalone CLI roles) | `kanban_runtime/preferences.py` | ✅ |
 | Role supervisor (tmux-backed) | `kanban_runtime/role_supervisor.py` | ✅ |
+| Process/tmux helpers | `kanban_runtime/process_launcher.py` | ✅ |
+| Worktree handoff protocol | `kanban_runtime/handoff_protocol.py` | ✅ |
+| Stage policy helpers | `kanban_runtime/stage_policy.py` | ✅ |
+| Static path resolver | `kanban_runtime/paths.py` | ✅ |
 | Assignment launcher | `kanban_runtime/assignment_launcher.py`, `main.py` | ✅ |
-| CLI approval queue | `models.py`, `schemas.py`, `routers/agent_activity.py`, `mcp_server.py`, `kanban_runtime/role_supervisor.py`, `templates/kanban_board.html` | ✅ |
-| Manager daemon | `kanban_runtime/manager_daemon.py` | ✅ |
+| CLI approval queue | `models.py`, `schemas.py`, `routers/agent_activity.py`, `mcp_server.py`, `kanban_runtime/role_supervisor.py`, `kanban_runtime/data/templates/kanban_board.html` | ✅ |
+| Manager daemon (legacy) | `kanban_runtime/manager_daemon.py` | ✅ kept for `kanban daemon` compat |
 | Wizard + CLI (run/roles) | `kanban_cli/__init__.py` | ✅ |
 | Heartbeat sweeper (per-adapter) | `main.py:_heartbeat_sweeper` | ✅ |
-| Heartbeat / activity models | `models.py:165-260` | ✅ |
-| DiffReview model | `models.py:391-418` | ✅ |
-| Activity events | `event_bus.py:54-65` | ✅ |
+| Heartbeat / activity models | `models.py` | ✅ |
+| DiffReview model | `models.py` | ✅ |
+| Activity events | `event_bus.py` | ✅ |
 | Activity REST router | `routers/agent_activity.py` | ✅ |
-| Diff review REST endpoints | `routers/agent_activity.py:826-936` | ✅ |
-| Activity MCP tools | `mcp_server.py:246-282, 781-895` | ✅ |
-| Diff review MCP tools | `mcp_server.py:500-580` | ✅ |
+| Diff review REST endpoints | `routers/agent_activity.py` | ✅ |
+| Activity MCP tools | `mcp_server.py` | ✅ |
+| Diff review MCP tools | `mcp_server.py` | ✅ |
 | Coordination state | `models.py`, `schemas.py`, `routers/agent_activity.py` | ✅ |
-| Activity / terminal UI panel | `templates/kanban_board.html` | ✅ |
-| Chat task creation UI | `templates/kanban_board.html` | ✅ |
-| Chat designer CLI | `kanban_cli/chat.py`, `kanban_cli/chat_designer.py`, `routers/ui.py:ui_create_chat_plan` | ✅ |
-| Diff reviews workbench tab | `templates/kanban_board.html` | ✅ |
-| RBAC core | `auth.py:130-221` | ✅ |
-| Default-entity fallback | `auth.py:93` | ✅ GET-only |
-| MCP auth (name-based) | `mcp_server.py:66-89` | ✅ |
-| Git PR role isolation | `routers/agent_activity.py:_is_git_pr_role` | ✅ |
+| Activity / terminal UI panel | `kanban_runtime/data/templates/kanban_board.html` | ✅ |
+| Chat task creation UI | `kanban_runtime/data/templates/kanban_board.html` | ✅ |
+| Chat designer CLI | `kanban_cli/chat.py`, `kanban_cli/chat_designer.py`, `routers/ui.py` | ✅ |
+| Diff reviews workbench tab | `kanban_runtime/data/templates/kanban_board.html` | ✅ |
+| RBAC core | `auth.py` | ✅ |
+| Default-entity fallback | `auth.py` | ✅ GET-only |
+| MCP auth (name-based) | `mcp_server.py` | ✅ |
+| Git PR role isolation | `routers/agent_activity.py` | ✅ |
 | Server-side autopilot | — | ✅ deleted |
 | Server-side reactor | — | ✅ deleted |
-| MCP startup requires identity | `mcp_server.py:71-82` | ✅ |
-| **Phase 6: Env-based MCP identity** | ✅ | `mcp_server.py:66-101, kanban_cli/__init__.py` — no Kanban-issued keys |
+| MCP startup requires identity | `mcp_server.py` | ✅ |
+| **Phase 6: Env-based MCP identity** | `mcp_server.py`, `kanban_cli/__init__.py` | ✅ no Kanban-issued keys |
 
 ---
 
@@ -734,13 +738,13 @@ These apply to anyone (human or agent) writing code in this repo.
 
 Status: **implemented** (Phases 1-6 and 8; Phase 7 deferred). The UI Agent role owns delivery
 (see §2 role table). This section is the source of truth for the
-redesign; treat the existing `templates/kanban_board.html` layout as
+redesign; treat the existing `kanban_runtime/data/templates/kanban_board.html` layout as
 legacy until the phases below land. Architecture-impacting subsections
 must be reviewed by the Architecture Agent before phase work begins.
 
 ### 9.1 Problems We Are Fixing
 
-Concrete defects in the current board (`templates/kanban_board.html`):
+Concrete defects in the current board (`kanban_runtime/data/templates/kanban_board.html`):
 
 - **Terminal is decoupled from the card.** The 🖥️ Terminal button on
   each card jumps focus to the workbench sidebar's Terminal tab. The
@@ -1244,9 +1248,9 @@ hits the regex fallback. Backwards compatible.
 | `kanban_cli/__init__.py` (`chat` subparser) | ✅ |
 | `kanban_cli/chat.py` (REPL) | ✅ |
 | `kanban_cli/chat_designer.py` (subprocess + parser) | ✅ |
-| `agents/*.yaml` (`chat_designer:` blocks) | ✅ |
+| `kanban_runtime/data/agents/*.yaml` (`chat_designer:` blocks) | ✅ |
 | `kanban_runtime/preferences.py` (`prompt_flag`, `chat_stdin`) | ✅ |
-| `test_chat_designer.py` (unit + integration) | ✅ |
+| `tests/test_chat_designer.py` (unit + integration) | ✅ |
 
 ### 10.11 Open questions
 
@@ -1262,3 +1266,385 @@ hits the regex fallback. Backwards compatible.
 - Should the browser chat bar share the same designer pipeline (via
   WebSocket) so the web UI gets LLM-quality plans too? Out of scope
   here; could be a phase 7.
+
+---
+
+## 11. Stage Policy Handoff Model - Implementation Plan
+
+This section defines the next architecture change: cards can have
+stage-driven role expectations, but the server still must not decide who
+does work. Stage policies are configuration and visibility. The
+orchestrator reads the policy, records an explicit decision, assigns the
+next role(s), and moves cards through MCP/REST actions. The server stores,
+validates, broadcasts, and launches already-assigned sessions only.
+
+### 11.1 Goal
+
+Replace implicit "auto agent" behavior with explicit stage policies:
+
+- Each project stage can declare expected roles.
+- Each stage can declare required outputs before the next transition.
+- The orchestrator is the only agent that converts policy into
+  assignments and card movement.
+- Humans can override any transition.
+- Critical Review transitions require visible diff/test/human decision
+  gates.
+
+This keeps the workflow predictable:
+
+```
+Backlog -> To Do -> In Progress -> Review -> Done
+   |         |           |            |        |
+   v         v           v            v        v
+ plan     prep       implement     verify    close
+```
+
+### 11.2 Proposed stage policy contract
+
+Store stage policy as project-local configuration, not Python branches.
+Initial implementation can use `ProjectWorkspace.policy_json` if added,
+or a new `stage_policies` table if the UI needs first-class editing.
+Prefer a table if this is implemented beyond a prototype.
+
+Recommended table:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | int PK | |
+| `project_id` | FK projects | |
+| `stage_id` | FK stages | |
+| `stage_key` | text | normalized fallback, e.g. `to_do` |
+| `on_enter_roles_json` | text | JSON list of role names |
+| `required_outputs_json` | text | JSON list of output keys |
+| `review_mode` | text nullable | `none`, `auto`, `human`, `auto_then_human_for_critical` |
+| `allow_parallel` | bool | whether all roles may run together |
+| `requires_orchestrator_move` | bool | default true |
+| `created_at`, `updated_at` | datetime | |
+
+Example policy:
+
+```yaml
+stage_policies:
+  backlog:
+    on_enter_roles: [orchestrator]
+    required_outputs: [task_split, role_hints]
+    requires_orchestrator_move: true
+
+  to_do:
+    on_enter_roles: [architecture, test]
+    required_outputs: [implementation_plan, acceptance_criteria, test_plan]
+    allow_parallel: true
+    requires_orchestrator_move: true
+
+  in_progress:
+    on_enter_roles: [worker]
+    required_outputs: [code_changes, status_summary]
+    requires_orchestrator_move: true
+
+  review:
+    on_enter_roles: [diff_review, test]
+    required_outputs: [test_result, diff_review_result]
+    review_mode: auto_then_human_for_critical
+    requires_orchestrator_move: true
+
+  done:
+    on_enter_roles: [git_pr]
+    required_outputs: [final_summary]
+    requires_explicit_human_request: true
+```
+
+### 11.3 Card movement rules
+
+Cards move only through explicit actions:
+
+| Transition | Allowed actor | Required record |
+|---|---|---|
+| Backlog -> To Do | Human or orchestrator | Scope summary and role plan |
+| To Do -> In Progress | Orchestrator or human | Architecture/test prep summary |
+| In Progress -> Review | Assigned worker/UI agent or orchestrator | `STATUS.md` handoff with `handoff_ready: true` |
+| Review -> Done | Orchestrator or human | Diff review + test result; human approval if critical |
+| Any -> Blocked | Assigned agent, orchestrator, or human | Blocker reason and requested next action |
+
+Implementation rule:
+
+- The server may reject invalid moves.
+- The server may publish `TASK_MOVED`.
+- The server may launch sessions for existing assignments.
+- The server must not infer the next role from task text and assign it.
+- The server must not infer completion from terminal text and complete a
+  card.
+
+### 11.4 Current code to change
+
+These paths currently contain behavior that should be converted to
+orchestrator-owned actions:
+
+| File | Current behavior | Required change |
+|---|---|---|
+| `kanban_runtime/assignment_launcher.py` | `assign_orphaned_tasks()` selects a role from task text and assigns it. | Remove, gate behind explicit recovery command, or change to "report orphaned runnable tasks" only. |
+| `kanban_runtime/assignment_launcher.py` | `scan_and_advance_completed_tasks()` moves cards to Review from `STATUS.md`. | Replace with event/activity suggestion for orchestrator; no server move. |
+| `kanban_runtime/session_streamer.py` | `_finalize_completed_session()` marks task completed from terminal heuristics. | Mark session done and write activity summary only; card movement must be explicit. |
+| `routers/ui.py` | `_notify_stage_policy_for_todo()` reports policy hints after manual To Do move (report-only, no auto-assignment). | ✅ Complete — publishes `STAGE_POLICY_CREATED` event with expected roles. |
+| `kanban_runtime/data/templates/kanban_board.html` | Legacy "Autopilot Settings" modal. | Rename to "Stage Policy / Orchestrator" or remove. |
+| `kanban_runtime/manager_daemon.py` | Legacy manager daemon overlaps with role supervisor orchestrator. | Prefer role supervisor path; mark daemon as legacy compatibility. |
+
+### 11.5 Agent/model work split requested by operator
+
+This is a planning preference, not a hardcoded implementation rule. It
+belongs in preferences/stage policy data and can be changed per project.
+
+| Work type | Preferred agent/model | Notes |
+|---|---|---|
+| Source-of-truth instruction reading | OpenCode | OpenCode should read `AGENTS.md` before acting and should not fork instructions into another doc. |
+| Markdown/design notes | Gemini Flash and Claude | Gemini Flash can draft concise Markdown plans; Claude can handle deeper design review. |
+| Boilerplate/scaffolding | GLM 5.1 | Use for repetitive schema/router/template/test scaffolding once interfaces are clear. |
+| Light tasks | Gemini Flash | Small edits, docs cleanup, simple tests, formatting, low-risk UI copy. |
+| UI implementation | Gemini | Frontend views, board/workbench UX, stage policy screens. |
+| Hard tasks | Claude Sonnet | Cross-cutting architecture, auth/RBAC, tmux/subprocess, migrations, orchestration boundaries, critical reviews. |
+
+Example role preference shape:
+
+```yaml
+roles:
+  orchestrator:
+    agent: claude
+    model: claude-sonnet-4-6
+    models: [claude-sonnet-4-6]
+    mode: headless
+  architecture:
+    agent: claude
+    model: claude-sonnet-4-6
+    models: [claude-sonnet-4-6]
+    mode: headless
+  worker:
+    agent: glm
+    model: glm-5.1
+    models: [glm-5.1]
+    mode: headless
+  ui:
+    agent: gemini
+    model: gemini-2.5-pro
+    models: [gemini-2.5-pro, gemini-2.5-flash]
+    mode: headless
+  test:
+    agent: gemini
+    model: gemini-2.5-flash
+    models: [gemini-2.5-flash]
+    mode: headless
+  diff_review:
+    agent: claude
+    model: claude-sonnet-4-6
+    models: [claude-sonnet-4-6]
+    mode: headless
+```
+
+Do not encode `if agent == "claude"` or `if model == "glm"` in Python.
+Capabilities and stage policies must drive behavior.
+
+### 11.6 Implementation tasks
+
+#### Task A - Architecture cleanup
+
+Owner preference: Claude Sonnet.
+
+Scope:
+
+- Remove or disable server-side role selection from
+  `assignment_launcher.assign_orphaned_tasks`.
+- Change completion heuristics to session/activity summaries only.
+- Update `manager_daemon` docs/comments so role supervisor is the
+  preferred orchestrator runtime.
+- Add a migration note that "autopilot" is deprecated terminology.
+
+Acceptance:
+
+- No server path chooses a worker/role from task text.
+- Existing explicit assignment still launches tmux execution.
+- Tests prove assignment launcher only starts already-assigned tasks.
+
+#### Task B - Stage policy data model
+
+Owner preference: GLM 5.1 for boilerplate, Claude Sonnet for review.
+
+Scope:
+
+- Add `StagePolicy` SQLAlchemy model.
+- Add Pydantic schemas for create/update/read.
+- Add DB initialization/migration handling consistent with the current
+  project style.
+- Add default policy generation for the standard Kanban stages.
+
+Acceptance:
+
+- New project can get default policies.
+- Existing projects without policy keep working.
+- Policy is project-scoped and stage-scoped.
+
+#### Task C - Stage policy REST/MCP APIs
+
+Owner preference: GLM 5.1 for boilerplate, Claude Sonnet for RBAC.
+
+Scope:
+
+- REST:
+  - `GET /agents/projects/{project_id}/stage-policies`
+  - `PUT /agents/projects/{project_id}/stage-policies/{stage_id}`
+  - `POST /agents/projects/{project_id}/stage-policies/defaults`
+- MCP:
+  - `get_stage_policies(project_id)`
+  - `record_stage_policy_decision(project_id, task_id, from_stage,
+    to_stage, selected_roles, rationale)`
+- Enforce manager/owner for writes.
+
+Acceptance:
+
+- Orchestrator can read policies.
+- Humans can update policies.
+- Every policy-driven decision is recorded as an
+  `OrchestrationDecision`.
+
+#### Task D - Explicit transition gates
+
+Owner preference: Claude Sonnet.
+
+Scope:
+
+- Add transition validation helper.
+- Enforce required review outputs before Review -> Done.
+- Enforce human approval for critical changes:
+  auth, identity, subprocess/tmux, filesystem access, migrations,
+  Git push, PR creation.
+- Convert `STATUS.md handoff_ready` into a visible suggestion/event,
+  not an automatic move.
+
+Acceptance:
+
+- Worker setting `handoff_ready: true` does not move the card by itself.
+- Orchestrator/human can move the card with recorded rationale.
+- Critical Review -> Done is blocked without required review/human
+  decision.
+
+#### Task E - UI stage policy editor
+
+Owner preference: Gemini for UI, Gemini Flash for light copy/tests.
+
+Scope:
+
+- Replace "Autopilot Settings" UI with "Stage Policy".
+- Show each stage with expected roles, outputs, review mode, and whether
+  human review is required.
+- On cards, show "Expected next roles" from policy.
+- On invalid moves, show the missing output/review reason.
+
+Acceptance:
+
+- No user-visible "Autopilot" language remains on the board.
+- Stage policy is visible from the board/workbench.
+- Manual overrides are clear and recorded.
+
+#### Task F - Orchestrator policy loop
+
+Owner preference: Claude Sonnet.
+
+Scope:
+
+- Update orchestrator prompt/instructions so it:
+  1. reads stage policies,
+  2. assigns roles explicitly,
+  3. records decisions,
+  4. moves cards only after required outputs are present.
+- Add MCP examples for a full transition:
+  Backlog -> To Do -> In Progress -> Review -> Done.
+- Ensure the orchestrator is the only default auto-moving actor.
+
+Acceptance:
+
+- A headless orchestrator can coordinate a task through all stages using
+  MCP calls.
+- Server logs show decisions before assignment/movement.
+- Human can inspect why each transition happened.
+
+#### Task G - Tests and review
+
+Owner preference: Gemini Flash for focused tests, Claude Sonnet for
+critical review.
+
+Scope:
+
+- Tests for `StagePolicy` CRUD.
+- Tests for transition gate failures and success.
+- Regression test that unassigned To Do tasks are not auto-assigned by
+  the server.
+- Regression test that terminal completion text does not complete a card.
+- UI smoke test for policy panel rendering.
+
+Acceptance:
+
+- Focused pytest suite passes.
+- Critical diff review is recorded for model/schema, RBAC, subprocess,
+  and card movement changes.
+
+### 11.7 Suggested task cards
+
+Create these cards in Backlog:
+
+1. `Architecture: remove implicit auto assignment and auto movement`
+   - Role: architecture
+   - Preferred model: Claude Sonnet
+   - Depends on: none
+
+2. `Data model: add project stage policies`
+   - Role: worker
+   - Preferred model: GLM 5.1
+   - Depends on: task 1
+
+3. `API: expose stage policy REST and MCP tools`
+   - Role: worker
+   - Preferred model: GLM 5.1, reviewed by Claude Sonnet
+   - Depends on: task 2
+
+4. `Runtime: implement explicit transition gates`
+   - Role: architecture / worker
+   - Preferred model: Claude Sonnet
+   - Depends on: tasks 2 and 3
+
+5. `UI: replace Autopilot settings with Stage Policy editor`
+   - Role: ui
+   - Preferred model: Gemini
+   - Depends on: task 3
+
+6. `Orchestrator: update prompts and examples for policy-driven movement`
+   - Role: orchestrator
+   - Preferred model: Claude Sonnet
+   - Depends on: tasks 3 and 4
+
+7. `Tests: regression coverage for no server-side routing`
+   - Role: test
+   - Preferred model: Gemini Flash
+   - Depends on: tasks 1, 3, and 4
+
+8. `Review: critical diff review for stage policy rollout`
+   - Role: diff_review
+   - Preferred model: Claude Sonnet
+   - Depends on: all implementation tasks
+
+### 11.8 Non-goals
+
+- Do not reintroduce `autopilot.py` or server-side task routing.
+- Do not hardcode provider names or model names in runtime logic.
+- Do not make every stage launch every configured agent by default.
+- Do not require human review for every low-risk text/doc task unless
+  project policy says so.
+- Do not store mutable task handoff state in `AGENTS.md`; use
+  worktree-local `STATUS.md`.
+
+## Kanban Chat Plan - 2026-05-01T04:20:54 UTC
+
+Request:
+UI revamp , the approvals button can be seen here not all the terminal but a notification and approve or rejct pop up and also approvals and icons in board are weird
+
+Backlog cards:
+- #1: Clarify scope for UI revamp , the approvals button can be seen here not all the terminal but a notification and approve or rejct pop up and also approvals and icons in board are weird
+- #2: Implement UI revamp , the approvals button can be seen here not all the terminal but a notification and approve or rejct pop up and also approvals and icons in board are weird
+- #3: Add tests or verification for UI revamp , the approvals button can be seen here not all the terminal but a notification and approve or rejct pop up and also approvals and icons in board are weird
+- #4: Review and document UI revamp , the approvals button can be seen here not all the terminal but a notification and approve or rejct pop up and also approvals and icons in board are weird

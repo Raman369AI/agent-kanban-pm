@@ -26,7 +26,7 @@ import json
 import logging
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Dict, Optional
 
 from sqlalchemy import select, desc
@@ -45,16 +45,13 @@ from models import (
     ActivitySummary,
     ActivityType,
     ApprovalType,
-    Project,
-    Stage,
     Task,
     TaskLog,
-    TaskStatus,
 )
 from kanban_runtime.assignment_launcher import _tmux_session_name
+from kanban_runtime.handoff_protocol import read_status_file
+from kanban_runtime.prompt_patterns import detect_prompt
 from kanban_runtime.role_supervisor import (
-    PROMPT_PATTERNS,
-    detect_prompt,
     tmux_capture_pane,
     tmux_send_text,
 )
@@ -70,6 +67,13 @@ _pending_approvals: Dict[int, int] = {}
 _checkpoint_cursor: Dict[int, str] = {}
 
 
+def reset_streamer():
+    """Clear module-level state for test isolation."""
+    _pane_cursor.clear()
+    _pending_approvals.clear()
+    _checkpoint_cursor.clear()
+
+
 def _tmux_available() -> bool:
     return shutil.which("tmux") is not None
 
@@ -81,7 +85,8 @@ def _tmux_has_session(session_name: str) -> bool:
             capture_output=True, timeout=3,
         )
         return result.returncode == 0
-    except Exception:
+    except Exception as exc:
+        logger.warning("tmux has-session check failed for %s: %s", session_name, exc)
         return False
 
 
@@ -119,7 +124,7 @@ async def _upsert_checkpoint(session: AgentSession, pane: str, status_type: Agen
     if _checkpoint_cursor.get(session.id) == signature:
         return
     _checkpoint_cursor[session.id] = signature
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     async with async_session_maker() as db:
         result = await db.execute(
             select(AgentCheckpoint)
@@ -165,7 +170,14 @@ def _pane_is_ready_for_input(pane: str) -> bool:
     return bool(tail.rstrip().endswith("$") or tail.rstrip().endswith("#"))
 
 
-def _completion_summary(pane: str) -> Optional[str]:
+def _terminal_completion_summary(pane: str) -> Optional[str]:
+    """Legacy fallback: detect completion from terminal text heuristics.
+
+    DEPRECATED: Prefer STATUS.md handoff_ready as the canonical completion
+    signal. This fallback fires only when STATUS.md is absent or does not
+    indicate handoff_ready, and logs a warning so operators know to update
+    the agent's instructions.
+    """
     lower = pane.lower()
     markers = [
         "i have completed",
@@ -200,8 +212,54 @@ def _completion_summary(pane: str) -> Optional[str]:
     return summary[-4000:] or None
 
 
+def _check_completion(pane: str, workspace_path: Optional[str]) -> Optional[str]:
+    """Check whether the session is complete.
+
+    Two-tier detection:
+      1. Primary (structural): Read STATUS.md from the workspace. If
+         handoff_ready is true and state is done/completed/review, use the
+         frontmatter summary as the completion summary.
+      2. Fallback (heuristic): Legacy terminal text marker matching. Fires
+         only when STATUS.md is absent or has no handoff signal, and logs a
+         deprecation warning so operators can update agent instructions.
+    """
+    # --- Tier 1: STATUS.md (canonical signal) ---
+    if workspace_path:
+        try:
+            status_data = read_status_file(workspace_path)
+            if status_data.get("handoff_ready"):
+                state = (status_data.get("state") or "").lower()
+                if state in ("done", "completed", "review"):
+                    validated = status_data.get("validated")
+                    summary = (
+                        validated.summary if validated and validated.summary
+                        else status_data.get("frontmatter", {}).get("summary", "")
+                    )
+                    if not summary:
+                        summary = f"Agent marked handoff_ready=true, state={state} in STATUS.md"
+                    return summary[-4000:]
+        except Exception as exc:
+            logger.debug("Could not read STATUS.md at %s: %s", workspace_path, exc)
+
+    # --- Tier 2: Terminal text heuristic (deprecated fallback) ---
+    fallback = _terminal_completion_summary(pane)
+    if fallback:
+        logger.warning(
+            "Completion detected via terminal text heuristic (DEPRECATED). "
+            "Agents should set handoff_ready: true in STATUS.md instead. "
+            "workspace=%s",
+            workspace_path,
+        )
+    return fallback
+
+
 async def _finalize_completed_session(session: AgentSession, pane: str, summary: str) -> bool:
-    now = datetime.utcnow()
+    """Mark the session as DONE and record activity, but do NOT move the task card.
+
+    Card movement must be an explicit decision by the orchestrator or human.
+    This only records the activity and session termination.
+    """
+    now = datetime.now(UTC)
     async with async_session_maker() as db:
         row = (await db.execute(
             select(AgentSession).filter(AgentSession.id == session.id)
@@ -209,24 +267,8 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
         task = (await db.execute(
             select(Task).filter(Task.id == session.task_id)
         )).scalar_one_or_none()
-        if not row or not task or task.status == TaskStatus.COMPLETED:
+        if not row or not task:
             return False
-
-        done_stage = (await db.execute(
-            select(Stage)
-            .filter(Stage.project_id == task.project_id)
-            .order_by(Stage.order)
-        )).scalars().all()
-        done_stage = next(
-            (stage for stage in done_stage if stage.name and stage.name.strip().lower() in {"done", "completed", "complete"}),
-            None,
-        )
-        if done_stage:
-            task.stage_id = done_stage.id
-        task.status = TaskStatus.COMPLETED
-        task.completed_at = now
-        task.updated_at = now
-        task.version += 1
 
         row.status = AgentSessionStatus.DONE
         row.ended_at = now
@@ -238,14 +280,32 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
                 AgentApproval.status == AgentApprovalStatus.PENDING,
             )
         )).scalars().all()
+        from sqlalchemy import update as sa_update
         for approval in pending:
-            approval.status = AgentApprovalStatus.CANCELLED
-            approval.resolved_at = now
-            approval.response_message = "Session completed before this approval was resolved."
+            # Use atomic CAS to avoid overwriting a concurrent resolution
+            cas_result = await db.execute(
+                sa_update(AgentApproval)
+                .where(
+                    AgentApproval.id == approval.id,
+                    AgentApproval.update_version == approval.update_version,
+                    AgentApproval.status == AgentApprovalStatus.PENDING,
+                )
+                .values(
+                    status=AgentApprovalStatus.CANCELLED,
+                    resolved_at=now,
+                    response_message="Session completed before this approval was resolved.",
+                    update_version=approval.update_version + 1,
+                )
+            )
+            if cas_result.rowcount == 0:
+                logger.debug(
+                    "Approval #%d was already resolved by another path; skipping cancellation",
+                    approval.id,
+                )
 
         db.add(TaskLog(
             task_id=task.id,
-            message=f"Agent session #{session.id} completed. Final summary:\n{summary}",
+            message=f"Agent session #{session.id} completed. Session may be ready for review. Summary:\n{summary}",
             log_type="handoff",
             created_at=now,
         ))
@@ -259,25 +319,29 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
         db.add(AgentActivity(
             agent_id=session.agent_id,
             session_id=session.id,
-            project_id=task.project_id,
-            task_id=task.id,
-            activity_type=ActivityType.RESULT,
+            project_id=session.project_id,
+            task_id=session.task_id,
+            activity_type=ActivityType.HANDOFF,
             source="session_streamer",
-            message=summary,
+            message=(
+                f"Session #{session.id} appears complete. "
+                f"Orchestrator or human should decide whether to move the card. "
+                f"Summary: {summary[:500]}"
+            ),
             workspace_path=session.workspace_path,
             created_at=now,
         ))
         await db.commit()
 
     await event_bus.publish(
-        EventType.TASK_COMPLETED.value,
+        EventType.AGENT_STATUS_UPDATED.value,
         {
-            "task_id": session.task_id,
-            "project_id": session.project_id,
             "agent_id": session.agent_id,
             "session_id": session.id,
-            "summary": summary[-500:],
-            "status": TaskStatus.COMPLETED.value,
+            "project_id": session.project_id,
+            "task_id": session.task_id,
+            "status_type": "done",
+            "message": f"Session completed; task #{session.task_id} awaiting orchestrator review",
         },
         project_id=session.project_id,
         entity_id=session.agent_id,
@@ -319,8 +383,8 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
             )).scalar_one_or_none()
             if row and row.ended_at is None:
                 row.status = AgentSessionStatus.DONE
-                row.ended_at = datetime.utcnow()
-                row.last_seen_at = datetime.utcnow()
+                row.ended_at = datetime.now(UTC)
+                row.last_seen_at = datetime.now(UTC)
                 await db.commit()
                 await event_bus.publish(
                     EventType.AGENT_STATUS_UPDATED.value,
@@ -343,7 +407,7 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
         row = (await db.execute(
             select(AgentSession).filter(AgentSession.id == session.id)
         )).scalar_one_or_none()
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         status_type = AgentStatusType.WAITING if row and row.status == AgentSessionStatus.BLOCKED else AgentStatusType.WORKING
         if row:
             row.last_seen_at = now
@@ -382,7 +446,7 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
 
     pane = tmux_capture_pane(tmux_session, lines=200)
     await _upsert_checkpoint(session, pane, status_type)
-    summary = _completion_summary(pane)
+    summary = _check_completion(pane, session.workspace_path)
     if summary and await _finalize_completed_session(session, pane, summary):
         _pane_cursor.pop(session.id, None)
         _pending_approvals.pop(session.id, None)
@@ -407,7 +471,7 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
                 select(AgentSession).filter(AgentSession.id == session.id)
             )).scalar_one_or_none()
             if row:
-                row.last_seen_at = datetime.utcnow()
+                row.last_seen_at = datetime.now(UTC)
             await db.commit()
         await event_bus.publish(
             EventType.AGENT_ACTIVITY_LOGGED.value,
@@ -472,7 +536,7 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
         )).scalar_one_or_none()
         if row and row.status != AgentSessionStatus.BLOCKED:
             row.status = AgentSessionStatus.BLOCKED
-            row.last_seen_at = datetime.utcnow()
+            row.last_seen_at = datetime.now(UTC)
         await db.commit()
         await db.refresh(approval)
         approval_id = approval.id

@@ -20,7 +20,7 @@ import json
 import logging
 import sys
 from typing import Any, Optional, Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -35,6 +35,7 @@ from models import (
     AgentApproval, AgentApprovalStatus, ApprovalType
 )
 from event_bus import event_bus, EventType
+from auth import is_owner_or_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -591,6 +592,50 @@ class KanbanMCPServer:
                         },
                         "required": ["approval_id", "decision"]
                     }
+                ),
+                Tool(
+                    name="get_stage_policies",
+                    description="Get stage policies for a project. Policies define expected roles, required outputs, and review mode per stage.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "integer"}
+                        },
+                        "required": ["project_id"]
+                    }
+                ),
+                Tool(
+                    name="record_stage_policy_decision",
+                    description="Record an orchestrator decision about a stage transition. Used when the orchestrator moves a card through an explicit decision, including assigned roles and rationale.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "integer"},
+                            "task_id": {"type": "integer"},
+                            "from_stage_id": {"type": "integer", "description": "Source stage ID"},
+                            "to_stage_id": {"type": "integer", "description": "Target stage ID"},
+                            "selected_roles": {"type": "array", "items": {"type": "string"}, "description": "Roles assigned for this stage"},
+                            "rationale": {"type": "string", "description": "Why this transition was made"}
+                        },
+                        "required": ["project_id", "rationale"]
+                    }
+                ),
+                Tool(
+                    name="get_transition_validation",
+                    description="Check whether a stage transition is valid under project stage policies. Returns validation result with optional rejection reason.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "integer"},
+                            "from_stage_id": {"type": "integer"},
+                            "to_stage_id": {"type": "integer"},
+                            "move_initiator": {"type": "string", "enum": ["orchestrator", "worker", "human", "owner"], "default": "orchestrator"},
+                            "has_required_outputs": {"type": "boolean", "default": true},
+                            "has_diff_review": {"type": "boolean", "default": false},
+                            "is_critical": {"type": "boolean", "default": false}
+                        },
+                        "required": ["project_id", "from_stage_id", "to_stage_id"]
+                    }
                 )
             ]
 
@@ -729,6 +774,16 @@ class KanbanMCPServer:
         """Create a new task using ORM"""
         self._require_role(Role.WORKER)
         async with async_session_maker() as db:
+            # Verify project is approved before allowing task creation
+            project_result = await db.execute(
+                select(Project).filter(Project.id == args["project_id"])
+            )
+            project = project_result.scalar_one_or_none()
+            if not project:
+                return {"error": "Project not found"}
+            if project.approval_status != ApprovalStatus.APPROVED:
+                return {"error": f"Cannot create tasks in {project.approval_status.value} project. Project must be approved first."}
+
             # Get default stage (To Do) for this project
             result = await db.execute(
                 select(Stage).filter(Stage.project_id == args["project_id"]).order_by(Stage.order)
@@ -870,7 +925,7 @@ class KanbanMCPServer:
                 return {"error": "Project not found"}
 
             project.approval_status = ApprovalStatus.APPROVED
-            project.updated_at = datetime.utcnow()
+            project.updated_at = datetime.now(UTC)
             await db.commit()
 
             await event_bus.publish(
@@ -883,6 +938,7 @@ class KanbanMCPServer:
 
     async def _handle_move_task(self, args: dict) -> dict:
         """Move a task using ORM and publish event"""
+        self._require_role(Role.WORKER)
         task_id = args["task_id"]
         stage_id = args.get("stage_id")
         status = args.get("status")
@@ -893,15 +949,36 @@ class KanbanMCPServer:
             if not task:
                 return {"error": "Task not found"}
 
+            # Stage policy transition validation (P0-3)
             old_stage = task.stage_id
+            if stage_id and old_stage and stage_id != old_stage:
+                try:
+                    from kanban_runtime.stage_policy import get_stage_policy_for_stage, validate_transition, gather_transition_context
+                    from_policy = await get_stage_policy_for_stage(db, task.project_id, old_stage)
+                    to_policy = await get_stage_policy_for_stage(db, task.project_id, stage_id)
+                    move_initiator = self.caller_entity.name
+                    ctx = await gather_transition_context(db, task_id, task.project_id)
+                    transition_warning = validate_transition(
+                        from_policy=from_policy,
+                        to_policy=to_policy,
+                        move_initiator=move_initiator,
+                        has_diff_review=ctx["has_diff_review"],
+                        has_required_outputs=True,
+                        is_critical=ctx["is_critical"],
+                    )
+                    if transition_warning:
+                        return {"error": transition_warning, "transition_blocked": True}
+                except ImportError:
+                    pass  # stage_policy not available, skip validation
+
             if stage_id:
                 task.stage_id = stage_id
             if status:
                 task.status = status
                 if status == "completed" and task.completed_at is None:
-                    task.completed_at = datetime.utcnow()
+                    task.completed_at = datetime.now(UTC)
 
-            task.updated_at = datetime.utcnow()
+            task.updated_at = datetime.now(UTC)
             await db.commit()
 
             await event_bus.publish(
@@ -926,6 +1003,13 @@ class KanbanMCPServer:
             task = result.scalar_one_or_none()
             if not task:
                 return {"error": "Task not found"}
+
+            # Project approval check (P0-2)
+            project_result = await db.execute(select(Project).filter(Project.id == task.project_id))
+            project = project_result.scalar_one_or_none()
+            if project and project.approval_status != ApprovalStatus.APPROVED:
+                if not is_owner_or_manager(self.caller_entity):
+                    return {"error": f"Project is {project.approval_status.value}. Only managers/owners can modify it."}
 
             # Self-assign if no entity_id provided
             if entity_id is None:
@@ -975,28 +1059,40 @@ class KanbanMCPServer:
             return {"success": True, "comment_id": comment.id, "task_id": args["task_id"]}
 
     async def _handle_get_pending_events(self, args: dict) -> list:
-        """Poll for recent events for an agent (reads from shared DB)"""
+        """Poll for recent events for an agent (reads from shared DB).
+
+        Uses soft-delete via consumed_at column — events are not deleted on read,
+        allowing multi-consumer scenarios. The background sweeper handles cleanup.
+        """
         agent_id = self._target_agent_id(args)
         limit = args.get("limit", 50)
 
         async with async_session_maker() as db:
             result = await db.execute(
                 select(PendingEvent)
-                .filter(PendingEvent.agent_id == agent_id)
+                .filter(
+                    PendingEvent.agent_id == agent_id,
+                    PendingEvent.consumed_at.is_(None),
+                )
                 .order_by(PendingEvent.created_at.asc())
                 .limit(limit)
             )
             pending = result.scalars().all()
 
             events = []
+            now = datetime.now(UTC)
             for pe in pending:
                 try:
                     payload = json.loads(pe.payload)
                     payload["pending_event_id"] = pe.id
                     events.append(payload)
-                except Exception:
-                    pass
-                await db.delete(pe)
+                    pe.consumed_at = now  # Soft-delete: mark consumed, don't delete
+                except Exception as exc:
+                    logger.warning(
+                        "Skipping PendingEvent id=%s with malformed payload: %s",
+                        pe.id, exc,
+                    )
+                    # Do NOT delete — preserve for debugging / manual cleanup
 
             await db.commit()
 
@@ -1028,7 +1124,7 @@ class KanbanMCPServer:
 
             conn.subscribed_events = json.dumps(events)
             conn.subscribed_projects = json.dumps(projects) if projects else None
-            conn.last_seen = datetime.utcnow()
+            conn.last_seen = datetime.now(UTC)
             await db.commit()
 
         return {"success": True, "message": "Subscriptions updated", "events": events}
@@ -1073,7 +1169,7 @@ class KanbanMCPServer:
                 heartbeat.status_type = status_type
                 heartbeat.message = message
                 heartbeat.task_id = task_id
-                heartbeat.updated_at = datetime.utcnow()
+                heartbeat.updated_at = datetime.now(UTC)
             else:
                 heartbeat = AgentHeartbeat(
                     agent_id=agent_id,
@@ -1222,9 +1318,9 @@ class KanbanMCPServer:
                 self._require_role(Role.MANAGER)
 
             session.status = AgentSessionStatus(status_value)
-            session.last_seen_at = datetime.utcnow()
+            session.last_seen_at = datetime.now(UTC)
             if session.status in (AgentSessionStatus.DONE, AgentSessionStatus.ERROR):
-                session.ended_at = datetime.utcnow()
+                session.ended_at = datetime.now(UTC)
 
             if args.get("message"):
                 activity = AgentActivity(
@@ -1355,9 +1451,10 @@ class KanbanMCPServer:
 
     async def _handle_claim_task(self, args: dict) -> dict:
         """Claim an active task lease."""
+        self._require_role(Role.WORKER)
         agent_id = self._target_agent_id(args)
         task_id = args["task_id"]
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         async with async_session_maker() as db:
             task_result = await db.execute(select(Task).filter(Task.id == task_id))
             task = task_result.scalar_one_or_none()
@@ -1423,7 +1520,7 @@ class KanbanMCPServer:
             if lease.agent_id != self.caller_entity.id:
                 self._require_role(Role.MANAGER)
             lease.status = LeaseStatus.RELEASED
-            lease.released_at = datetime.utcnow()
+            lease.released_at = datetime.now(UTC)
             await db.commit()
 
             await event_bus.publish(
@@ -1498,7 +1595,7 @@ class KanbanMCPServer:
         """Get the coordination context the manager and UI need."""
         project_id = args["project_id"]
         limit = args.get("limit", 20)
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         async with async_session_maker() as db:
             workspaces = (await db.execute(
                 select(ProjectWorkspace).filter(ProjectWorkspace.project_id == project_id).order_by(ProjectWorkspace.is_primary.desc(), ProjectWorkspace.created_at)
@@ -1640,7 +1737,7 @@ class KanbanMCPServer:
             review.review_notes = args.get("review_notes")
             review.reviewer_id = self.caller_entity.id
             if new_status in (DiffReviewStatus.APPROVED, DiffReviewStatus.REJECTED, DiffReviewStatus.CHANGES_REQUESTED):
-                review.reviewed_at = datetime.utcnow()
+                review.reviewed_at = datetime.now(UTC)
             await db.commit()
 
             await event_bus.publish(
@@ -1723,7 +1820,7 @@ class KanbanMCPServer:
                 session_row = sess_result.scalar_one_or_none()
                 if session_row and session_row.status != AgentSessionStatus.BLOCKED:
                     session_row.status = AgentSessionStatus.BLOCKED
-                    session_row.last_seen_at = datetime.utcnow()
+                    session_row.last_seen_at = datetime.now(UTC)
                     await db.commit()
 
             await event_bus.publish(
@@ -1814,17 +1911,29 @@ class KanbanMCPServer:
             else:
                 self._require_role(Role.MANAGER)
 
-            approval.status = decision
-            approval.resolved_at = datetime.utcnow()
-            approval.resolved_by_entity_id = self.caller_entity.id
-            approval.response_message = args.get("response_message")
+            # Optimistic concurrency: CAS on update_version
+            expected_version = approval.update_version
+            from sqlalchemy import update as sa_update
+            cas_result = await db.execute(
+                sa_update(AgentApproval)
+                .where(AgentApproval.id == approval_id, AgentApproval.update_version == expected_version)
+                .values(
+                    status=decision,
+                    resolved_at=datetime.now(UTC),
+                    resolved_by_entity_id=self.caller_entity.id,
+                    response_message=args.get("response_message"),
+                    update_version=expected_version + 1,
+                )
+            )
+            if cas_result.rowcount == 0:
+                return {"error": "Approval was resolved by another request (concurrent modification)"}
 
             if approval.session_id:
                 sess_result = await db.execute(select(AgentSession).filter(AgentSession.id == approval.session_id))
                 session_row = sess_result.scalar_one_or_none()
                 if session_row and session_row.status == AgentSessionStatus.BLOCKED:
                     session_row.status = AgentSessionStatus.ACTIVE
-                    session_row.last_seen_at = datetime.utcnow()
+                    session_row.last_seen_at = datetime.now(UTC)
 
             await db.commit()
             await db.refresh(approval)
@@ -1850,6 +1959,87 @@ class KanbanMCPServer:
                 "approval_id": approval.id,
                 "status": approval.status.value,
             }
+
+    async def _handle_get_stage_policies(self, args: dict) -> dict:
+        """Return stage policies for a project."""
+        project_id = args.get("project_id")
+        if not project_id:
+            return {"error": "project_id is required"}
+        async with async_session_maker() as db:
+            from kanban_runtime.stage_policy import get_stage_policies
+            policies = await get_stage_policies(db, project_id)
+            from schemas import StagePolicyResponse
+            return {"policies": [StagePolicyResponse.from_model(p).model_dump() for p in policies]}
+
+    async def _handle_record_stage_policy_decision(self, args: dict) -> dict:
+        """Record an orchestrator decision about a stage transition."""
+        self._require_role(Role.MANAGER)
+        project_id = args.get("project_id")
+        task_id = args.get("task_id")
+        from_stage_id = args.get("from_stage_id")
+        to_stage_id = args.get("to_stage_id")
+        selected_roles = args.get("selected_roles", [])
+        rationale = args.get("rationale", "")
+        if not project_id or not rationale:
+            return {"error": "project_id and rationale are required"}
+        async with async_session_maker() as db:
+            decision = OrchestrationDecision(
+                project_id=project_id,
+                manager_agent_id=self.caller_entity.id,
+                decision_type=DecisionType.STAGE_POLICY,
+                input_summary=f"Stage transition from {from_stage_id} to {to_stage_id}",
+                rationale=rationale,
+                affected_task_ids=str(task_id) if task_id else None,
+                affected_agent_ids=None,
+            )
+            db.add(decision)
+            await db.commit()
+            await db.refresh(decision)
+            await event_bus.publish(
+                EventType.STAGE_POLICY_UPDATED.value,
+                {
+                    "project_id": project_id,
+                    "task_id": task_id,
+                    "from_stage_id": from_stage_id,
+                    "to_stage_id": to_stage_id,
+                    "selected_roles": selected_roles,
+                    "decision_id": decision.id,
+                },
+                project_id=project_id,
+                entity_id=self.caller_entity.id,
+            )
+            return {
+                "success": True,
+                "decision_id": decision.id,
+                "message": "Stage transition decision recorded.",
+            }
+
+    async def _handle_get_transition_validation(self, args: dict) -> dict:
+        """Validate a stage transition against project stage policies."""
+        project_id = args.get("project_id")
+        from_stage_id = args.get("from_stage_id")
+        to_stage_id = args.get("to_stage_id")
+        move_initiator = args.get("move_initiator", "orchestrator")
+        has_required_outputs = args.get("has_required_outputs", True)
+        has_diff_review = args.get("has_diff_review", False)
+        is_critical = args.get("is_critical", False)
+        if not project_id or not from_stage_id or not to_stage_id:
+            return {"error": "project_id, from_stage_id, and to_stage_id are required"}
+        from kanban_runtime.stage_policy import get_stage_policy_for_stage, validate_transition
+        async with async_session_maker() as db:
+            to_policy = await get_stage_policy_for_stage(db, project_id, to_stage_id)
+            from_policy = await get_stage_policy_for_stage(db, project_id, from_stage_id)
+            error = validate_transition(
+                from_policy=from_policy,
+                to_policy=to_policy,
+                move_initiator=move_initiator,
+                has_required_outputs=has_required_outputs,
+                has_diff_review=has_diff_review,
+                is_critical=is_critical,
+            )
+            if error:
+                return {"valid": False, "reason": error}
+            return {"valid": True}
 
     async def run(self):
         """Run the MCP server"""

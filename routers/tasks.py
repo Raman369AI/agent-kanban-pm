@@ -3,11 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-from datetime import datetime
+from datetime import UTC, datetime
 import logging
 
 from database import get_db
-from models import Task, Project, Comment, Entity, TaskStatus, TaskLog
+from models import Task, Project, Comment, Entity, EntityType, TaskStatus, TaskLog
 from schemas import (
     TaskCreate, TaskUpdate, TaskResponse, TaskDetailResponse,
     CommentCreate, CommentResponse, TaskLogResponse
@@ -23,6 +23,25 @@ router = APIRouter(tags=["tasks"])
 
 def _actor_id(entity: Optional[Entity]) -> int:
     return entity.id if entity else 1
+
+async def _check_predecessor(task: Task, db: AsyncSession) -> Optional[str]:
+    """Block start if any earlier ordered sibling is not completed."""
+    if task.sequence_order is None or task.sequence_order <= 1:
+        return None
+    result = await db.execute(
+        select(Task).filter(
+            Task.project_id == task.project_id,
+            Task.parent_task_id == task.parent_task_id,
+            Task.sequence_order < task.sequence_order,
+            Task.status != TaskStatus.COMPLETED,
+            Task.id != task.id,
+        )
+    )
+    blockers = result.scalars().all()
+    if not blockers:
+        return None
+    titles = ", ".join(f"#{b.id} '{b.title}'" for b in blockers[:3])
+    return f"Cannot start: predecessor task(s) not yet completed — {titles}"
 
 @router.post("/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 async def create_task(
@@ -169,6 +188,33 @@ async def update_task(
     old_stage_id = task.stage_id
     old_status = task.status
 
+    # Sequence order enforcement: block moving to in_progress until predecessors complete
+    if task_update.status == TaskStatus.IN_PROGRESS and task.status != TaskStatus.IN_PROGRESS:
+        err = await _check_predecessor(task, db)
+        if err:
+            raise HTTPException(status_code=409, detail=err)
+
+    # Stage policy transition validation (P0-3)
+    if task_update.stage_id is not None and task_update.stage_id != old_stage_id:
+        try:
+            from kanban_runtime.stage_policy import get_stage_policy_for_stage, validate_transition, gather_transition_context
+            from_policy = await get_stage_policy_for_stage(db, task.project_id, old_stage_id)
+            to_policy = await get_stage_policy_for_stage(db, task.project_id, task_update.stage_id)
+            move_initiator = "human" if current_entity.entity_type == EntityType.HUMAN else current_entity.name
+            ctx = await gather_transition_context(db, task_id, task.project_id)
+            transition_warning = validate_transition(
+                from_policy=from_policy,
+                to_policy=to_policy,
+                move_initiator=move_initiator,
+                has_diff_review=ctx["has_diff_review"],
+                has_required_outputs=True,
+                is_critical=ctx["is_critical"],
+            )
+            if transition_warning:
+                raise HTTPException(status_code=409, detail=transition_warning)
+        except ImportError:
+            pass  # stage_policy not available
+
     update_data = task_update.model_dump(exclude_unset=True)
     # Don't allow version/created_by to be set via update
     update_data.pop("version", None)
@@ -178,10 +224,10 @@ async def update_task(
         setattr(task, field, value)
 
     if task_update.status == TaskStatus.COMPLETED and task.completed_at is None:
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(UTC)
 
     task.version += 1
-    task.updated_at = datetime.utcnow()
+    task.updated_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(task)
 

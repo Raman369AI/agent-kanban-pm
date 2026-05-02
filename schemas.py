@@ -1,10 +1,10 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Any
 from datetime import datetime
 from models import (
     EntityType, TaskStatus, ApprovalStatus, Role, AgentStatusType, ActivityType,
     AgentSessionStatus, DecisionType, LeaseStatus, ContributionType, DiffReviewStatus,
-    ApprovalType, AgentApprovalStatus
+    ApprovalType, AgentApprovalStatus, ReviewMode
 )
 
 
@@ -12,7 +12,7 @@ from models import (
 class EntityBase(BaseModel):
     name: str
     entity_type: EntityType
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     skills: Optional[str] = None
 
 
@@ -98,6 +98,7 @@ class TaskCreate(TaskBase):
     project_id: int
     parent_task_id: Optional[int] = None
     stage_id: Optional[int] = None
+    sequence_order: Optional[int] = None
 
 
 class TaskUpdate(BaseModel):
@@ -107,6 +108,7 @@ class TaskUpdate(BaseModel):
     stage_id: Optional[int] = None
     required_skills: Optional[str] = None
     priority: Optional[int] = None
+    sequence_order: Optional[int] = None
     version: Optional[int] = None  # For optimistic locking
 
 
@@ -118,6 +120,7 @@ class TaskResponse(TaskBase):
     parent_task_id: Optional[int]
     created_by: Optional[int] = None
     version: int = 0
+    sequence_order: Optional[int] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]
@@ -548,51 +551,58 @@ class ChatPlanRequest(BaseModel):
     transcript: Optional[str] = None
 
 
-# ---------------------------------------------------------------------------
-# Chat Designer Schemas (AGENTS.md §10)
-# ---------------------------------------------------------------------------
-ALLOWED_ROLE_HINTS = {
-    "orchestrator", "ui", "architecture", "worker",
-    "test", "diff_review", "git_pr",
-}
-
-
-class ChatPlanItem(BaseModel):
-    title: str
-    description: str = ""
-    priority: int = 5
-    role_hint: Optional[str] = None
-    acceptance: List[str] = Field(default_factory=list)
-    depends_on: List[int] = Field(default_factory=list)
-
-    @field_validator("title")
-    @classmethod
-    def _title_non_empty(cls, v: str) -> str:
-        v = (v or "").strip()
-        if not v:
-            raise ValueError("title must be non-empty")
-        return v[:255]
-
-    @field_validator("priority")
-    @classmethod
-    def _priority_range(cls, v: int) -> int:
-        if v < 0 or v > 10:
-            raise ValueError("priority must be in [0, 10]")
-        return v
-
-    @field_validator("role_hint")
-    @classmethod
-    def _role_hint_allowed(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        v = v.strip().lower() or None
-        if v is not None and v not in ALLOWED_ROLE_HINTS:
-            raise ValueError(f"role_hint must be one of {sorted(ALLOWED_ROLE_HINTS)} or null")
-        return v
-
-
-class ChatPlanRequest(BaseModel):
+# Stage Policy Schemas
+class StagePolicyCreate(BaseModel):
     project_id: int
-    message: str
-    items: Optional[List[ChatPlanItem]] = None
-    transcript: Optional[str] = None
+    stage_id: int
+    stage_key: str
+    on_enter_roles: List[str] = Field(default_factory=list)
+    required_outputs: List[str] = Field(default_factory=list)
+    review_mode: Optional[ReviewMode] = ReviewMode.NONE
+    allow_parallel: bool = False
+    requires_orchestrator_move: bool = True
+
+
+class StagePolicyUpdate(BaseModel):
+    stage_key: Optional[str] = None
+    on_enter_roles: Optional[List[str]] = None
+    required_outputs: Optional[List[str]] = None
+    review_mode: Optional[ReviewMode] = None
+    allow_parallel: Optional[bool] = None
+    requires_orchestrator_move: Optional[bool] = None
+
+
+class StagePolicyResponse(BaseModel):
+    id: int
+    project_id: int
+    stage_id: int
+    stage_key: str
+    on_enter_roles: List[str] = Field(default_factory=list)
+    required_outputs: List[str] = Field(default_factory=list)
+    review_mode: Optional[ReviewMode] = None
+    allow_parallel: bool = False
+    requires_orchestrator_move: bool = True
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+    @classmethod
+    def from_model(cls, obj) -> "StagePolicyResponse":
+        import json as _json
+        roles = _json.loads(obj.on_enter_roles_json) if obj.on_enter_roles_json else []
+        outputs = _json.loads(obj.required_outputs_json) if obj.required_outputs_json else []
+        return cls(
+            id=obj.id,
+            project_id=obj.project_id,
+            stage_id=obj.stage_id,
+            stage_key=obj.stage_key,
+            on_enter_roles=roles,
+            required_outputs=outputs,
+            review_mode=obj.review_mode,
+            allow_parallel=obj.allow_parallel,
+            requires_orchestrator_move=obj.requires_orchestrator_move,
+            created_at=obj.created_at,
+            updated_at=obj.updated_at,
+        )

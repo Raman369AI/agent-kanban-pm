@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-from datetime import datetime
+from datetime import UTC, datetime
 import logging
 
 from database import get_db
@@ -64,6 +64,13 @@ async def create_project(
         db.add(stage)
 
     await db.commit()
+
+    from kanban_runtime.stage_policy import seed_default_policies as _seed_policies
+    try:
+        await _seed_policies(db, db_project.id)
+    except Exception:
+        logger.warning("Could not seed default stage policies for project %s", db_project.id)
+
     await db.refresh(db_project)
 
     logger.info(f"Project created: {db_project.name} by {current_entity.name}")
@@ -151,7 +158,7 @@ async def update_project(
     for field, value in update_data.items():
         setattr(project, field, value)
 
-    project.updated_at = datetime.utcnow()
+    project.updated_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(project)
 
@@ -208,7 +215,7 @@ async def approve_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     project.approval_status = ApprovalStatus.APPROVED
-    project.updated_at = datetime.utcnow()
+    project.updated_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(project)
 
@@ -238,7 +245,7 @@ async def reject_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     project.approval_status = ApprovalStatus.REJECTED
-    project.updated_at = datetime.utcnow()
+    project.updated_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(project)
 

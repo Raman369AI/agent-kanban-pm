@@ -1,0 +1,38 @@
+name: gemini
+display_name: "Gemini (Google)"
+version: "1.0"
+
+invoke:
+  command: gemini
+  mcp_flag: "--mcp"
+  info_flag: "--version"
+  model_flag: "--model"
+
+capabilities: [code, analysis, summarization, debugging, testing]
+
+models:
+  - id: gemini-2.5-pro
+    context_window: 1000000
+
+protocol: mcp
+
+auth:
+  type: none
+roles: [worker]
+modes: [supervised, auto, headless]
+
+reporting:
+  heartbeat_interval: 30
+
+chat_designer:
+  prompt_flag: "-p"
+  stdin: false
+  output_format: "stdout"
+  timeout_seconds: 180
+
+task_command:
+  args: ["--approval-mode", "default", "-i", "{prompt}"]
+
+# Handoff profile (P1-2)
+owns: ['ui/', 'components/', 'templates/', 'static/']
+review_only: false

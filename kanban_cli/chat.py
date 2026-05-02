@@ -22,7 +22,7 @@ import textwrap
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -38,7 +38,20 @@ from kanban_cli.chat_designer import (
 
 
 DRAFTS_DIR = Path.home() / ".kanban" / "chat" / "drafts"
-DEFAULT_API_BASE = os.environ.get("KANBAN_API_BASE", "http://localhost:8000")
+
+
+def _resolve_api_base(fallback: Optional[str] = None) -> str:
+    env = os.environ.get("KANBAN_API_BASE")
+    if env:
+        return env
+    try:
+        from kanban_runtime.instance import get_api_base
+        return get_api_base()
+    except Exception:
+        return fallback or "http://localhost:8000"
+
+
+DEFAULT_API_BASE = _resolve_api_base()
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +216,7 @@ def drop_task(plan: PlanV1, drop_idx: int) -> PlanV1:
 
 def save_draft(project_id: int, plan: PlanV1, history: List[dict]) -> Path:
     DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     path = DRAFTS_DIR / f"project-{project_id}-{ts}.json"
     payload = {
         "project_id": project_id,

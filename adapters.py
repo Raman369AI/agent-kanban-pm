@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 from typing import Dict, Set, Optional, Any
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 
@@ -54,7 +54,7 @@ class WebSocketAdapter:
                 conn = result.scalar_one_or_none()
                 if conn:
                     conn.status = "online"
-                    conn.last_seen = datetime.utcnow()
+                    conn.last_seen = datetime.now(UTC)
                     await session.commit()
         except Exception as e:
             logger.error(f"Error updating WS connection status: {e}")

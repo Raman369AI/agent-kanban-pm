@@ -1,0 +1,28 @@
+name: goose
+display_name: "Goose (Block)"
+version: "1.0"
+
+invoke:
+  command: goose
+  mcp_flag: ""
+  info_flag: "--version"
+
+capabilities: [code, automation, debugging]
+
+models:
+  - id: default
+    context_window: 128000
+
+protocol: stdio
+
+auth:
+  type: none
+roles: [worker]
+modes: [supervised, auto]
+
+reporting:
+  heartbeat_interval: 30
+
+# Handoff profile (P1-2)
+owns: []
+review_only: false

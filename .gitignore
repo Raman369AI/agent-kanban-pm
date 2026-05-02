@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 build/
 develop-eggs/
@@ -54,6 +55,9 @@ htmlcov/
 # Temporary files
 *.tmp
 
+# Per-worktree agent handoff state — must not be committed at repo root
+STATUS.md
+
 # Warp-specific files
 warp.md
 WARP.md
@@ -64,3 +68,4 @@ WARP.md
 *_registration.json
 task_*_verify.json
 tasks_project_*.json
+request.json

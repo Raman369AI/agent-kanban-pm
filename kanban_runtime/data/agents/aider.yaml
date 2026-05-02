@@ -1,0 +1,32 @@
+name: aider
+display_name: "Aider"
+version: "1.0"
+
+invoke:
+  command: aider
+  mcp_flag: ""
+  info_flag: "--version"
+  model_flag: "--model"
+
+capabilities: [code, refactoring, git, testing]
+
+models:
+  - id: gpt-4o
+    context_window: 128000
+
+protocol: stdio
+
+auth:
+  type: none
+roles: [worker]
+modes: [supervised, auto]
+
+reporting:
+  heartbeat_interval: 30
+
+task_command:
+  args: ["--message", "{prompt}"]
+
+# Handoff profile (P1-2)
+owns: []
+review_only: false
