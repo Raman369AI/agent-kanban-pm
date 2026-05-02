@@ -2,6 +2,10 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
+Status: alpha (`0.3.0a1`). The core local runtime works, but the CLI-agent
+workflow, approval capture, and packaging surface should still be treated as
+early and subject to change.
+
 The server stores state and exposes REST/WebSocket/MCP interfaces. The
 selected orchestrator agent owns routing and task decisions. See
 [AGENTS.md](AGENTS.md) for the full architecture.
@@ -15,8 +19,10 @@ selected orchestrator agent owns routing and task decisions. See
 
 ## Install
 
+Alpha builds may require pre-release resolution:
+
 ```bash
-pip install agent-kanban-pm
+pip install --pre agent-kanban-pm
 kanban init
 ```
 
@@ -67,6 +73,10 @@ pytest                       # run tests
 python -m build              # build package
 twine check dist/*           # verify artifacts
 ```
+
+Package data is served from `kanban_runtime/data/`; the historical root-level
+`agents/`, `mcp_configs/`, `static/`, and `templates/` folders are not part of
+the packaged runtime.
 
 ## License
 
