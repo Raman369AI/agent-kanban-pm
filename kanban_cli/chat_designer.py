@@ -140,11 +140,23 @@ STRICT_RETRY_SUFFIX = (
 )
 
 
+def _default_api_base() -> str:
+    import os as _os
+    env = _os.environ.get("KANBAN_API_BASE")
+    if env:
+        return env
+    try:
+        from kanban_runtime.instance import get_api_base
+        return get_api_base()
+    except Exception:
+        return "http://localhost:8000"
+
+
 def resolve_invocation(
     role_assignment: RoleAssignment,
     adapter: Optional[AdapterSpec],
     *,
-    api_base: str = "http://localhost:8000",
+    api_base: str = "",
 ) -> DesignerInvocation:
     """Build the subprocess invocation for the orchestrator's chat designer."""
     if adapter is not None:
@@ -304,10 +316,11 @@ class ChatDesigner:
     ) -> None:
         self.role_assignment = role_assignment
         self.adapter = adapter
-        self.invocation = resolve_invocation(role_assignment, adapter, api_base=api_base)
+        effective_api_base = api_base or _default_api_base()
+        self.invocation = resolve_invocation(role_assignment, adapter, api_base=effective_api_base)
 
     @classmethod
-    def from_preferences(cls, *, api_base: str = "http://localhost:8000") -> "ChatDesigner":
+    def from_preferences(cls, *, api_base: str = "") -> "ChatDesigner":
         prefs = load_preferences()
         if not prefs:
             raise DesignerError(

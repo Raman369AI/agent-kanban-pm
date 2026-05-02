@@ -1,0 +1,38 @@
+name: claude
+display_name: "Claude (Anthropic)"
+version: "1.0"
+
+invoke:
+  command: claude
+  mcp_flag: "--mcp-config"
+  info_flag: "--version"
+  model_flag: "--model"
+
+capabilities: [code, review, planning, testing, writing]
+
+models:
+  - id: claude-sonnet-4-6
+    context_window: 200000
+
+protocol: mcp
+
+auth:
+  type: none
+roles: [orchestrator, worker, architecture, diff_review]
+modes: [supervised, auto, headless]
+
+reporting:
+  heartbeat_interval: 30
+
+chat_designer:
+  prompt_flag: "-p"
+  stdin: false
+  output_format: "stdout"
+  timeout_seconds: 180
+
+task_command:
+  args: ["--print", "--permission-mode", "default", "--add-dir", "{workspace}", "{prompt}"]
+
+# Handoff profile (P1-2)
+owns: ['src/', 'tests/', 'lib/']
+review_only: false

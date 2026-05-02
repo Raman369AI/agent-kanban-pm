@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.3.0a1] — 2026-05-02
+
+Alpha release candidate for the local-first, role-based agent runtime.
 
 ### Added
 - **CLI Approval Queue** — Headless CLI prompts (shell command, file write, network access, git push, PR create, tool call, …) are now bubbled into a durable Kanban approval queue instead of hiding inside a tmux pane.
@@ -50,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **4 Bundled Adapters** — `claude`, `gemini`, `opencode`, `codex`
 
 ### Changed
+- **Package layout** — Runtime templates, static assets, bundled adapters, and MCP configs now live under `kanban_runtime/data/` so the PyPI wheel contains the files needed by `kanban run`.
+- **Release status** — Package version is now `0.3.0a1` and the project is explicitly documented as alpha.
+- **Approval workbench UX** — Pending approval badges now open a focused review popup, approval controls are centralized, and warning indicators replace the previous lock icon.
+- **Board task creation UX** — Column-level "Add Task" controls are limited to Backlog and To Do stages to avoid adding new work directly into execution/review/done columns.
 - **Project PR sync** — `POST /agents/projects/{project_id}/contributions/sync/github` now also syncs reviews authored by the user (`gh search prs --reviewed-by`) and commits (`gh search commits`). When `gh` is missing it falls back to local `git log --author=...`, and `git config user.name` is used as a final author fallback so commit-only sync still works without `gh`.
 - **Architecture inversion** — Server is now a "dumb state store." The manager agent owns all routing decisions via MCP tools.
 - **Entity naming** — `Entity.name` now stores the adapter `name` (e.g., `claude`), not `display_name`. UI surfaces `display_name` only.
@@ -65,8 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`_get_default_agent_id()` and `_get_default_human_id()`** — Removed from MCP server; all handlers use authenticated caller
 - **In-memory autopilot state** — `auto_pilot_enabled` global removed from `ui.py`
 - **Legacy manager file** — removed from the local runtime.
+- **Root runtime asset folders** — Root-level `agents/`, `mcp_configs/`, `static/`, and `templates/` were removed after package data was consolidated under `kanban_runtime/data/`.
 
 ### Fixed
+- PyPI build metadata now includes project URLs, package data, and a package-driven version.
+- Wheel/sdist builds include runtime templates/static assets/adapters while excluding local test and workbench artifacts.
 - RBAC bypass via missing headers fixed (GET-only fallback)
 - Activity events now derive `project_id` from `task_id` for per-project filtering
 - Adapter loader now verifies CLI availability via `shutil.which()` and marks missing tools `is_active=False`

@@ -3,18 +3,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, and_
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import logging
 import json
 import subprocess
 
 from database import get_db
 from models import (
-    AgentHeartbeat, AgentActivity, AgentSession, Entity, EntityType, Task, Project,
+    AgentHeartbeat, AgentActivity, AgentSession, Entity, EntityType, Task, Project, Stage,
     AgentStatusType, ActivityType, AgentSessionStatus, ProjectWorkspace,
     OrchestrationDecision, TaskLease, ActivitySummary, AgentCheckpoint, UserContribution,
     LeaseStatus, ContributionType, DiffReview, DiffReviewStatus,
-    AgentApproval, AgentApprovalStatus, ApprovalType
+    AgentApproval, AgentApprovalStatus, ApprovalType,
+    StagePolicy, ReviewMode, DecisionType
 )
 from schemas import (
     AgentHeartbeatResponse, AgentActivityResponse, AgentActivityCreate,
@@ -27,10 +28,12 @@ from schemas import (
     UserContributionCreate, UserContributionResponse,
     AgentTerminalResponse,
     DiffReviewCreate, DiffReviewUpdate, DiffReviewResponse,
-    AgentApprovalCreate, AgentApprovalResolve, AgentApprovalResponse
+    AgentApprovalCreate, AgentApprovalResolve, AgentApprovalResponse,
+    StagePolicyCreate, StagePolicyUpdate, StagePolicyResponse,
 )
 from auth import get_current_entity, is_owner_or_manager
 from event_bus import event_bus, EventType
+from kanban_runtime.handoff_protocol import read_status_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agents", tags=["agent-activity"])
@@ -88,9 +91,25 @@ def _github_current_user(workspace_path: str) -> Optional[str]:
         return None
 
 
+def _git_config_value(workspace_path: str, key: str) -> Optional[str]:
+    try:
+        value = _run_project_command(["git", "config", key], workspace_path)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    return value or None
+
+
 def _gh_available() -> bool:
     import shutil as _shutil
     return _shutil.which("gh") is not None
+
+
+def _gh_authenticated(workspace_path: str) -> bool:
+    try:
+        _run_project_command(["gh", "auth", "status", "--hostname", "github.com"], workspace_path)
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return False
 
 
 def _git_local_commits(workspace_path: str, author: str, limit: int = 50) -> list[dict]:
@@ -326,26 +345,28 @@ async def sync_github_contributions(
     if not repos:
         raise HTTPException(status_code=422, detail="No GitHub remotes found for project workspace")
 
+    local_author = (
+        _git_config_value(project.path, "user.name")
+        or _git_config_value(project.path, "user.email")
+    )
     gh_present = _gh_available()
-    github_author = author
-    if gh_present and not github_author:
-        github_author = _github_current_user(project.path)
-    if not github_author:
-        # Fall back to local git config user.name so the commit-only path still works.
-        try:
-            github_author = _run_project_command(["git", "config", "user.name"], project.path)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-            github_author = None
-    if not github_author:
+    gh_authenticated = gh_present and _gh_authenticated(project.path)
+    github_author = author or (_github_current_user(project.path) if gh_authenticated else None)
+    commit_author = local_author or github_author
+    if not commit_author and not github_author:
         raise HTTPException(
             status_code=422,
-            detail=("Could not determine GitHub user; pass ?author=<login>. "
-                    "(`gh` is required for PR/issue/review sync; commit sync also works without it.)")
+            detail=("Could not determine local git author from git config user.name or user.email. "
+                    "Pass ?author=<login> for GitHub enrichment, or configure local git identity.")
         )
 
     synced = 0
     seen = 0
     errors: list[str] = []
+    if gh_present and not gh_authenticated:
+        errors.append("gh CLI is installed but not authenticated; PR/issue/review sync skipped and local git commits were synced instead")
+    if gh_authenticated and not github_author:
+        errors.append("Could not determine current GitHub user from gh; PR/issue/review sync skipped")
 
     async def _upsert(contribution_type: ContributionType, external_id: str, item: dict):
         nonlocal seen, synced
@@ -374,10 +395,23 @@ async def sync_github_contributions(
         contribution.status = (item.get("state") or "").lower()
         contribution.created_at_external = _parse_github_datetime(item.get("createdAt"))
         contribution.updated_at_external = _parse_github_datetime(item.get("updatedAt"))
-        contribution.recorded_at = datetime.utcnow()
+        contribution.recorded_at = datetime.now(UTC)
 
     for repo in repos:
-        if gh_present:
+        if commit_author:
+            # Local git is the baseline path and follows the same identity/config
+            # users rely on for ordinary git operations.
+            for entry in _git_local_commits(project.path, commit_author, limit=50):
+                sha = entry.get("sha") or ""
+                if not sha:
+                    continue
+                await _upsert(
+                    ContributionType.COMMIT,
+                    f"{repo}@{sha}",
+                    entry,
+                )
+
+        if gh_authenticated and github_author:
             for contribution_type, command in (
                 (ContributionType.PULL_REQUEST, [
                     "gh", "pr", "list",
@@ -470,20 +504,8 @@ async def sync_github_contributions(
                         "updatedAt": committed,
                     },
                 )
-        else:
+        elif not gh_present:
             errors.append(f"{repo}: gh CLI not installed; PR/issue/review sync skipped")
-
-        # Local-git commit fallback runs whether `gh` is present or not — it
-        # captures commits that may not yet have been pushed.
-        for entry in _git_local_commits(project.path, github_author, limit=50):
-            sha = entry.get("sha") or ""
-            if not sha:
-                continue
-            await _upsert(
-                ContributionType.COMMIT,
-                f"{repo}@{sha}",
-                entry,
-            )
 
     await db.commit()
 
@@ -492,7 +514,7 @@ async def sync_github_contributions(
         {
             "project_id": project_id,
             "provider": "github",
-            "author": github_author,
+            "author": commit_author or github_author,
             "repos": repos,
             "seen": seen,
             "created": synced,
@@ -503,7 +525,9 @@ async def sync_github_contributions(
 
     return {
         "project_id": project_id,
-        "author": github_author,
+        "author": commit_author or github_author,
+        "github_author": github_author,
+        "local_author": local_author,
         "repos": repos,
         "seen": seen,
         "created": synced,
@@ -566,6 +590,19 @@ async def get_agent_terminal(
         .limit(limit)
     )
     return {"session": session, "activities": activity_result.scalars().all()}
+
+
+@router.get("/sessions/{session_id}/handoff")
+async def get_agent_session_handoff(
+    session_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Return the parsed worktree-local STATUS.md for a session."""
+    result = await db.execute(select(AgentSession).filter(AgentSession.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return read_status_file(session.workspace_path)
 
 
 @router.get("/tasks/{task_id}/active-session", response_model=Optional[AgentSessionResponse])
@@ -641,7 +678,7 @@ async def create_task_checkpoint(
         .limit(1)
     )
     db_checkpoint = existing_result.scalar_one_or_none()
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     if db_checkpoint:
         db_checkpoint.workspace_path = checkpoint.workspace_path
         db_checkpoint.summary = checkpoint.summary
@@ -674,7 +711,7 @@ async def get_project_leases(
     active_only: bool = True,
     db: AsyncSession = Depends(get_db)
 ):
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     query = (
         select(TaskLease)
         .join(Task, Task.id == TaskLease.task_id)
@@ -707,7 +744,7 @@ async def claim_task_lease(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     active_result = await db.execute(
         select(TaskLease).filter(
             TaskLease.task_id == task_id,
@@ -771,7 +808,7 @@ async def release_task_lease(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only release your own lease")
 
     lease.status = LeaseStatus.RELEASED
-    lease.released_at = datetime.utcnow()
+    lease.released_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(lease)
 
@@ -927,9 +964,9 @@ async def update_agent_session(
     db_session.status = update.status
     if update.task_id is not None:
         db_session.task_id = update.task_id
-    db_session.last_seen_at = datetime.utcnow()
+    db_session.last_seen_at = datetime.now(UTC)
     if update.status in (AgentSessionStatus.DONE, AgentSessionStatus.ERROR):
-        db_session.ended_at = datetime.utcnow()
+        db_session.ended_at = datetime.now(UTC)
 
     await db.commit()
     await db.refresh(db_session)
@@ -994,7 +1031,7 @@ async def update_agent_status(
         heartbeat.status_type = update.status_type
         heartbeat.message = update.message
         heartbeat.task_id = update.task_id
-        heartbeat.updated_at = datetime.utcnow()
+        heartbeat.updated_at = datetime.now(UTC)
     else:
         heartbeat = AgentHeartbeat(
             agent_id=agent_id,
@@ -1168,7 +1205,7 @@ async def update_diff_review(
     review.review_notes = update.review_notes
     if update.status in (DiffReviewStatus.APPROVED, DiffReviewStatus.REJECTED, DiffReviewStatus.CHANGES_REQUESTED):
         review.reviewer_id = current_entity.id
-        review.reviewed_at = datetime.utcnow()
+        review.reviewed_at = datetime.now(UTC)
 
     await db.commit()
     await db.refresh(review)
@@ -1236,7 +1273,7 @@ async def request_agent_approval(
         session_row = sess_result.scalar_one_or_none()
         if session_row and session_row.status != AgentSessionStatus.BLOCKED:
             session_row.status = AgentSessionStatus.BLOCKED
-            session_row.last_seen_at = datetime.utcnow()
+            session_row.last_seen_at = datetime.now(UTC)
             await db.commit()
 
     await event_bus.publish(
@@ -1267,10 +1304,14 @@ async def list_agent_approvals(
     session_id: Optional[int] = None,
     status_filter: Optional[str] = None,
     limit: int = 100,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
     current_entity: Optional[Entity] = Depends(get_current_entity)
 ):
-    """List approval queue entries. Use status_filter=pending for the workbench tab."""
+    """List approval queue entries with offset-based pagination.
+
+    Use status_filter=pending for the workbench tab.
+    """
     has_explicit_identity = bool(request.headers.get("x-entity-id"))
     if not current_entity or not has_explicit_identity:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
@@ -1300,7 +1341,7 @@ async def list_agent_approvals(
     if not is_owner_or_manager(current_entity):
         query = query.filter(AgentApproval.agent_id == current_entity.id)
 
-    result = await db.execute(query.limit(limit))
+    result = await db.execute(query.offset(offset).limit(limit))
     return result.scalars().all()
 
 
@@ -1335,17 +1376,31 @@ async def resolve_agent_approval(
         if not is_owner_or_manager(current_entity):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only managers can approve or reject approvals")
 
-    approval.status = payload.decision
-    approval.resolved_at = datetime.utcnow()
-    approval.resolved_by_entity_id = current_entity.id
-    approval.response_message = payload.response_message
+    # Optimistic concurrency: CAS on update_version to prevent race conditions.
+    # Three independent paths can resolve the same approval concurrently
+    # (REST, MCP, session streamer). This ensures only one succeeds.
+    expected_version = approval.update_version
+    from sqlalchemy import update as sa_update
+    cas_result = await db.execute(
+        sa_update(AgentApproval)
+        .where(AgentApproval.id == approval_id, AgentApproval.update_version == expected_version)
+        .values(
+            status=payload.decision,
+            resolved_at=datetime.now(UTC),
+            resolved_by_entity_id=current_entity.id,
+            response_message=payload.response_message,
+            update_version=expected_version + 1,
+        )
+    )
+    if cas_result.rowcount == 0:
+        raise HTTPException(status_code=409, detail="Approval was resolved by another request (concurrent modification)")
 
     if approval.session_id:
         sess_result = await db.execute(select(AgentSession).filter(AgentSession.id == approval.session_id))
         session_row = sess_result.scalar_one_or_none()
         if session_row and session_row.status == AgentSessionStatus.BLOCKED:
             session_row.status = AgentSessionStatus.ACTIVE
-            session_row.last_seen_at = datetime.utcnow()
+            session_row.last_seen_at = datetime.now(UTC)
 
     await db.commit()
     await db.refresh(approval)
@@ -1367,3 +1422,102 @@ async def resolve_agent_approval(
         entity_id=approval.agent_id
     )
     return approval
+
+
+# ---------------------------------------------------------------------------
+# Stage Policy endpoints (AGENTS.md §11)
+# ---------------------------------------------------------------------------
+
+@router.get("/projects/{project_id}/stage-policies", response_model=List[StagePolicyResponse])
+async def list_stage_policies(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    result = await db.execute(select(StagePolicy).filter(StagePolicy.project_id == project_id))
+    policies = result.scalars().all()
+    return [StagePolicyResponse.from_model(p) for p in policies]
+
+
+@router.put("/projects/{project_id}/stage-policies/{stage_id}", response_model=StagePolicyResponse)
+async def update_stage_policy(
+    project_id: int,
+    stage_id: int,
+    update: StagePolicyUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    if not current_entity or not is_owner_or_manager(current_entity):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only managers can update stage policies")
+
+    result = await db.execute(
+        select(StagePolicy).filter(StagePolicy.project_id == project_id, StagePolicy.stage_id == stage_id)
+    )
+    policy = result.scalar_one_or_none()
+    if not policy:
+        stage_result = await db.execute(select(Stage).filter(Stage.id == stage_id, Stage.project_id == project_id))
+        stage = stage_result.scalar_one_or_none()
+        if not stage:
+            raise HTTPException(status_code=404, detail="Stage not found in this project")
+        policy = StagePolicy(
+            project_id=project_id,
+            stage_id=stage_id,
+            stage_key=update.stage_key or "",
+            on_enter_roles_json="[]",
+            required_outputs_json="[]",
+        )
+        db.add(policy)
+        await db.flush()
+
+    import json as _json
+    if update.stage_key is not None:
+        policy.stage_key = update.stage_key
+    if update.on_enter_roles is not None:
+        policy.on_enter_roles_json = _json.dumps(update.on_enter_roles)
+    if update.required_outputs is not None:
+        policy.required_outputs_json = _json.dumps(update.required_outputs)
+    if update.review_mode is not None:
+        policy.review_mode = update.review_mode
+    if update.allow_parallel is not None:
+        policy.allow_parallel = update.allow_parallel
+    if update.requires_orchestrator_move is not None:
+        policy.requires_orchestrator_move = update.requires_orchestrator_move
+    policy.updated_at = datetime.now(UTC)
+
+    await db.commit()
+    await db.refresh(policy)
+
+    await event_bus.publish(
+        EventType.STAGE_POLICY_UPDATED.value,
+        {"project_id": project_id, "stage_id": stage_id, "policy_id": policy.id},
+        project_id=project_id,
+        entity_id=current_entity.id if current_entity else None,
+    )
+
+    db.add(OrchestrationDecision(
+        project_id=project_id,
+        manager_agent_id=current_entity.id if current_entity else None,
+        decision_type=DecisionType.STAGE_POLICY,
+        input_summary=f"Updated stage policy for stage_id={stage_id}",
+        rationale=_json.dumps(update.model_dump(exclude_unset=True)),
+        affected_task_ids=None,
+        affected_agent_ids=None,
+    ))
+    await db.commit()
+
+    return StagePolicyResponse.from_model(policy)
+
+
+@router.post("/projects/{project_id}/stage-policies/defaults", response_model=List[StagePolicyResponse])
+async def seed_default_policies(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    if not current_entity or not is_owner_or_manager(current_entity):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only managers can seed stage policies")
+
+    from kanban_runtime.stage_policy import seed_default_policies as _seed
+    policies = await _seed(db, project_id)
+    await db.commit()
+    return [StagePolicyResponse.from_model(p) for p in policies]

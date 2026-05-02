@@ -26,14 +26,20 @@ import signal
 import threading
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from kanban_runtime.preferences import (
     Preferences, ManagerConfig, WorkerConfig, AutonomyConfig,
     RoleConfig, RoleAssignment, AgentRole,
     save_preferences, load_preferences, PREFERENCES_PATH,
 )
 from kanban_runtime.adapter_loader import load_all_adapters, discover_popular_clis
+from kanban_runtime.handoff_protocol import (
+    STATUS_TEMPLATE,
+    available_handoff_agents,
+    build_handoff_instructions,
+    ensure_instruction_aliases,
+    profile_for_agent,
+    read_status_file,
+)
 
 
 def cmd_init(args):
@@ -217,9 +223,15 @@ def cmd_daemon_stop(args):
 
 def cmd_run(args):
     """Start the full local system: server + UI + role supervisor."""
-    api_base = args.api_base or "http://localhost:8000"
+    from kanban_runtime.instance import get_port, get_api_base, get_instance_info
+
     host = args.host or "0.0.0.0"
-    port = args.port or 8000
+    info = get_instance_info(host=host)
+    default_port = info["port"]
+    default_api_base = info["api_base"]
+
+    port = args.port or default_port
+    api_base = args.api_base or default_api_base
     no_supervisor = args.no_supervisor
 
     from kanban_runtime.adapter_loader import copy_bundled_adapters
@@ -227,6 +239,14 @@ def cmd_run(args):
 
     print("=" * 60)
     print("KANBAN LOCAL RUNTIME")
+    print("=" * 60)
+    print(f"Instance:    {info['instance_id']}")
+    print(f"Port:        {port}")
+    print(f"API base:    {api_base}")
+    print(f"tmux prefix: {info['tmux_prefix']}")
+    print(f"Database:    {info['database_url']}")
+    if port != 8000:
+        print(f"Note: worktree-detected port (probed {port} as available)")
     print("=" * 60)
 
     server_proc = None
@@ -249,10 +269,16 @@ def cmd_run(args):
     signal.signal(signal.SIGTERM, _shutdown)
 
     print(f"Starting server on {host}:{port}...")
+    env = os.environ.copy()
+    env["KANBAN_PORT"] = str(port)
+    env["KANBAN_API_BASE"] = api_base
+    if "DATABASE_URL" not in env:
+        env["DATABASE_URL"] = info["database_url"]
     server_proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "main:app", "--host", host, "--port", str(port)],
         stdout=sys.stdout,
         stderr=sys.stderr,
+        env=env,
     )
 
     time.sleep(2)
@@ -361,6 +387,9 @@ def cmd_roles_assign(args):
             display_name=args.display_name or args.agent,
             protocol=args.protocol,
             capabilities=[role_name],
+            prompt_flag=getattr(args, "prompt_flag", None),
+            chat_stdin=getattr(args, "chat_stdin", None),
+            chat_timeout_seconds=getattr(args, "chat_timeout", None),
         )
     else:
         available_models = [m.id for m in adapter.models]
@@ -372,6 +401,9 @@ def cmd_roles_assign(args):
             mode=mode,
             model=selected_model or (available_models[0] if available_models else None),
             models=available_models,
+            prompt_flag=getattr(args, "prompt_flag", None),
+            chat_stdin=getattr(args, "chat_stdin", None),
+            chat_timeout_seconds=getattr(args, "chat_timeout", None),
         )
 
     if prefs.roles is None:
@@ -497,9 +529,19 @@ def cmd_sheet(args):
     asyncio.run(_run())
 
 
+def _default_port():
+    from kanban_runtime.instance import get_port
+    return get_port()
+
+
+def _default_api_base(port=None):
+    from kanban_runtime.instance import get_api_base
+    return get_api_base(port)
+
+
 def cmd_roles_start(args):
     from kanban_runtime.role_supervisor import RoleSupervisor
-    api_base = args.api_base or "http://localhost:8000"
+    api_base = args.api_base or _default_api_base()
     supervisor = RoleSupervisor(api_base=api_base)
     supervisor.start()
 
@@ -519,14 +561,16 @@ def cmd_roles_start(args):
 
 def cmd_roles_stop(args):
     from kanban_runtime.role_supervisor import RoleSupervisor
-    api_base = args.api_base or "http://localhost:8000"
+    api_base = args.api_base or _default_api_base()
     supervisor = RoleSupervisor(api_base=api_base)
 
     if shutil.which("tmux"):
+        from kanban_runtime.instance import get_tmux_prefix
+        prefix = get_tmux_prefix()
         import subprocess as sp
         result = sp.run(["tmux", "list-sessions"], capture_output=True, text=True)
         sessions = [line.split(":")[0] for line in result.stdout.strip().split("\n") if line]
-        kanban_sessions = [s for s in sessions if s.startswith("kanban-")]
+        kanban_sessions = [s for s in sessions if s.startswith(prefix + "-")]
         for sn in kanban_sessions:
             sp.run(["tmux", "kill-session", "-t", sn], capture_output=True)
             print(f"Killed tmux session: {sn}")
@@ -538,7 +582,7 @@ def cmd_roles_stop(args):
 
 def cmd_roles_status(args):
     from kanban_runtime.role_supervisor import RoleSupervisor
-    api_base = args.api_base or "http://localhost:8000"
+    api_base = args.api_base or _default_api_base()
     supervisor = RoleSupervisor(api_base=api_base)
 
     prefs = load_preferences()
@@ -567,6 +611,62 @@ def cmd_roles_status(args):
             print(f"{role_name:<16} {assignment.agent:<16} {'not started':<25} unknown")
 
 
+def cmd_handoff_status(args):
+    workspace = Path(args.workspace).resolve()
+    agents = args.agents or available_handoff_agents(adapters=load_all_adapters())
+    print(f"Workspace: {workspace}")
+    status_info = read_status_file(workspace)
+    frontmatter = status_info["frontmatter"]
+    print(f"STATUS.md: {status_info['path']}")
+    if status_info["exists"]:
+        print(f"State: {status_info['state'] or '-'}")
+        print(f"Handoff ready: {'yes' if status_info['handoff_ready'] else 'no'}")
+        print(f"Current agent: {frontmatter.get('current_agent') or '-'}")
+        print(f"Task: {frontmatter.get('task_id') or '-'}")
+        blockers = frontmatter.get("blockers") or "none"
+        print(f"Blockers: {blockers}")
+    else:
+        print("State: missing STATUS.md")
+
+    print(f"\n{'Agent':<14} {'Role':<24} {'Owns'}")
+    print("-" * 72)
+    for agent_name in agents:
+        profile = profile_for_agent(agent_name)
+        owns = ", ".join(profile.owns) if profile.owns else "STATUS.md only" if profile.review_only else "-"
+        print(f"{profile.agent:<14} {profile.role:<24} {owns}")
+
+
+def cmd_handoff_check(args):
+    workspace = Path(args.workspace).resolve()
+    status_info = read_status_file(workspace)
+    if not status_info["exists"]:
+        print(f"BLOCKED: missing {status_info['path']}")
+        sys.exit(1)
+    frontmatter = status_info["frontmatter"]
+    blockers = str(frontmatter.get("blockers") or "none").strip().lower()
+    if blockers not in {"", "none"}:
+        print(f"BLOCKED: blockers={frontmatter.get('blockers')}")
+        sys.exit(1)
+    state = status_info["state"]
+    handoff_ready = status_info["handoff_ready"]
+    if not handoff_ready and state not in {"assigned", "in_progress", "done"}:
+        print(f"BLOCKED: state={state or 'missing'} handoff_ready=no")
+        sys.exit(1)
+    print(f"OK: state={state or '-'} handoff_ready={'yes' if handoff_ready else 'no'}")
+
+
+def cmd_handoff_template(args):
+    workspace = Path(args.workspace).resolve()
+    if args.ensure_aliases:
+        for alias, result in ensure_instruction_aliases(workspace).items():
+            print(f"{alias}: {result}")
+        return
+    if args.instructions:
+        print(build_handoff_instructions(args.agent, workspace))
+        return
+    print(STATUS_TEMPLATE.rstrip())
+
+
 def main():
     parser = argparse.ArgumentParser(prog="kanban", description="Agent Kanban PM CLI")
     subparsers = parser.add_subparsers(dest="command")
@@ -588,8 +688,8 @@ def main():
 
     run_parser = subparsers.add_parser("run", help="Start server + UI + role supervisor")
     run_parser.add_argument("--host", default="0.0.0.0", help="Server host")
-    run_parser.add_argument("--port", type=int, default=8000, help="Server port")
-    run_parser.add_argument("--api-base", default="http://localhost:8000", help="API base URL")
+    run_parser.add_argument("--port", type=int, default=None, help="Server port (default: auto-detected from worktree)")
+    run_parser.add_argument("--api-base", default=None, help="API base URL (default: auto-detected from worktree)")
     run_parser.add_argument("--no-supervisor", action="store_true", help="Skip role supervisor")
     run_parser.set_defaults(func=cmd_run)
 
@@ -607,15 +707,38 @@ def main():
     roles_assign.add_argument("--command", help="Standalone CLI command to run when agent is not an adapter")
     roles_assign.add_argument("--display-name", help="Display name for a standalone CLI role")
     roles_assign.add_argument("--protocol", default="stdio", help="Protocol label for standalone CLI roles")
+    roles_assign.add_argument("--prompt-flag", default=None, help="Chat designer prompt flag (default: -p)")
+    roles_assign.add_argument("--chat-stdin", action="store_true", default=None, help="Pass the chat designer prompt via stdin instead of an argument")
+    roles_assign.add_argument("--chat-timeout", type=int, default=None, help="Chat designer subprocess timeout in seconds")
     roles_assign.set_defaults(func=cmd_roles_assign)
 
     roles_start = roles_sub.add_parser("start", help="Start all role agents")
-    roles_start.add_argument("--api-base", default="http://localhost:8000", help="API base URL")
+    roles_start.add_argument("--api-base", default=None, help="API base URL (default: auto-detected)")
     roles_start.set_defaults(func=cmd_roles_start)
     roles_sub.add_parser("stop", help="Stop all role agents").set_defaults(func=cmd_roles_stop)
     roles_status = roles_sub.add_parser("status", help="Show role session status")
-    roles_status.add_argument("--api-base", default="http://localhost:8000", help="API base URL")
+    roles_status.add_argument("--api-base", default=None, help="API base URL (default: auto-detected)")
     roles_status.set_defaults(func=cmd_roles_status)
+
+    handoff_parser = subparsers.add_parser("handoff", help="Inspect worktree-local STATUS.md handoffs")
+    handoff_sub = handoff_parser.add_subparsers(dest="handoff_cmd")
+
+    handoff_status = handoff_sub.add_parser("status", help="Show this worktree STATUS.md and available handoff roles")
+    handoff_status.add_argument("--workspace", default=".", help="Current agent worktree path")
+    handoff_status.add_argument("--agents", nargs="*", help="Agent names to include (default: all available)")
+    handoff_status.set_defaults(func=cmd_handoff_status)
+
+    handoff_check = handoff_sub.add_parser("check", help="Fail unless this worktree STATUS.md is usable")
+    handoff_check.add_argument("agent", help="Current agent name")
+    handoff_check.add_argument("--workspace", default=".", help="Current agent worktree path")
+    handoff_check.set_defaults(func=cmd_handoff_check)
+
+    handoff_template = handoff_sub.add_parser("template", help="Print the STATUS.md template or launch instructions")
+    handoff_template.add_argument("--agent", default="codex", help="Agent name for --instructions")
+    handoff_template.add_argument("--workspace", default=".", help="Current agent worktree path")
+    handoff_template.add_argument("--instructions", action="store_true", help="Print full handoff instructions")
+    handoff_template.add_argument("--ensure-aliases", action="store_true", help="Create CLAUDE.md/GEMINI.md/CODEX.md symlinks to AGENTS.md")
+    handoff_template.set_defaults(func=cmd_handoff_template)
 
     sheet_parser = subparsers.add_parser("sheet", help="Print a clean sheet of projects, agents, and role assignments")
     sheet_parser.add_argument("--all", action="store_true", help="Include test/demo database rows")
@@ -628,7 +751,7 @@ def main():
     chat_parser.add_argument("project_id", type=int, help="Project ID to add tasks to")
     chat_parser.add_argument(
         "--api-base", default=None,
-        help="API base URL (default: $KANBAN_API_BASE or http://localhost:8000)",
+        help="API base URL (default: $KANBAN_API_BASE or auto-detected)",
     )
     chat_parser.add_argument(
         "--entity-id", type=int, default=None,

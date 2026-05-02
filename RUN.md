@@ -9,7 +9,7 @@ This document is the definitive guide to getting the system running from a fresh
 Before starting, verify you have:
 
 ```bash
-python3 --version      # Should be 3.10+
+python3 --version      # Should be 3.12+
 pip --version
 ```
 
@@ -149,22 +149,22 @@ curl http://localhost:8000/health
 
 ---
 
-## 5. Register a Human User
+## 5. Resolve the Local Human Owner
 
-You need at least one human entity to create projects. In a new terminal:
+The app is local-first and single-human. On startup, the server creates
+one local owner if none exists. In a new terminal, resolve that owner:
 
 ```bash
-curl -X POST http://localhost:8000/entities/register/human \
-  -H "Content-Type: application/json" \
-  -d '{"name": "You", "entity_type": "human"}'
+curl http://localhost:8000/entities/me
 ```
 
 Save the returned `id`. For example:
 ```json
-{"name": "You", "entity_type": "human", "id": 5, "role": "owner", ...}
+{"name": "kronos", "entity_type": "human", "id": 1, "role": "owner", ...}
 ```
 
-Your human ID is `5`. Use it as `X-Entity-ID: 5` in all subsequent requests.
+Your human ID is `1`. Use it as `X-Entity-ID: 1` in all subsequent
+mutating requests.
 
 ### Verify entities:
 
@@ -376,23 +376,11 @@ export DATABASE_URL="postgresql+asyncpg://user:pass@localhost/dbname"
 Run the test suite:
 
 ```bash
-# RBAC tests
-python test_rbac.py
+pytest
 
-# Phase 1: Activity visibility
-python test_phase1.py
-
-# Phase 2: Adapter registry
-python test_phase2.py
-
-# Full integration
-python test_integration.py
-
-# Phase 6: Env-based identity
-python test_phase6.py
-
-# Live smoke test (starts/stops server automatically)
-python smoke_test.py
+# Run a focused file when needed
+pytest tests/test_rbac.py
+pytest tests/test_phase6.py
 ```
 
 ---
@@ -427,22 +415,21 @@ python -m kanban_cli init
 # Start server (Terminal 1)
 python main.py
 
-# Register yourself (Terminal 2)
-curl -X POST http://localhost:8000/entities/register/human \
-  -d '{"name": "You", "entity_type": "human"}'
+# Resolve local owner (Terminal 2)
+curl http://localhost:8000/entities/me
 
 # Create project
 curl -X POST http://localhost:8000/projects \
-  -H "x-entity-id: 5" \
+  -H "x-entity-id: 1" \
   -d '{"name": "My Project"}'
 
 # Approve project
 curl -X POST http://localhost:8000/projects/1/approve \
-  -H "x-entity-id: 5"
+  -H "x-entity-id: 1"
 
 # Create task
 curl -X POST http://localhost:8000/tasks \
-  -H "x-entity-id: 5" \
+  -H "x-entity-id: 1" \
   -d '{"title": "Do the thing", "project_id": 1}'
 
 # Open browser

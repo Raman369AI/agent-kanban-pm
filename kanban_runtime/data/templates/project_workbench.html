@@ -1,0 +1,556 @@
+{% extends "base.html" %}
+{% block title %}Workbench – {{ project.name }}{% endblock %}
+
+{% block content %}
+<style>
+  .project-sub-nav{display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap;}
+  .sub-nav-pill{padding:0.4rem 1.1rem;border-radius:99px;text-decoration:none;font-size:0.82rem;font-weight:600;border:1px solid var(--glass-border);color:var(--text-secondary);background:var(--glass-bg);transition:all 0.2s;}
+  .sub-nav-pill:hover{background:rgba(var(--accent-primary-rgb),0.08);color:var(--text-primary);}
+  .sub-nav-pill.active{background:var(--accent-primary);color:#fff;border-color:var(--accent-primary);}
+
+  .wb-tabs{display:flex;gap:0.25rem;padding:0.25rem;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius);margin-bottom:1rem;}
+  .wb-tab{flex:1;border:0;border-radius:var(--radius-sm);padding:0.5rem 0.5rem;background:transparent;color:var(--text-secondary);cursor:pointer;font-size:0.8rem;font-weight:700;transition:all 0.2s;position:relative;}
+  .wb-tab:hover{color:var(--text-primary);background:rgba(var(--accent-primary-rgb),0.06);}
+  .wb-tab.active{background:linear-gradient(135deg,var(--accent-primary),var(--accent-secondary));color:#fff;box-shadow:0 3px 10px rgba(var(--accent-primary-rgb),0.3);}
+  .wb-tab .tab-badge{background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;border-radius:0.65rem;margin-left:0.2rem;}
+  .wb-pane{display:none;} .wb-pane.active{display:block;}
+
+  /* Live */
+  .live-summary{display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;}
+  .live-chip{padding:0.45rem 1rem;border-radius:var(--radius);background:var(--glass-bg);border:1px solid var(--glass-border);font-size:0.85rem;font-weight:600;}
+  .live-chip strong{color:var(--accent-primary);}
+  .agent-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:0.75rem;margin-bottom:1rem;}
+  .agent-card-wb{padding:0.85rem;border-radius:var(--radius-lg);background:var(--glass-bg);border:1px solid var(--glass-border);backdrop-filter:blur(10px);}
+  .agent-card-wb-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;}
+  .agent-name-wb{font-weight:700;font-size:0.88rem;}
+  .agent-task-chip{font-size:0.75rem;color:var(--accent-primary);cursor:pointer;}
+  .agent-msg-wb{font-size:0.78rem;color:var(--text-secondary);margin:0.2rem 0;}
+  .agent-ts-wb{font-size:0.68rem;color:var(--text-muted);}
+  .sessions-table{width:100%;border-collapse:separate;border-spacing:0;font-size:0.8rem;}
+  .sessions-table th{padding:0.5rem 0.75rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-muted);font-weight:700;border-bottom:1px solid var(--glass-border);text-align:left;}
+  .sessions-table td{padding:0.55rem 0.75rem;border-bottom:1px solid var(--glass-border);}
+  .sessions-table tr{cursor:pointer;transition:background 0.15s;}
+  .sessions-table tr:hover td{background:rgba(var(--accent-primary-rgb),0.05);}
+  .sessions-table code{font-size:0.72rem;color:var(--text-muted);}
+  .s-badge{font-size:0.65rem;padding:0.15rem 0.45rem;border-radius:1rem;font-weight:700;text-transform:uppercase;}
+  .s-active{background:rgba(16,185,129,0.15);color:#10b981;}
+  .s-done{background:rgba(100,116,139,0.15);color:#64748b;}
+  .s-error{background:rgba(239,68,68,0.15);color:#ef4444;}
+  .s-idle{background:rgba(148,163,184,0.12);color:#64748b;}
+
+  /* Terminal */
+  .terminal-layout{display:grid;grid-template-columns:240px 1fr;gap:0;border:1px solid var(--glass-border);border-radius:var(--radius-lg);overflow:hidden;min-height:600px;}
+  .terminal-sidebar{background:var(--glass-bg);border-right:1px solid var(--glass-border);display:flex;flex-direction:column;}
+  .terminal-filter{padding:0.5rem;border-bottom:1px solid var(--glass-border);}
+  .terminal-filter input{width:100%;padding:0.35rem 0.6rem;border-radius:var(--radius-sm);border:1px solid var(--glass-border);background:var(--bg-secondary);color:var(--text-primary);font-size:0.78rem;}
+  .terminal-filter input:focus{outline:none;border-color:var(--accent-primary);}
+  .terminal-session-list{flex:1;overflow-y:auto;}
+  .terminal-session-item{padding:0.6rem 0.75rem;cursor:pointer;border-bottom:1px solid var(--glass-border);transition:background 0.15s;font-size:0.78rem;}
+  .terminal-session-item:hover{background:rgba(var(--accent-primary-rgb),0.06);}
+  .terminal-session-item.selected{background:rgba(var(--accent-primary-rgb),0.12);border-left:3px solid var(--accent-primary);}
+  .terminal-session-item .si-agent{font-weight:700;}
+  .terminal-session-item .si-task{color:var(--accent-primary);font-size:0.72rem;}
+  .terminal-session-item .si-time{color:var(--text-muted);font-size:0.68rem;}
+  .terminal-viewer{display:flex;flex-direction:column;background:#020617;}
+  .terminal-viewer-header{display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.85rem;border-bottom:1px solid #1e293b;background:#0d1117;}
+  .terminal-viewer-header #wb-terminal-info{font-size:0.78rem;color:#64748b;font-family:monospace;}
+  .wb-terminal-pre{flex:1;overflow:auto;margin:0;padding:0.85rem;background:#020617;color:#d1fae5;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.76rem;line-height:1.5;white-space:pre-wrap;}
+  .wb-terminal-pre .t-cmd{color:#4ade80;}
+  .wb-terminal-pre .t-file{color:#60a5fa;}
+  .wb-terminal-pre .t-time{color:#475569;}
+  .wb-terminal-pre .t-err{color:#f87171;}
+  @media(max-width:768px){.terminal-layout{grid-template-columns:1fr;grid-template-rows:200px 1fr;}}
+
+  /* Handoff */
+  .handoff-layout{display:grid;grid-template-columns:280px 1fr;gap:1rem;}
+  .handoff-summary{padding:1rem;border-radius:var(--radius-lg);border:1px solid var(--glass-border);background:var(--glass-bg);}
+  .handoff-kv{display:grid;grid-template-columns:130px 1fr;gap:0.4rem 0.75rem;font-size:0.8rem;margin-bottom:0.85rem;}
+  .handoff-kv dt{color:var(--text-muted);font-weight:700;}
+  .handoff-kv dd{margin:0;color:var(--text-primary);word-break:break-word;}
+  .handoff-pre{background:#0f172a;color:#e2e8f0;border:1px solid #1e293b;border-radius:var(--radius-sm);padding:0.75rem;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.76rem;line-height:1.5;max-height:420px;overflow:auto;}
+  .handoff-empty{font-size:0.82rem;color:var(--text-muted);padding:1rem;border:1px dashed var(--glass-border);border-radius:var(--radius-lg);}
+  @media(max-width:768px){.handoff-layout{grid-template-columns:1fr;}}
+
+  /* Approvals */
+  .approval-card{padding:1rem;border-radius:var(--radius-lg);border:1px solid var(--glass-border);background:var(--glass-bg);margin-bottom:0.75rem;}
+  .approval-card-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem;gap:0.75rem;}
+  .approval-title{font-weight:700;font-size:0.9rem;}
+  .approval-meta{font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem;}
+  .approval-msg{font-size:0.82rem;margin-bottom:0.5rem;}
+  .approval-command{background:#0f172a;padding:0.6rem 0.85rem;border-radius:var(--radius-sm);border:1px solid #1e293b;font-family:monospace;font-size:0.75rem;color:#e2e8f0;margin-bottom:0.5rem;overflow-x:auto;}
+  .approval-diff-wrap{margin-bottom:0.5rem;}
+  .approval-diff-wrap summary{font-size:0.78rem;color:var(--accent-primary);cursor:pointer;user-select:none;}
+  .approval-diff{background:#0f172a;padding:0.6rem 0.85rem;border-radius:var(--radius-sm);border:1px solid #1e293b;font-family:monospace;font-size:0.72rem;overflow-x:auto;margin-top:0.35rem;max-height:300px;overflow-y:auto;}
+  .diff-add{color:#4ade80;background:rgba(74,222,128,0.06);display:block;}
+  .diff-rm{color:#f87171;background:rgba(248,113,113,0.06);display:block;}
+  .diff-hunk{color:#60a5fa;display:block;}
+  .approval-controls{display:flex;gap:0.5rem;align-items:center;margin-top:0.65rem;}
+  .approval-note-input{flex:1;padding:0.35rem 0.6rem;border-radius:var(--radius-sm);border:1px solid var(--glass-border);background:var(--bg-secondary);color:var(--text-primary);font-size:0.78rem;}
+  .approval-note-input:focus{outline:none;border-color:var(--accent-primary);}
+  .resolved-section{margin-top:1.25rem;}
+  .resolved-section summary{font-size:0.85rem;font-weight:700;cursor:pointer;padding:0.5rem 0;color:var(--text-secondary);}
+
+  /* Decisions */
+  .decision-card{padding:0.85rem 1rem;border-radius:var(--radius-lg);border:1px solid var(--glass-border);background:var(--glass-bg);margin-bottom:0.75rem;}
+  .decision-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;}
+  .decision-type-badge{font-size:0.65rem;padding:0.15rem 0.5rem;border-radius:1rem;font-weight:700;text-transform:uppercase;background:rgba(var(--accent-primary-rgb),0.12);color:var(--accent-primary);}
+  .decision-ts{font-size:0.7rem;color:var(--text-muted);}
+  .decision-summary{font-weight:600;font-size:0.85rem;margin-bottom:0.3rem;}
+  .decision-rationale{border-left:3px solid var(--glass-border);padding-left:0.75rem;font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.4rem;}
+  .decision-chips{display:flex;gap:0.35rem;flex-wrap:wrap;}
+  .decision-chip{font-size:0.7rem;padding:0.15rem 0.5rem;border-radius:1rem;background:var(--glass-bg);border:1px solid var(--glass-border);}
+
+  /* Status badge */
+  .as-idle{background:rgba(148,163,184,0.12);color:#64748b;}
+  .as-thinking{background:rgba(99,102,241,0.12);color:#6366f1;}
+  .as-working{background:rgba(16,185,129,0.12);color:#10b981;}
+  .as-blocked{background:rgba(239,68,68,0.12);color:#ef4444;}
+  .as-waiting{background:rgba(245,158,11,0.12);color:#f59e0b;}
+  .as-done{background:rgba(100,116,139,0.1);color:#64748b;}
+
+  /* Toast */
+  #wb-toast{position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;pointer-events:none;}
+  .wb-toast-item{padding:0.65rem 1.1rem;border-radius:var(--radius-lg);font-size:0.82rem;font-weight:600;margin-top:0.5rem;opacity:1;transition:opacity 0.4s;color:#fff;}
+  .wb-toast-info{background:#334155;}
+  .wb-toast-success{background:#065f46;}
+  .wb-toast-warning{background:#92400e;}
+  .wb-toast-error{background:#7f1d1d;}
+
+  .section-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.65rem;padding-bottom:0.5rem;border-bottom:1px solid var(--glass-border);}
+  .section-hdr h5{margin:0;font-size:0.85rem;font-weight:700;}
+</style>
+
+<div class="project-sub-nav">
+  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">&#128203; Board</a>
+  <a href="#" class="sub-nav-pill active">&#128295; Workbench</a>
+  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Git</a>
+</div>
+
+<div class="d-flex align-items-center gap-3 mb-4">
+  <h2 style="margin:0;font-size:1.4rem;font-weight:800;">{{ project.name }} — Workbench</h2>
+  {% if project.path %}<code style="font-size:0.8rem;color:var(--text-muted);">{{ project.path }}</code>{% endif %}
+</div>
+
+<div class="wb-tabs" role="tablist">
+  <button class="wb-tab active" data-tab="live" onclick="switchWbTab('live')">&#9654; Live</button>
+  <button class="wb-tab" data-tab="terminal" onclick="switchWbTab('terminal')">&#128187; Terminal</button>
+  <button class="wb-tab" data-tab="handoff" onclick="switchWbTab('handoff')">&#128221; Handoff</button>
+  <button class="wb-tab" data-tab="approvals" onclick="switchWbTab('approvals')">
+    &#9888; Approvals <span class="tab-badge" id="wb-approvals-badge" style="display:none;">0</span>
+  </button>
+  <button class="wb-tab" data-tab="decisions" onclick="switchWbTab('decisions')">&#128196; Decisions</button>
+</div>
+
+<!-- LIVE TAB -->
+<div class="wb-pane active" id="wb-pane-live">
+  <div class="live-summary">
+    <div class="live-chip">Agents working: <strong id="wb-working-count">0</strong></div>
+    <div class="live-chip">Active sessions: <strong id="wb-sessions-count">0</strong></div>
+    <div class="live-chip">Pending approvals: <strong id="wb-pending-count" style="color:#f59e0b;">0</strong></div>
+  </div>
+  <div class="agent-grid" id="wb-agent-grid">
+    <div style="font-size:0.82rem;color:var(--text-muted);">Loading agents…</div>
+  </div>
+  <div class="section-hdr">
+    <h5>Sessions</h5>
+    <button class="btn-icon-sm" onclick="loadLive()" title="Refresh">&#8635;</button>
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="sessions-table">
+      <thead><tr><th>Agent</th><th>Task</th><th>Status</th><th>Workspace</th><th>Started</th><th>Last seen</th></tr></thead>
+      <tbody id="wb-sessions-body"><tr><td colspan="6" style="text-align:center;color:var(--text-muted);font-size:0.8rem;padding:1.5rem;">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- TERMINAL TAB -->
+<div class="wb-pane" id="wb-pane-terminal">
+  <div class="terminal-layout">
+    <div class="terminal-sidebar">
+      <div class="terminal-filter">
+        <input type="text" id="wb-task-filter" placeholder="Filter by task ID…" oninput="filterTerminalSessions()">
+      </div>
+      <div class="terminal-session-list" id="wb-terminal-session-list">
+        <div style="padding:1rem;font-size:0.8rem;color:var(--text-muted);">No sessions loaded yet.</div>
+      </div>
+    </div>
+    <div class="terminal-viewer" style="min-height:600px;display:flex;flex-direction:column;">
+      <div class="terminal-viewer-header">
+        <span id="wb-terminal-info">Select a session from the left</span>
+        <button class="btn-icon-sm" style="color:#64748b;" onclick="refreshWbTerminal()">&#8635;</button>
+      </div>
+      <pre class="wb-terminal-pre" id="wb-terminal-pre" style="flex:1;">Select a session to view output.</pre>
+    </div>
+  </div>
+</div>
+
+<!-- HANDOFF TAB -->
+<div class="wb-pane" id="wb-pane-handoff">
+  <div class="handoff-layout">
+    <div>
+      <div class="section-hdr">
+        <h5>Sessions</h5>
+        <button class="btn-icon-sm" onclick="loadLive();renderHandoffSessionList();" title="Refresh">&#8635;</button>
+      </div>
+      <div class="terminal-session-list" id="wb-handoff-session-list">
+        <div class="handoff-empty">No sessions loaded yet.</div>
+      </div>
+    </div>
+    <div class="handoff-summary" id="wb-handoff-view">
+      <div class="handoff-empty">Select a session to view its worktree STATUS.md.</div>
+    </div>
+  </div>
+</div>
+
+<!-- APPROVALS TAB -->
+<div class="wb-pane" id="wb-pane-approvals">
+  <div class="section-hdr">
+    <h5>Pending Approvals</h5>
+    <button class="btn-icon-sm" onclick="loadApprovals()" title="Refresh">&#8635;</button>
+  </div>
+  <div id="wb-pending-list">
+    <p style="color:var(--text-muted);font-size:0.82rem;">No pending approvals.</p>
+  </div>
+  <details class="resolved-section" id="wb-resolved-details">
+    <summary>Resolved (last 20)</summary>
+    <div id="wb-resolved-list" style="margin-top:0.75rem;"></div>
+  </details>
+</div>
+
+<!-- DECISIONS TAB -->
+<div class="wb-pane" id="wb-pane-decisions">
+  <div class="section-hdr">
+    <h5>Orchestration Decisions</h5>
+    <button class="btn-icon-sm" onclick="loadDecisions()" title="Refresh">&#8635;</button>
+  </div>
+  <div id="wb-decisions-list">
+    <p style="color:var(--text-muted);font-size:0.82rem;">Loading…</p>
+  </div>
+</div>
+
+<div id="wb-toast"></div>
+
+<script>
+const PROJECT_ID = {{ project.id }};
+const CURRENT_ENTITY_ID = {{ current_entity.id if current_entity else 'null' }};
+let wbSelectedSessionId = null;
+let wbAllSessions = [];
+let wbWs = null;
+
+function esc(s){ if(!s)return''; const d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
+function ta(ds){
+  if(!ds)return'never';
+  const s=Math.floor((new Date()-new Date(ds))/1000);
+  if(s<60)return s+'s ago';
+  const m=Math.floor(s/60); if(m<60)return m+'m ago';
+  const h=Math.floor(m/60); if(h<24)return h+'h ago';
+  return Math.floor(h/24)+'d ago';
+}
+function showToast(msg,type='info'){
+  const c=document.getElementById('wb-toast');
+  const el=document.createElement('div');
+  el.className='wb-toast-item wb-toast-'+type;
+  el.textContent=msg;
+  c.appendChild(el);
+  setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),400);},3500);
+}
+function apiFetch(url,opts={}){
+  const h={'Content-Type':'application/json',...(opts.headers||{})};
+  if(CURRENT_ENTITY_ID)h['X-Entity-ID']=CURRENT_ENTITY_ID;
+  return fetch(url,{...opts,headers:h}).then(r=>{if(!r.ok)throw new Error(r.statusText);return r.json();});
+}
+
+/* ── Tab switching ── */
+function switchWbTab(tab){
+  document.querySelectorAll('.wb-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  document.querySelectorAll('.wb-pane').forEach(p=>p.classList.toggle('active',p.id==='wb-pane-'+tab));
+  if(tab==='terminal')renderTerminalSessionList();
+  if(tab==='handoff')renderHandoffSessionList();
+}
+
+/* ── LIVE ── */
+async function loadLive(){
+  try{
+    const [heartbeats, sessions]=await Promise.all([
+      apiFetch('/agents/status'),
+      apiFetch('/agents/sessions?project_id='+PROJECT_ID+'&limit=50')
+    ]);
+    renderAgentGrid(heartbeats);
+    renderSessionsTable(sessions);
+    wbAllSessions=sessions;
+    renderTerminalSessionList();
+    renderHandoffSessionList();
+    document.getElementById('wb-sessions-count').textContent=sessions.filter(s=>!s.ended_at).length;
+    const working=(heartbeats||[]).filter(h=>h.status_type&&h.status_type!=='idle'&&h.status_type!=='done').length;
+    document.getElementById('wb-working-count').textContent=working;
+  }catch(e){console.error('loadLive',e);}
+}
+
+function sBadge(status){
+  const map={active:'s-active',done:'s-done',error:'s-error',idle:'s-idle',starting:'as-thinking'};
+  const cls=map[status]||'s-idle';
+  return `<span class="s-badge ${cls}">${esc(status)}</span>`;
+}
+function asBadge(st){
+  const cls='as-'+(st||'idle');
+  return `<span class="s-badge ${cls}">${esc(st||'idle')}</span>`;
+}
+
+function renderAgentGrid(heartbeats){
+  const g=document.getElementById('wb-agent-grid');
+  if(!heartbeats||!heartbeats.length){g.innerHTML='<div style="font-size:0.82rem;color:var(--text-muted);">No agents reporting.</div>';return;}
+  g.innerHTML=heartbeats.map(a=>`
+    <div class="agent-card-wb">
+      <div class="agent-card-wb-header">
+        <span class="agent-name-wb">${esc(a.agent_name||'Agent '+a.agent_id)}</span>
+        ${asBadge(a.status_type)}
+      </div>
+      ${a.task_id?`<div class="agent-task-chip" onclick="filterToTask(${a.task_id})">&#128203; Task #${a.task_id}</div>`:'<div style="font-size:0.72rem;color:var(--text-muted);">No task assigned</div>'}
+      <div class="agent-msg-wb">${esc(a.message||'')}</div>
+      <div class="agent-ts-wb">${ta(a.updated_at)}</div>
+    </div>`).join('');
+}
+
+function renderSessionsTable(sessions){
+  const tb=document.getElementById('wb-sessions-body');
+  if(!sessions||!sessions.length){tb.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-muted);font-size:0.8rem;padding:1.5rem;">No sessions recorded.</td></tr>';return;}
+  tb.innerHTML=sessions.slice(0,30).map(s=>`
+    <tr onclick="openSessionFromTable(${s.id})" title="Click to view terminal">
+      <td style="font-weight:600;">${esc(s.agent_name||'Agent '+s.agent_id)}</td>
+      <td>${s.task_id?`<span style="color:var(--accent-primary);">Task #${s.task_id}</span>`:'-'}</td>
+      <td>${sBadge(s.status)}</td>
+      <td><code>${esc((s.workspace_path||'').split('/').slice(-3).join('/'))}</code></td>
+      <td style="font-size:0.75rem;">${s.started_at?new Date(s.started_at).toLocaleString():'-'}</td>
+      <td style="font-size:0.75rem;">${ta(s.last_seen_at)}</td>
+    </tr>`).join('');
+}
+
+/* ── TERMINAL ── */
+function renderTerminalSessionList(){
+  const list=document.getElementById('wb-terminal-session-list');
+  const filter=document.getElementById('wb-task-filter').value.trim();
+  let sessions=wbAllSessions;
+  if(filter)sessions=sessions.filter(s=>String(s.task_id||'').includes(filter)||String(s.id).includes(filter));
+  if(!sessions.length){list.innerHTML='<div style="padding:1rem;font-size:0.8rem;color:var(--text-muted);">No sessions match.</div>';return;}
+  list.innerHTML=sessions.map(s=>`
+    <div class="terminal-session-item${wbSelectedSessionId===s.id?' selected':''}" onclick="loadWbTerminal(${s.id})">
+      <div class="si-agent">${esc(s.agent_name||'Agent '+s.agent_id)} ${sBadge(s.status)}</div>
+      ${s.task_id?`<div class="si-task">Task #${s.task_id}</div>`:''}
+      <div class="si-time">${ta(s.last_seen_at)}</div>
+    </div>`).join('');
+}
+function filterTerminalSessions(){renderTerminalSessionList();}
+function filterToTask(taskId){
+  document.getElementById('wb-task-filter').value=String(taskId);
+  switchWbTab('terminal');
+  renderTerminalSessionList();
+}
+function openSessionFromTable(sessionId){switchWbTab('terminal');loadWbTerminal(sessionId);}
+
+async function loadWbTerminal(sessionId){
+  wbSelectedSessionId=sessionId;
+  renderTerminalSessionList();
+  const pre=document.getElementById('wb-terminal-pre');
+  const info=document.getElementById('wb-terminal-info');
+  pre.textContent='Loading session #'+sessionId+'…';
+  try{
+    const data=await apiFetch('/agents/sessions/'+sessionId+'/terminal?limit=200');
+    const s=data.session;
+    info.textContent='Agent '+(s.agent_name||s.agent_id)+' · Task #'+(s.task_id||'–')+' · '+esc(s.status)+' · '+(s.mode||'');
+    const lines=[];
+    lines.push('<span class="t-cmd">$ '+esc(s.command||'session started')+'</span>');
+    lines.push('<span class="t-time"># workspace: '+esc(s.workspace_path)+'</span>');
+    if(s.task_id)lines.push('<span class="t-time"># task: #'+s.task_id+'</span>');
+    lines.push('');
+    (data.activities||[]).forEach(e=>{
+      const stamp=e.created_at?new Date(e.created_at).toLocaleTimeString():'';
+      const typeLabel=e.activity_type||e.source||'event';
+      const isErr=typeLabel==='error'||typeLabel==='ERROR';
+      const msgCls=isErr?'t-err':'';
+      lines.push(`<span class="t-time">[${stamp}] ${esc(typeLabel)}</span> <span class="${msgCls}">${esc(e.message||'')}</span>`);
+      if(e.command)lines.push(`  <span class="t-cmd">$ ${esc(e.command)}</span>`);
+      if(e.file_path)lines.push(`  <span class="t-file">file: ${esc(e.file_path)}</span>`);
+      lines.push('');
+    });
+    pre.innerHTML=lines.join('\n').trim()||'No activity recorded for this session.';
+    pre.scrollTop=pre.scrollHeight;
+    loadWbHandoff(sessionId, false);
+  }catch(e){pre.textContent='Failed to load terminal: '+e.message;}
+}
+async function refreshWbTerminal(){if(wbSelectedSessionId)loadWbTerminal(wbSelectedSessionId);}
+
+/* ── HANDOFF ── */
+function renderHandoffSessionList(){
+  const list=document.getElementById('wb-handoff-session-list');
+  if(!list)return;
+  const sessions=wbAllSessions||[];
+  if(!sessions.length){list.innerHTML='<div class="handoff-empty">No sessions recorded.</div>';return;}
+  list.innerHTML=sessions.map(s=>`
+    <div class="terminal-session-item${wbSelectedSessionId===s.id?' selected':''}" onclick="loadWbHandoff(${s.id}, true)">
+      <div class="si-agent">${esc(s.agent_name||'Agent '+s.agent_id)} ${sBadge(s.status)}</div>
+      ${s.task_id?`<div class="si-task">Task #${s.task_id}</div>`:''}
+      <div class="si-time">${esc((s.workspace_path||'').split('/').slice(-3).join('/'))}</div>
+    </div>`).join('');
+}
+function renderHandoff(data){
+  const el=document.getElementById('wb-handoff-view');
+  if(!el)return;
+  if(!data||!data.exists){
+    el.innerHTML='<div class="handoff-empty">No STATUS.md found for this session worktree.</div>';
+    return;
+  }
+  const fm=data.frontmatter||{};
+  const outputs=Array.isArray(fm.outputs)?fm.outputs.join('\n'):String(fm.outputs||'');
+  el.innerHTML=`
+    <div class="section-hdr"><h5>STATUS.md</h5><code style="font-size:0.72rem;color:var(--text-muted);">${esc(data.path)}</code></div>
+    <dl class="handoff-kv">
+      <dt>State</dt><dd>${esc(data.state||'-')}</dd>
+      <dt>Ready</dt><dd>${data.handoff_ready?'yes':'no'}</dd>
+      <dt>Current agent</dt><dd>${esc(fm.current_agent||'-')}</dd>
+      <dt>Assigned role</dt><dd>${esc(fm.assigned_role||'-')}</dd>
+      <dt>Task</dt><dd>${esc(fm.task_id||'-')}</dd>
+      <dt>Blockers</dt><dd>${esc(fm.blockers||'none')}</dd>
+    </dl>
+    <h5 style="font-size:0.82rem;margin:0 0 0.4rem;">Summary</h5>
+    <pre class="handoff-pre">${esc(fm.summary||'')}</pre>
+    <h5 style="font-size:0.82rem;margin:0.85rem 0 0.4rem;">Outputs</h5>
+    <pre class="handoff-pre">${esc(outputs)}</pre>
+    <h5 style="font-size:0.82rem;margin:0.85rem 0 0.4rem;">Signals To Next</h5>
+    <pre class="handoff-pre">${esc(fm.signals_to_next||'')}</pre>
+  `;
+}
+async function loadWbHandoff(sessionId, switchTab){
+  wbSelectedSessionId=sessionId;
+  renderTerminalSessionList();
+  renderHandoffSessionList();
+  if(switchTab)switchWbTab('handoff');
+  const el=document.getElementById('wb-handoff-view');
+  if(el)el.innerHTML='<div class="handoff-empty">Loading STATUS.md for session #'+sessionId+'…</div>';
+  try{
+    const data=await apiFetch('/agents/sessions/'+sessionId+'/handoff');
+    renderHandoff(data);
+  }catch(e){
+    if(el)el.innerHTML='<div class="handoff-empty">Failed to load STATUS.md: '+esc(e.message)+'</div>';
+  }
+}
+
+/* ── APPROVALS ── */
+async function loadApprovals(){
+  try{
+    const [pending,recent]=await Promise.all([
+      apiFetch('/agents/approvals?project_id='+PROJECT_ID+'&status_filter=pending&limit=50'),
+      apiFetch('/agents/approvals?project_id='+PROJECT_ID+'&limit=20')
+    ]);
+    renderPendingApprovals(pending);
+    renderResolvedApprovals(recent.filter(a=>a.status!=='pending'));
+    const n=pending.length;
+    document.getElementById('wb-pending-count').textContent=n;
+    const badge=document.getElementById('wb-approvals-badge');
+    badge.style.display=n>0?'':'none';
+    if(n>0)badge.textContent=n;
+  }catch(e){console.error('loadApprovals',e);}
+}
+
+function colorDiff(raw){
+  if(!raw)return'';
+  return raw.split('\n').map(line=>{
+    if(line.startsWith('+++')|| line.startsWith('---'))return`<span class="t-time">${esc(line)}</span>`;
+    if(line.startsWith('+'))return`<span class="diff-add">${esc(line)}</span>`;
+    if(line.startsWith('-'))return`<span class="diff-rm">${esc(line)}</span>`;
+    if(line.startsWith('@@'))return`<span class="diff-hunk">${esc(line)}</span>`;
+    return esc(line);
+  }).join('\n');
+}
+
+function approvalCard(a,withControls){
+  const typeColors={pending:'#f59e0b',approved:'#10b981',rejected:'#ef4444',expired:'#64748b',cancelled:'#64748b'};
+  const color=typeColors[a.status]||'#64748b';
+  const diffHtml=a.diff_content?`<details class="approval-diff-wrap"><summary>Show diff (${a.diff_content.split('\n').length} lines)</summary><pre class="approval-diff">${colorDiff(a.diff_content)}</pre></details>`:'';
+  const controls=withControls?`<div class="approval-controls"><input class="approval-note-input" id="wb-note-${a.id}" type="text" placeholder="Optional note"/><button class="btn btn-success btn-sm" onclick="resolveWbApproval(${a.id},'approved')">Approve</button><button class="btn btn-danger btn-sm" onclick="resolveWbApproval(${a.id},'rejected')">Reject</button></div>`
+    :`<div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.35rem;">${a.response_message?'"'+esc(a.response_message)+'"':''} ${a.resolved_at?ta(a.resolved_at):''}</div>`;
+  return`<div class="approval-card" id="wb-approval-${a.id}">
+    <div class="approval-card-header">
+      <span class="approval-title">${esc(a.title)}</span>
+      <div style="display:flex;gap:0.4rem;align-items:center;">
+        <span style="font-size:0.68rem;padding:0.15rem 0.45rem;border-radius:1rem;background:rgba(var(--accent-primary-rgb),0.1);color:var(--accent-primary);font-weight:700;">${esc(a.approval_type)}</span>
+        <span style="font-size:0.7rem;padding:0.15rem 0.5rem;border-radius:1rem;background:${color}22;color:${color};font-weight:700;">${a.status}</span>
+      </div>
+    </div>
+    <div class="approval-meta">Agent #${a.agent_id}${a.task_id?' · Task #'+a.task_id:''}${a.session_id?' · Session #'+a.session_id:''}</div>
+    <div class="approval-msg">${esc(a.message)}</div>
+    ${a.command?`<pre class="approval-command">${esc(a.command)}</pre>`:''}
+    ${diffHtml}
+    ${controls}
+  </div>`;
+}
+
+function renderPendingApprovals(list){
+  const el=document.getElementById('wb-pending-list');
+  el.innerHTML=list.length?list.map(a=>approvalCard(a,true)).join(''):'<p style="color:var(--text-muted);font-size:0.82rem;">No pending approvals.</p>';
+}
+function renderResolvedApprovals(list){
+  const el=document.getElementById('wb-resolved-list');
+  el.innerHTML=list.length?list.map(a=>approvalCard(a,false)).join(''):'<p style="color:var(--text-muted);font-size:0.82rem;">No resolved approvals yet.</p>';
+}
+async function resolveWbApproval(id,decision){
+  const note=(document.getElementById('wb-note-'+id)||{}).value||'';
+  try{
+    await apiFetch('/agents/approvals/'+id+'/resolve',{method:'PATCH',body:JSON.stringify({decision,response_message:note})});
+    showToast('Approval '+decision,'success');
+    loadApprovals();
+  }catch(e){showToast('Failed: '+e.message,'error');}
+}
+
+/* ── DECISIONS ── */
+async function loadDecisions(){
+  const el=document.getElementById('wb-decisions-list');
+  try{
+    const decisions=await apiFetch('/agents/projects/'+PROJECT_ID+'/decisions?limit=50');
+    if(!decisions||!decisions.length){el.innerHTML='<p style="color:var(--text-muted);font-size:0.82rem;">No decisions recorded yet.</p>';return;}
+    el.innerHTML=decisions.map(d=>`
+      <div class="decision-card">
+        <div class="decision-header">
+          <span class="decision-type-badge">${esc(d.decision_type)}</span>
+          <span class="decision-ts">${d.created_at?new Date(d.created_at).toLocaleString():''}</span>
+        </div>
+        <div class="decision-summary">${esc(d.input_summary)}</div>
+        <div class="decision-rationale">${esc(d.rationale)}</div>
+        <div class="decision-chips">
+          ${(d.affected_task_ids||'').split(',').filter(Boolean).map(t=>`<span class="decision-chip" style="color:var(--accent-primary);">Task #${esc(t.trim())}</span>`).join('')}
+          ${(d.affected_agent_ids||'').split(',').filter(Boolean).map(a=>`<span class="decision-chip" style="color:#f59e0b;">Agent #${esc(a.trim())}</span>`).join('')}
+        </div>
+      </div>`).join('');
+  }catch(e){el.innerHTML='<p style="color:var(--text-muted);font-size:0.82rem;">Failed to load decisions.</p>';}
+}
+
+/* ── WebSocket ── */
+let wbWsBackoff = 1000;
+const WB_WS_MAX_BACKOFF = 30000;
+function connectWbWs(){
+  const proto=location.protocol==='https:'?'wss:':'ws:';
+  wbWs=new WebSocket(proto+'//'+location.host+'/ws/projects/'+PROJECT_ID);
+  wbWs.onopen=function(){ wbWsBackoff=1000; };
+  wbWs.onmessage=function(ev){
+    try{
+      const msg=JSON.parse(ev.data);
+      const et=msg.event_type||msg.type||'';
+      if(et==='agent_status_updated')loadLive();
+      if(et==='agent_approval_requested'){showToast('&#9888; Approval: '+(msg.data&&msg.data.title||'new request'),'warning');loadApprovals();}
+      if(et==='agent_approval_resolved'){showToast('Approval resolved','info');loadApprovals();}
+      if(et==='agent_activity_logged'&&wbSelectedSessionId&&msg.data&&msg.data.session_id===wbSelectedSessionId)refreshWbTerminal();
+    }catch(e){}
+  };
+  wbWs.onclose=()=>{setTimeout(connectWbWs,wbWsBackoff);wbWsBackoff=Math.min(wbWsBackoff*2,WB_WS_MAX_BACKOFF);};
+}
+
+/* ── Init ── */
+document.addEventListener('DOMContentLoaded',function(){
+  loadLive();
+  loadApprovals();
+  loadDecisions();
+  connectWbWs();
+  setInterval(loadLive,5000);
+  // Approvals refresh via WebSocket events only (no polling)
+});
+</script>
+{% endblock %}

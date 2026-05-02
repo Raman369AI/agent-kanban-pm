@@ -7,6 +7,11 @@ watch heartbeats, and escalate to human on blockers.
 
 The server stops deciding. The manager agent decides.
 
+NOTE: The role supervisor (kanban_runtime.role_supervisor) is now the
+preferred orchestrator runtime. This daemon remains for backward
+compatibility. New projects should use `kanban run` which launches the
+role supervisor instead of the manager daemon.
+
 Phase 5.2 additions:
 - Restart loop with exponential backoff
 - PID file tracking
@@ -61,7 +66,9 @@ def get_manager_command() -> tuple:
 
     spec = adapters.get(manager_name)
     if not spec:
-        logger.error(f"Manager adapter '{manager_name}' not found in ~/.kanban/agents/")
+        logger.error(
+            f"Manager adapter '{manager_name}' not found in bundled adapters or ~/.kanban/agents/"
+        )
         sys.exit(1)
 
     cmd_path = shutil.which(spec.invoke.command)

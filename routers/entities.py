@@ -2,14 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
-from datetime import datetime
+from datetime import UTC, datetime
 import json
 import logging
 
 from database import get_db
 from models import Entity, EntityType, AgentConnection, ProtocolType, ConnectionStatus, Role
 from schemas import EntityCreate, EntityResponse
-from auth import get_current_entity, require_owner, is_owner_or_manager
+from auth import get_current_entity, require_owner, require_worker, is_owner_or_manager
 from event_bus import EventType
 
 logger = logging.getLogger(__name__)
@@ -17,17 +17,33 @@ router = APIRouter(prefix="/entities", tags=["entities"])
 
 
 @router.post("/register/agent", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def register_agent(entity: EntityCreate, db: AsyncSession = Depends(get_db)):
-    """Register a new agent. Defaults to WORKER role."""
+async def register_agent(
+    entity: EntityCreate,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    """Register a new agent. Defaults to WORKER role.
+
+    Role is clamped to WORKER unless the caller is MANAGER+.
+    Unauthenticated callers are rejected.
+    """
+    if not current_entity:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required to register agents")
     if entity.entity_type != EntityType.AGENT:
         raise HTTPException(status_code=400, detail="Entity type must be 'agent'")
+
+    # Clamp role: non-managers can only register WORKER or VIEWER agents.
+    requested_role = entity.role or Role.WORKER
+    if requested_role in (Role.OWNER, Role.MANAGER):
+        if not current_entity or not is_owner_or_manager(current_entity):
+            requested_role = Role.WORKER
 
     db_entity = Entity(
         name=entity.name,
         entity_type=EntityType.AGENT,
         email=entity.email,
         skills=entity.skills,
-        role=entity.role or Role.WORKER,
+        role=requested_role,
         is_active=True
     )
     db.add(db_entity)
@@ -43,7 +59,7 @@ async def register_agent(entity: EntityCreate, db: AsyncSession = Depends(get_db
         subscribed_events=json.dumps(all_events),
         subscribed_projects=None,
         status=ConnectionStatus.OFFLINE,
-        last_seen=datetime.utcnow()
+        last_seen=datetime.now(UTC)
     )
     db.add(connection)
     await db.commit()
@@ -71,7 +87,8 @@ async def get_current_entity_info(
 @router.get("", response_model=List[EntityResponse])
 async def list_entities(
     entity_type: Optional[EntityType] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_entity: Entity = Depends(require_worker),
 ):
     """List all entities, optionally filtered by type"""
     query = select(Entity).filter(Entity.is_active == True)

@@ -1,0 +1,13 @@
+include README.md
+include LICENSE
+include AGENTS.md
+include MCP_SETUP.md
+include CHANGELOG.md
+recursive-include kanban_runtime/data *.html *.css *.js *.yaml *.json
+prune agents
+prune mcp_configs
+prune static
+prune templates
+prune tests
+global-exclude __pycache__
+global-exclude *.py[cod]

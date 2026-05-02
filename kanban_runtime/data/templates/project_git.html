@@ -1,0 +1,523 @@
+{% extends "base.html" %}
+
+{% block title %}Git Contributions - {{ project.name }}{% endblock %}
+
+{% block content %}
+<style>
+    :root {
+        --glass-bg: rgba(255, 255, 255, 0.05);
+        --glass-border: rgba(255, 255, 255, 0.1);
+        --purple-main: #7c3aed;
+        --purple-bg: rgba(124, 58, 237, 0.1);
+    }
+
+    .sub-nav {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 2rem;
+        border-bottom: 1px solid var(--glass-border);
+        padding-bottom: 1rem;
+    }
+
+    .nav-pill {
+        padding: 0.5rem 1.25rem;
+        border-radius: 99px;
+        text-decoration: none;
+        color: var(--text-muted);
+        transition: all 0.2s;
+        background: var(--glass-bg);
+    }
+
+    .nav-pill:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--text-main);
+    }
+
+    .nav-pill.active {
+        background: var(--purple-main);
+        color: white;
+    }
+
+    .git-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .project-info h1 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.75rem;
+    }
+
+    .path-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.25rem 0.75rem;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 0.85rem;
+        color: var(--text-muted);
+    }
+
+    .sync-controls {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.5rem;
+    }
+
+    #last-sync-time {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+    }
+
+    .btn-sync {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 1.2rem;
+        background: var(--purple-main);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: opacity 0.2s;
+    }
+
+    .btn-sync:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .stat-card {
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        padding: 1rem;
+        border-radius: 12px;
+        text-align: center;
+        backdrop-filter: blur(10px);
+    }
+
+    .stat-value {
+        display: block;
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+
+    .stat-label {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .filter-tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        overflow-x: auto;
+        padding-bottom: 0.5rem;
+    }
+
+    .filter-btn {
+        padding: 0.4rem 1rem;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        border-radius: 6px;
+        color: var(--text-muted);
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .filter-btn.active {
+        background: rgba(255, 255, 255, 0.15);
+        color: var(--text-main);
+        border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .contribution-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .contribution-card {
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        padding: 1rem;
+        border-radius: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        backdrop-filter: blur(8px);
+        transition: transform 0.1s;
+    }
+
+    .contribution-card:hover {
+        transform: translateY(-2px);
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    .cont-left {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-start;
+    }
+
+    .cont-icon {
+        font-size: 1.25rem;
+        margin-top: 0.2rem;
+    }
+
+    .cont-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .cont-title {
+        font-weight: 600;
+        color: var(--text-main);
+        text-decoration: none;
+    }
+
+    .cont-title:hover {
+        text-decoration: underline;
+    }
+
+    .cont-external-id {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        font-family: monospace;
+    }
+
+    .cont-meta {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+    }
+
+    .cont-right {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.5rem;
+    }
+
+    .badge {
+        padding: 0.25rem 0.6rem;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .date-chip {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        background: rgba(0,0,0,0.2);
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        background: var(--glass-bg);
+        border: 1px dashed var(--glass-border);
+        border-radius: 12px;
+        color: var(--text-muted);
+    }
+
+    .spinner {
+        animation: rotate 2s linear infinite;
+        width: 18px;
+        height: 18px;
+    }
+
+    @keyframes rotate {
+        100% { transform: rotate(360deg); }
+    }
+
+    #toast-container {
+        position: fixed;
+        bottom: 2rem;
+        right: 2rem;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .toast {
+        background: #333;
+        color: white;
+        padding: 0.75rem 1.25rem;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+
+    @media (max-width: 768px) {
+        .contribution-card { flex-direction: column; align-items: flex-start; gap: 1rem; }
+        .cont-right { align-items: flex-start; }
+    }
+</style>
+
+<style>
+  .project-sub-nav{display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap;}
+  .sub-nav-pill{padding:0.4rem 1.1rem;border-radius:99px;text-decoration:none;font-size:0.82rem;font-weight:600;border:1px solid var(--glass-border);color:var(--text-secondary);background:var(--glass-bg);transition:all 0.2s;}
+  .sub-nav-pill:hover{background:rgba(var(--accent-primary-rgb),0.08);color:var(--text-primary);}
+  .sub-nav-pill.active{background:var(--accent-primary);color:#fff;border-color:var(--accent-primary);}
+  .badge-merged{background:rgba(124,58,237,0.12);color:#7c3aed;border:1px solid rgba(124,58,237,0.25);}
+  .badge-committed{background:rgba(var(--accent-primary-rgb),0.1);color:var(--accent-primary);}
+</style>
+<div class="project-sub-nav">
+  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">&#128203; Board</a>
+  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">&#128295; Workbench</a>
+  <a href="#" class="sub-nav-pill active">&#128260; Git</a>
+</div>
+<div class="sub-nav" style="display:none;">
+    <a href="/ui/projects/{{ project.id }}/board" class="nav-pill">Board</a>
+    <a href="/ui/projects/{{ project.id }}/workbench" class="nav-pill">Workbench</a>
+    <a href="#" class="nav-pill active">Git</a>
+</div>
+
+<div class="git-header">
+    <div class="project-info">
+        <h1>{{ project.name }}</h1>
+        <div class="path-chip">{{ project.path }}</div>
+    </div>
+    <div class="sync-controls">
+        <span id="last-sync-time">Loading sync status...</span>
+        <button id="sync-btn" class="btn-sync">
+            <span class="icon">⇄</span>
+            <span class="text">Sync Now</span>
+        </button>
+    </div>
+</div>
+
+<div class="stats-row">
+    <div class="stat-card">
+        <span class="stat-value" id="stat-open-prs">0</span>
+        <span class="stat-label">Open PRs</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-value" id="stat-merged-prs">0</span>
+        <span class="stat-label">Merged PRs</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-value" id="stat-open-issues">0</span>
+        <span class="stat-label">Open Issues</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-value" id="stat-commits">0</span>
+        <span class="stat-label">Commits</span>
+    </div>
+</div>
+
+<div class="filter-tabs">
+    <button class="filter-btn active" data-filter="all">All</button>
+    <button class="filter-btn" data-filter="pull_request">Pull Requests</button>
+    <button class="filter-btn" data-filter="issue">Issues</button>
+    <button class="filter-btn" data-filter="commit">Commits</button>
+</div>
+
+<div id="contribution-container" class="contribution-list">
+    <div class="empty-state">Fetching contributions...</div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+    const PROJECT_ID = {{ project.id }};
+    const CURRENT_ENTITY_ID = {{ current_entity.id if current_entity else 'null' }};
+    
+    let allContributions = [];
+    let currentFilter = 'all';
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function timeAgo(dateString) {
+        const date = new Date(dateString);
+        const now = new Date();
+        const seconds = Math.floor((now - date) / 1000);
+        
+        if (seconds < 60) return 'Just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        return `${days}d ago`;
+    }
+
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
+    async function fetchContributions() {
+        try {
+            const response = await fetch(`/agents/projects/${PROJECT_ID}/contributions?limit=200`);
+            allContributions = await response.json();
+            updateStats();
+            renderContributions();
+            updateLastSyncTime();
+        } catch (error) {
+            console.error('Error fetching contributions:', error);
+            document.getElementById('contribution-container').innerHTML = 
+                '<div class="empty-state">Error loading contributions. Please try again later.</div>';
+        }
+    }
+
+    function updateStats() {
+        const stats = {
+            open_prs: allContributions.filter(c => c.contribution_type === 'pull_request' && c.status === 'open').length,
+            merged_prs: allContributions.filter(c => c.contribution_type === 'pull_request' && c.status === 'merged').length,
+            open_issues: allContributions.filter(c => c.contribution_type === 'issue' && c.status === 'open').length,
+            commits: allContributions.filter(c => c.contribution_type === 'commit').length
+        };
+
+        document.getElementById('stat-open-prs').textContent = stats.open_prs;
+        document.getElementById('stat-merged-prs').textContent = stats.merged_prs;
+        document.getElementById('stat-open-issues').textContent = stats.open_issues;
+        document.getElementById('stat-commits').textContent = stats.commits;
+    }
+
+    function updateLastSyncTime() {
+        if (allContributions.length === 0) {
+            document.getElementById('last-sync-time').textContent = 'Never synced';
+            return;
+        }
+        const latest = allContributions.reduce((prev, curr) => 
+            new Date(curr.recorded_at) > new Date(prev.recorded_at) ? curr : prev
+        );
+        document.getElementById('last-sync-time').textContent = `Last synced: ${timeAgo(latest.recorded_at)}`;
+    }
+
+    function renderContributions() {
+        const container = document.getElementById('contribution-container');
+        const filtered = currentFilter === 'all' 
+            ? allContributions 
+            : allContributions.filter(c => c.contribution_type === currentFilter);
+
+        if (filtered.length === 0) {
+            container.innerHTML = `<div class="empty-state">No ${currentFilter === 'all' ? '' : currentFilter.replace('_', ' ') + 's'} synced yet. Click Sync Now to pull data from GitHub.</div>`;
+            return;
+        }
+
+        container.innerHTML = filtered.map(item => {
+            const icon = item.contribution_type === 'pull_request' ? '🔀' : (item.contribution_type === 'issue' ? '🐛' : '📝');
+            const typeLabel = item.contribution_type.replace('_', ' ').toUpperCase();
+            
+            let statusClass = 'badge-pending';
+            if (item.status === 'open') statusClass = 'badge-success';
+            else if (item.status === 'merged') statusClass = 'badge-merged';
+            else if (item.status === 'closed') statusClass = 'badge-blocked';
+            else if (item.status === 'committed') statusClass = 'badge-pending';
+
+            const titleHtml = item.url 
+                ? `<a href="${item.url}" target="_blank" class="cont-title">${escapeHtml(item.title)}</a>`
+                : `<span class="cont-title">${escapeHtml(item.title)}</span>`;
+
+            return `
+                <div class="contribution-card">
+                    <div class="cont-left">
+                        <div class="cont-icon">${icon}</div>
+                        <div class="cont-info">
+                            ${titleHtml}
+                            <div class="cont-external-id">${escapeHtml(item.external_id)}</div>
+                            <div class="cont-meta">${typeLabel} • ${timeAgo(item.recorded_at)}</div>
+                        </div>
+                    </div>
+                    <div class="cont-right">
+                        <span class="badge ${statusClass}">${item.status}</span>
+                        <span class="date-chip">${new Date(item.created_at_external).toLocaleDateString()}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    // Sync Logic
+    document.getElementById('sync-btn').addEventListener('click', async function() {
+        const btn = this;
+        const btnText = btn.querySelector('.text');
+        const btnIcon = btn.querySelector('.icon');
+        
+        btn.disabled = true;
+        btnText.textContent = 'Syncing...';
+        btnIcon.innerHTML = `<svg class="spinner" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="30 60"></circle></svg>`;
+
+        try {
+            const response = await fetch(`/agents/projects/${PROJECT_ID}/contributions/sync/github`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Entity-ID': CURRENT_ENTITY_ID || ''
+                }
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                showToast(`Synced ${data.synced} contributions`, 'success');
+                await fetchContributions();
+            } else {
+                throw new Error(data.detail || 'Sync failed');
+            }
+        } catch (error) {
+            showToast(error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btnText.textContent = 'Sync Now';
+            btnIcon.innerHTML = '⇄';
+        }
+    });
+
+    // Filter Logic
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentFilter = btn.dataset.filter;
+            renderContributions();
+        });
+    });
+
+    // Init
+    fetchContributions();
+    // Refresh interval for timeAgo strings
+    setInterval(updateLastSyncTime, 60000);
+</script>
+{% endblock %}

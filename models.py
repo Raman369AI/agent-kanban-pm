@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table, Enum as SQLEnum
 from sqlalchemy.orm import relationship, declarative_base
 import enum
@@ -52,7 +52,7 @@ class Entity(Base):
     skills = Column(Text, nullable=True)  # Comma-separated skills
     role = Column(SQLEnum(Role), default=Role.WORKER, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     
     # Relationships
     assigned_tasks = relationship("Task", secondary=task_assignments, back_populates="assignees")
@@ -83,7 +83,7 @@ class AgentConnection(Base):
     subscribed_projects = Column(Text)  # JSON array of project IDs, null = all
     status = Column(SQLEnum(ConnectionStatus), default=ConnectionStatus.OFFLINE)
     last_seen = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     entity = relationship("Entity", back_populates="connections")
 
@@ -97,8 +97,8 @@ class Project(Base):
     path = Column(Text, nullable=True)  # Filesystem path for folder-as-project
     creator_id = Column(Integer, ForeignKey('entities.id'))
     approval_status = Column(SQLEnum(ApprovalStatus), default=ApprovalStatus.PENDING)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
     
     # Relationships
     creator = relationship("Entity", back_populates="created_projects")
@@ -114,7 +114,7 @@ class Stage(Base):
     description = Column(Text, nullable=True)
     order = Column(Integer, nullable=False)
     project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     
     # Relationships
     project = relationship("Project", back_populates="stages")
@@ -133,10 +133,11 @@ class Task(Base):
     parent_task_id = Column(Integer, ForeignKey('tasks.id'), nullable=True)
     required_skills = Column(Text, nullable=True)  # Comma-separated skills
     priority = Column(Integer, default=0)
+    sequence_order = Column(Integer, nullable=True)
     created_by = Column(Integer, ForeignKey('entities.id'), nullable=True)
     version = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
     completed_at = Column(DateTime, nullable=True)
     
     # Relationships
@@ -155,7 +156,7 @@ class TaskLog(Base):
     task_id = Column(Integer, ForeignKey('tasks.id', ondelete='CASCADE'))
     message = Column(Text, nullable=False)
     log_type = Column(String(50), default="info")  # info, error, thought, action
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     # Relationships
     task = relationship("Task", back_populates="logs")
@@ -189,6 +190,7 @@ class DecisionType(str, enum.Enum):
     APPROVAL_REQUEST = "approval_request"
     PRIORITY_CHANGE = "priority_change"
     HANDOFF = "handoff"
+    STAGE_POLICY = "stage_policy"
     OTHER = "other"
 
 
@@ -223,7 +225,7 @@ class AgentHeartbeat(Base):
     task_id = Column(Integer, ForeignKey('tasks.id', ondelete='SET NULL'), nullable=True)
     status_type = Column(SQLEnum(AgentStatusType), default=AgentStatusType.IDLE, nullable=False)
     message = Column(Text, nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     agent = relationship("Entity")
     task = relationship("Task")
@@ -242,9 +244,9 @@ class AgentSession(Base):
     command = Column(Text, nullable=True)
     model = Column(String(255), nullable=True)
     mode = Column(String(50), nullable=True)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=lambda: datetime.now(UTC))
     ended_at = Column(DateTime, nullable=True)
-    last_seen_at = Column(DateTime, default=datetime.utcnow)
+    last_seen_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     agent = relationship("Entity")
     project = relationship("Project")
@@ -262,7 +264,7 @@ class ProjectWorkspace(Base):
     is_primary = Column(Boolean, default=False, nullable=False)
     allowed_patterns = Column(Text, nullable=True)
     blocked_patterns = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     project = relationship("Project")
 
@@ -279,7 +281,7 @@ class OrchestrationDecision(Base):
     rationale = Column(Text, nullable=False)
     affected_task_ids = Column(Text, nullable=True)
     affected_agent_ids = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     project = relationship("Project")
     manager_agent = relationship("Entity")
@@ -295,7 +297,7 @@ class TaskLease(Base):
     session_id = Column(Integer, ForeignKey('agent_sessions.id', ondelete='SET NULL'), nullable=True, index=True)
     status = Column(SQLEnum(LeaseStatus), default=LeaseStatus.ACTIVE, nullable=False)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     released_at = Column(DateTime, nullable=True)
 
     task = relationship("Task")
@@ -314,7 +316,7 @@ class ActivitySummary(Base):
     summary = Column(Text, nullable=False)
     from_activity_id = Column(Integer, ForeignKey('agent_activities.id', ondelete='SET NULL'), nullable=True)
     to_activity_id = Column(Integer, ForeignKey('agent_activities.id', ondelete='SET NULL'), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     project = relationship("Project")
     task = relationship("Task")
@@ -334,8 +336,8 @@ class AgentCheckpoint(Base):
     summary = Column(Text, nullable=False)
     terminal_tail = Column(Text, nullable=True)
     payload_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     agent = relationship("Entity")
     project = relationship("Project")
@@ -359,7 +361,7 @@ class AgentActivity(Base):
     workspace_path = Column(Text, nullable=True)
     file_path = Column(Text, nullable=True)
     command = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     agent = relationship("Entity")
     session = relationship("AgentSession")
@@ -382,7 +384,7 @@ class UserContribution(Base):
     status = Column(String(50), nullable=True)
     created_at_external = Column(DateTime, nullable=True)
     updated_at_external = Column(DateTime, nullable=True)
-    recorded_at = Column(DateTime, default=datetime.utcnow)
+    recorded_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     project = relationship("Project")
     entity = relationship("Entity")
@@ -397,7 +399,8 @@ class PendingEvent(Base):
     event_type = Column(String(100), nullable=False)
     payload = Column(Text, nullable=False)  # JSON
     project_id = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    consumed_at = Column(DateTime, nullable=True, default=None)  # Soft-delete: set on read
 
 
 class DiffReviewStatus(str, enum.Enum):
@@ -446,7 +449,8 @@ class AgentApproval(Base):
     diff_content = Column(Text, nullable=True)
     payload_json = Column(Text, nullable=True)
     status = Column(SQLEnum(AgentApprovalStatus), default=AgentApprovalStatus.PENDING, nullable=False, index=True)
-    requested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    update_version = Column(Integer, default=0, nullable=False)
+    requested_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
     resolved_at = Column(DateTime, nullable=True)
     resolved_by_entity_id = Column(Integer, ForeignKey('entities.id', ondelete='SET NULL'), nullable=True)
     response_message = Column(Text, nullable=True)
@@ -473,13 +477,42 @@ class DiffReview(Base):
     status = Column(SQLEnum(DiffReviewStatus), default=DiffReviewStatus.PENDING, nullable=False)
     review_notes = Column(Text, nullable=True)
     is_critical = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     reviewed_at = Column(DateTime, nullable=True)
 
     project = relationship("Project")
     task = relationship("Task")
     reviewer = relationship("Entity", foreign_keys=[reviewer_id])
     requester = relationship("Entity", foreign_keys=[requester_id])
+
+
+class ReviewMode(str, enum.Enum):
+    NONE = "none"
+    AUTO = "auto"
+    HUMAN = "human"
+    AUTO_THEN_HUMAN_FOR_CRITICAL = "auto_then_human_for_critical"
+
+
+class StagePolicy(Base):
+    """Per-project, per-stage policy that declares expected roles, required outputs,
+    and review behaviour. The orchestrator reads policies to decide assignments
+    and card movement; the server stores and validates only."""
+    __tablename__ = "stage_policies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False, index=True)
+    stage_id = Column(Integer, ForeignKey('stages.id', ondelete='CASCADE'), nullable=False, index=True)
+    stage_key = Column(String(100), nullable=False)
+    on_enter_roles_json = Column(Text, default="[]")
+    required_outputs_json = Column(Text, default="[]")
+    review_mode = Column(SQLEnum(ReviewMode), default=ReviewMode.NONE, nullable=True)
+    allow_parallel = Column(Boolean, default=False, nullable=False)
+    requires_orchestrator_move = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    project = relationship("Project")
+    stage = relationship("Stage")
 
 
 class Comment(Base):
@@ -489,7 +522,7 @@ class Comment(Base):
     content = Column(Text, nullable=False)
     task_id = Column(Integer, ForeignKey('tasks.id', ondelete='CASCADE'))
     author_id = Column(Integer, ForeignKey('entities.id'))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     
     # Relationships
     task = relationship("Task", back_populates="comments")

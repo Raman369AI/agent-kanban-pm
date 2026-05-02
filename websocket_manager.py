@@ -1,7 +1,7 @@
 from fastapi import WebSocket
 from typing import Dict, Set, List
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 class ConnectionManager:
@@ -80,7 +80,7 @@ def create_notification(event_type: str, data: dict, project_id: int = None):
     """Create a standardized notification message"""
     return {
         "event_type": event_type,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "project_id": project_id,
         "data": data
     }

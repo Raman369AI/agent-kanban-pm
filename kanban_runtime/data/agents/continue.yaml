@@ -1,0 +1,28 @@
+name: continue
+display_name: "Continue.dev"
+version: "1.0"
+
+invoke:
+  command: continue
+  mcp_flag: ""
+  info_flag: "--version"
+
+capabilities: [code, completion, chat]
+
+models:
+  - id: default
+    context_window: 128000
+
+protocol: stdio
+
+auth:
+  type: none
+roles: [worker]
+modes: [supervised, auto]
+
+reporting:
+  heartbeat_interval: 30
+
+# Handoff profile (P1-2)
+owns: []
+review_only: false

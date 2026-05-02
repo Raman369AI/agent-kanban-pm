@@ -43,6 +43,8 @@ class RoleAssignment(BaseModel):
     prompt_flag: Optional[str] = None
     chat_stdin: Optional[bool] = None
     chat_timeout_seconds: Optional[int] = None
+    owns: List[str] = Field(default_factory=list)
+    review_only: bool = False
 
     @property
     def is_standalone_cli(self) -> bool:

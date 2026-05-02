@@ -89,21 +89,27 @@ async def resolve_current_entity(
         except ValueError:
             pass
 
-    # 3. Local-first fallback: first active entity for
-    #    (a) safe GET requests, or
-    #    (b) any /ui/ route — these are browser-session bound on localhost
-    #        and represent the local human user. Without this, the kanban
-    #        board UI cannot mutate without the browser injecting headers.
-    if request.method == "GET" or request.url.path.startswith("/ui/"):
-        entity = await _get_default_entity(db)
-        if entity:
-            logger.debug(
-                "Local fallback: resolved entity '%s' (id=%s) for %s %s.",
-                entity.name, entity.id, request.method, request.url.path
-            )
-        return entity
+    # Local-first fallback is read-only. Mutations must provide explicit
+    # X-Entity-ID so agent and human actions remain attributable.
+    if request.method.upper() != "GET":
+        return None
 
-    return None
+    result = await db.execute(
+        select(Entity)
+        .filter(
+            Entity.is_active == True,
+            Entity.entity_type == EntityType.HUMAN,
+            Entity.role == Role.OWNER,
+        )
+        .order_by(Entity.id.asc()).limit(1)
+    )
+    entity = result.scalar_one_or_none()
+    if entity:
+        logger.debug(
+            "Local OWNER read fallback: resolved entity '%s' (id=%s) for %s %s.",
+            entity.name, entity.id, request.method, request.url.path
+        )
+    return entity
 
 
 async def get_current_entity(
@@ -234,4 +240,3 @@ async def require_task_access(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You can only modify tasks you created or are assigned to."
             )
-

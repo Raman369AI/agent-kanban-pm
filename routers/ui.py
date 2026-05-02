@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 import logging
 import re
@@ -16,25 +16,21 @@ from models import (
     TaskLog, ProjectWorkspace, Role, OrchestrationDecision, DecisionType
 )
 from schemas import ProjectResponse, ChatPlanRequest
-from auth import get_current_entity, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
+from auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
 from event_bus import event_bus, EventType
+from kanban_runtime.handoff_protocol import update_status_file
+from kanban_runtime.paths import templates_dir
 
 logger = logging.getLogger(__name__)
 
 # Initialize templates
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=str(templates_dir()))
 
 router = APIRouter(include_in_schema=False)
 
 
 def _is_noisy_project(project: Project) -> bool:
-    text = f"{project.name or ''} {project.path or ''}".lower()
-    markers = [
-        "test", "phase 6", "visibility", "coordination",
-        "approval queue", "diff review", "reject project",
-        "folder picker smoke", "/tmp/",
-    ]
-    return any(marker in text for marker in markers)
+    return False
 
 
 def _role_to_entity_role(role_name: str) -> Role:
@@ -139,50 +135,51 @@ def _stage_name_matches(stage: Optional[Stage], *names: str) -> bool:
     return normalized in {re.sub(r"[^a-z0-9]+", " ", n.lower()).strip() for n in names}
 
 
-async def _auto_assign_worker_for_todo(
+async def _notify_stage_policy_for_todo(
     task: Task,
     current_entity: Entity,
     db: AsyncSession,
-) -> Optional[Entity]:
-    """Assign the configured worker role only after a human moves an unassigned card to To Do."""
-    if task.assignees or not _stage_name_matches(task.stage, "to do", "todo"):
+) -> Optional[dict]:
+    """Check stage policy for a card moved to To Do and return a policy hint.
+    
+    Does NOT auto-assign. Returns the policy expectations so the UI can
+    display them. The orchestrator or human makes the actual assignment.
+    """
+    if not _stage_name_matches(task.stage, "to do", "todo"):
         return None
 
     try:
-        entity = await _ensure_role_entity("worker", db)
-    except HTTPException as exc:
-        db.add(TaskLog(
-            task_id=task.id,
-            message=f"Auto assignment skipped after To Do move: {exc.detail}",
-            log_type="error",
-        ))
+        from kanban_runtime.stage_policy import get_stage_policy_for_stage, policy_roles, normalize_stage_key
+    except ImportError:
         return None
 
-    if not entity.is_active:
-        db.add(TaskLog(
-            task_id=task.id,
-            message="Auto assignment skipped after To Do move: configured worker CLI is not installed",
-            log_type="error",
-        ))
+    stage = task.stage
+    if not stage:
         return None
 
-    task.assignees.append(entity)
-    task.version += 1
-    db.add(TaskLog(
-        task_id=task.id,
-        message=f"Auto-assigned to worker role agent {entity.name} after manual To Do move by {current_entity.name}",
-        log_type="action",
-    ))
-    db.add(OrchestrationDecision(
-        project_id=task.project_id,
-        manager_agent_id=current_entity.id,
-        decision_type=DecisionType.TASK_ASSIGN,
-        input_summary="Manual card movement to To Do with no existing assignee",
-        rationale=f"Assigned configured worker role agent {entity.name}; execution launcher will start only from To Do.",
-        affected_task_ids=str(task.id),
-        affected_agent_ids=str(entity.id),
-    ))
-    return entity
+    policy = await get_stage_policy_for_stage(db, task.project_id, stage.id)
+    if not policy:
+        return None
+
+    roles = policy_roles(policy)
+    if not roles:
+        return None
+
+    return {
+        "stage_key": policy.stage_key,
+        "expected_roles": roles,
+        "required_outputs": policy_outputs_if_available(policy),
+        "message": f"Stage '{policy.stage_key}' expects roles: {', '.join(roles)}. Orchestrator or human should assign.",
+    }
+
+
+def policy_outputs_if_available(policy) -> list[str]:
+    try:
+        from kanban_runtime.stage_policy import policy_outputs
+        return policy_outputs(policy)
+    except Exception as exc:
+        logger.warning("Could not load policy_outputs: %s", exc)
+        return []
 
 
 def _plan_items_from_chat(text: str) -> list[dict]:
@@ -211,32 +208,32 @@ def _plan_items_from_chat(text: str) -> list[dict]:
     ]
 
 
-def _append_plan_to_agents_md(project: Project, request_text: str, created_tasks: list[Task]) -> Optional[str]:
+def _write_chat_plan_status(project: Project, request_text: str, created_tasks: list[Task]) -> Optional[str]:
     if not project.path:
         return None
     root = Path(project.path).expanduser().resolve()
     if not root.exists() or not root.is_dir():
         return None
-    agents_path = root / "AGENTS.md"
-    now = datetime.utcnow().isoformat(timespec="seconds")
-    lines = [
-        "",
-        f"## Kanban Chat Plan - {now} UTC",
-        "",
-        "Request:",
-        request_text.strip(),
-        "",
-        "Backlog cards:",
-    ]
-    for task in created_tasks:
-        lines.append(f"- #{task.id}: {task.title}")
-    lines.append("")
     try:
-        with agents_path.open("a", encoding="utf-8") as fh:
-            fh.write("\n".join(lines))
-        return str(agents_path)
+        path = update_status_file(root, {
+            "state": "planned",
+            "handoff_ready": True,
+            "project_id": project.id,
+            "task_id": None,
+            "current_agent": "human",
+            "assigned_role": "orchestrator",
+            "summary": f"Chat request decomposed into {len(created_tasks)} backlog card(s).",
+            "outputs": [f"task:{task.id} {task.title}" for task in created_tasks],
+            "signals_to_next": (
+                f"Original request:\n{request_text.strip()}\n\n"
+                "Created backlog cards:\n"
+                + "\n".join(f"- #{task.id}: {task.title}" for task in created_tasks)
+            ),
+            "blockers": "none",
+        })
+        return str(path)
     except OSError as exc:
-        logger.warning("Could not append chat plan to %s: %s", agents_path, exc)
+        logger.warning("Could not write chat plan STATUS.md for %s: %s", root, exc)
         return None
 
 @router.get("/", response_class=HTMLResponse)
@@ -392,9 +389,7 @@ async def ui_move_task(
     body = await request.json()
     new_stage_id = body.get("stage_id")
     new_status = body.get("status", "pending")
-    move_summary = (body.get("summary") or "").strip()
-    if not move_summary:
-        raise HTTPException(status_code=422, detail="A move summary is required so the next agent knows what happened")
+    move_summary = (body.get("summary") or "").strip() or "Manual move"
 
     result = await db.execute(
         select(Task)
@@ -408,6 +403,31 @@ async def ui_move_task(
 
     await require_task_access(task, current_entity, db, require_write=True)
 
+    # Sequence order enforcement
+    if new_status == "in_progress" and task.status != "in_progress":
+        from routers.tasks import _check_predecessor
+        err = await _check_predecessor(task, db)
+        if err:
+            raise HTTPException(status_code=409, detail=err)
+
+    from kanban_runtime.stage_policy import get_stage_policy_for_stage, validate_transition, gather_transition_context
+    transition_warning = None
+    if task.stage_id and new_stage_id and task.stage_id != new_stage_id:
+        from_policy = await get_stage_policy_for_stage(db, task.project_id, task.stage_id)
+        to_policy = await get_stage_policy_for_stage(db, task.project_id, new_stage_id)
+        move_initiator = "human" if current_entity.entity_type == EntityType.HUMAN else current_entity.name
+        ctx = await gather_transition_context(db, task_id, task.project_id)
+        transition_warning = validate_transition(
+            from_policy=from_policy,
+            to_policy=to_policy,
+            move_initiator=move_initiator,
+            has_diff_review=ctx["has_diff_review"],
+            has_required_outputs=True,
+            is_critical=ctx["is_critical"],
+        )
+        if transition_warning and current_entity.entity_type != EntityType.HUMAN:
+            raise HTTPException(status_code=409, detail=transition_warning)
+
     old_stage_id = task.stage_id
     old_stage_name = task.stage.name if task.stage else "Unknown"
     task.stage_id = new_stage_id
@@ -415,9 +435,9 @@ async def ui_move_task(
     new_stage_result = await db.execute(select(Stage).filter(Stage.id == new_stage_id))
     task.stage = new_stage_result.scalar_one_or_none()
     if new_status == "completed" and task.completed_at is None:
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(UTC)
     task.version += 1
-    task.updated_at = datetime.utcnow()
+    task.updated_at = datetime.now(UTC)
 
     db.add(TaskLog(
         task_id=task.id,
@@ -435,7 +455,7 @@ async def ui_move_task(
             f"{move_summary}"
         ),
     ))
-    auto_assigned_entity = await _auto_assign_worker_for_todo(task, current_entity, db)
+    auto_policy_hint = await _notify_stage_policy_for_todo(task, current_entity, db)
 
     await db.commit()
 
@@ -462,20 +482,32 @@ async def ui_move_task(
                 {
                     "task_id": task.id,
                     "entity_id": assignee.id,
-                    "role": "worker" if auto_assigned_entity and assignee.id == auto_assigned_entity.id else None,
-                    "auto_assigned": bool(auto_assigned_entity and assignee.id == auto_assigned_entity.id),
                     "trigger": "manual_todo_move",
                 },
                 project_id=task.project_id,
                 entity_id=current_entity.id,
             )
 
+    if auto_policy_hint:
+        await event_bus.publish(
+            EventType.STAGE_POLICY_CREATED.value,
+            {
+                "task_id": task_id,
+                "stage_key": auto_policy_hint.get("stage_key"),
+                "expected_roles": auto_policy_hint.get("expected_roles", []),
+                "message": auto_policy_hint.get("message", ""),
+            },
+            project_id=task.project_id,
+            entity_id=current_entity.id,
+        )
+
     return {
         "ok": True,
         "task_id": task_id,
         "stage_id": new_stage_id,
         "status": new_status,
-        "auto_assigned_entity_id": auto_assigned_entity.id if auto_assigned_entity else None,
+        "stage_policy_hint": auto_policy_hint,
+        "transition_warning": transition_warning,
     }
 
 
@@ -623,6 +655,7 @@ async def ui_browse_folders(path: Optional[str] = None):
 async def ui_open_workspace(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    current_entity: Entity = Depends(require_owner),
 ):
     """Open a project's workspace folder using the OS native file manager.
 
@@ -773,7 +806,7 @@ async def ui_create_chat_plan(
     db: AsyncSession = Depends(get_db),
     current_entity: Optional[Entity] = Depends(get_current_entity)
 ):
-    """Turn a chat request into backlog cards and append the plan to project AGENTS.md.
+    """Turn a chat request into backlog cards and write the plan to STATUS.md.
 
     Two modes:
       * Regex fallback (browser chat bar) — body = {project_id, message}.
@@ -830,7 +863,7 @@ async def ui_create_chat_plan(
         from_designer = False
 
     created_tasks: list[Task] = []
-    for item in plan_items:
+    for idx, item in enumerate(plan_items):
         task = Task(
             title=item["title"],
             description=item.get("description", ""),
@@ -839,6 +872,7 @@ async def ui_create_chat_plan(
             priority=item.get("priority", 5),
             status=TaskStatus.PENDING,
             created_by=current_entity.id,
+            sequence_order=idx + 1,
         )
         db.add(task)
         created_tasks.append(task)
@@ -863,10 +897,10 @@ async def ui_create_chat_plan(
             log_type="action",
         ))
 
-    agents_path = _append_plan_to_agents_md(project, message, created_tasks)
+    status_path = _write_chat_plan_status(project, message, created_tasks)
     rationale = (
-        "Created backlog cards from chat request and appended the plan "
-        f"to {agents_path or 'AGENTS.md was unavailable'}."
+        "Created backlog cards from chat request and wrote the plan "
+        f"to {status_path or 'STATUS.md was unavailable'}."
     )
     if chat_req.transcript:
         rationale = f"{rationale}\n\n--- transcript ---\n{chat_req.transcript[:8000]}"
@@ -898,7 +932,7 @@ async def ui_create_chat_plan(
         {
             "project_id": project.id,
             "task_ids": [task.id for task in created_tasks],
-            "agents_path": agents_path,
+            "status_path": status_path,
             "from_designer": from_designer,
         },
         project_id=project.id,
@@ -911,16 +945,9 @@ async def ui_create_chat_plan(
             {"id": t.id, "title": t.title, "priority": t.priority}
             for t in created_tasks
         ],
-        "agents_path": agents_path,
+        "status_path": status_path,
         "from_designer": from_designer,
     }
-
-    return {
-        "ok": True,
-        "tasks": [{"id": task.id, "title": task.title} for task in created_tasks],
-        "agents_path": agents_path,
-    }
-
 
 @router.patch("/ui/tasks/{task_id}/edit")
 async def ui_edit_task(
@@ -944,15 +971,48 @@ async def ui_edit_task(
 
     await require_task_access(task, current_entity, db, require_write=True)
 
+    # Stage policy transition validation for status changes (P0-3)
+    new_status = body.get("status")
+    if new_status and new_status != task.status:
+        terminal_statuses = ("completed", "review", "done")
+        if new_status in terminal_statuses:
+            try:
+                from kanban_runtime.stage_policy import get_stage_policy_for_stage, validate_transition, gather_transition_context
+                from models import DiffReview, DiffReviewStatus
+                from_policy = await get_stage_policy_for_stage(db, task.project_id, task.stage_id)
+                to_policy = await get_stage_policy_for_stage(db, task.project_id, task.stage_id) if task.stage_id else None
+                if from_policy:
+                    move_initiator = "human" if current_entity.entity_type == EntityType.HUMAN else current_entity.name
+                    ctx = await gather_transition_context(db, task_id, task.project_id)
+                    transition_warning = validate_transition(
+                        from_policy=from_policy,
+                        to_policy=to_policy,
+                        move_initiator=move_initiator,
+                        has_diff_review=ctx["has_diff_review"],
+                        has_required_outputs=True,
+                        is_critical=ctx["is_critical"],
+                    )
+                    if transition_warning and current_entity.entity_type != EntityType.HUMAN:
+                        raise HTTPException(status_code=409, detail=transition_warning)
+            except ImportError:
+                pass
+
+    # Sequence order enforcement
+    if new_status == "in_progress" and task.status != "in_progress":
+        from routers.tasks import _check_predecessor
+        err = await _check_predecessor(task, db)
+        if err:
+            raise HTTPException(status_code=409, detail=err)
+
     for field in ["title", "description", "priority", "required_skills", "status"]:
         if field in body:
             setattr(task, field, body[field])
 
     if body.get("status") == "completed" and task.completed_at is None:
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(UTC)
 
     task.version += 1
-    task.updated_at = datetime.utcnow()
+    task.updated_at = datetime.now(UTC)
     await db.commit()
 
     await event_bus.publish(
@@ -1122,7 +1182,7 @@ async def ui_edit_project(
     project_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_entity: Optional[Entity] = Depends(get_current_entity)
+    current_entity: Entity = Depends(require_manager),
 ):
     """Edit a project from the UI"""
     if not current_entity:
@@ -1147,7 +1207,7 @@ async def ui_edit_project(
         if field in body:
             setattr(project, field, body[field])
 
-    project.updated_at = datetime.utcnow()
+    project.updated_at = datetime.now(UTC)
     await db.commit()
 
     await event_bus.publish(
@@ -1164,7 +1224,7 @@ async def ui_edit_project(
 async def ui_delete_project(
     project_id: int,
     db: AsyncSession = Depends(get_db),
-    current_entity: Optional[Entity] = Depends(get_current_entity)
+    current_entity: Entity = Depends(require_owner),
 ):
     """Delete a project from the UI. Only MANAGER+ can delete projects."""
     if not current_entity:
