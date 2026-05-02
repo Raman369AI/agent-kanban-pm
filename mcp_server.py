@@ -630,9 +630,9 @@ class KanbanMCPServer:
                             "from_stage_id": {"type": "integer"},
                             "to_stage_id": {"type": "integer"},
                             "move_initiator": {"type": "string", "enum": ["orchestrator", "worker", "human", "owner"], "default": "orchestrator"},
-                            "has_required_outputs": {"type": "boolean", "default": true},
-                            "has_diff_review": {"type": "boolean", "default": false},
-                            "is_critical": {"type": "boolean", "default": false}
+                            "has_required_outputs": {"type": "boolean", "default": True},
+                            "has_diff_review": {"type": "boolean", "default": False},
+                            "is_critical": {"type": "boolean", "default": False}
                         },
                         "required": ["project_id", "from_stage_id", "to_stage_id"]
                     }

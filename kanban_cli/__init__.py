@@ -253,7 +253,6 @@ def cmd_run(args):
     supervisor = None
 
     def _shutdown(signum=None, frame=None):
-        nonlocal server_proc, supervisor
         print("\nShutting down...")
         if supervisor:
             supervisor.stop()
