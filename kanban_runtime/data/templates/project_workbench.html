@@ -136,7 +136,7 @@
   <button class="wb-tab" data-tab="terminal" onclick="switchWbTab('terminal')">&#128187; Terminal</button>
   <button class="wb-tab" data-tab="handoff" onclick="switchWbTab('handoff')">&#128221; Handoff</button>
   <button class="wb-tab" data-tab="approvals" onclick="switchWbTab('approvals')">
-    &#128272; Approvals <span class="tab-badge" id="wb-approvals-badge" style="display:none;">0</span>
+    &#9888; Approvals <span class="tab-badge" id="wb-approvals-badge" style="display:none;">0</span>
   </button>
   <button class="wb-tab" data-tab="decisions" onclick="switchWbTab('decisions')">&#128196; Decisions</button>
 </div>
@@ -535,7 +535,7 @@ function connectWbWs(){
       const msg=JSON.parse(ev.data);
       const et=msg.event_type||msg.type||'';
       if(et==='agent_status_updated')loadLive();
-      if(et==='agent_approval_requested'){showToast('&#128272; Approval: '+(msg.data&&msg.data.title||'new request'),'warning');loadApprovals();}
+      if(et==='agent_approval_requested'){showToast('&#9888; Approval: '+(msg.data&&msg.data.title||'new request'),'warning');loadApprovals();}
       if(et==='agent_approval_resolved'){showToast('Approval resolved','info');loadApprovals();}
       if(et==='agent_activity_logged'&&wbSelectedSessionId&&msg.data&&msg.data.session_id===wbSelectedSessionId)refreshWbTerminal();
     }catch(e){}

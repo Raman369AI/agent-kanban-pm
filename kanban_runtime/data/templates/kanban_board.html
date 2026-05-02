@@ -112,7 +112,7 @@
                 {% elif task.priority > 0 %}
                 <span class="badge">&#128204; P{{ task.priority }}</span>
                 {% endif %}
-                <span class="task-approval-badge" id="task-approval-badge-{{ task.id }}" style="display:none;"></span>
+                <span class="task-approval-badge" id="task-approval-badge-{{ task.id }}" style="display:none;cursor:pointer;" onclick="event.stopPropagation();openTaskApprovalPopup({{ task.id }})"></span>
                 <span class="task-session-chip" id="task-session-chip-{{ task.id }}" style="display:none;"></span>
               </div>
               {% if task.assignees %}
@@ -132,7 +132,7 @@
             <div class="task-expansion-panel" id="task-expansion-{{ task.id }}" style="display:none;">
               <div class="expansion-tabs">
                 <button type="button" class="expansion-tab" data-tab="terminal" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'terminal')">&#128187; Terminal</button>
-                <button type="button" class="expansion-tab active" data-tab="approvals" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'approvals')">&#128272; Approvals <span class="badge" id="task-approvals-count-{{ task.id }}" style="display:none;">0</span></button>
+                <button type="button" class="expansion-tab active" data-tab="approvals" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'approvals')">&#9888; Approvals <span class="badge" id="task-approvals-count-{{ task.id }}" style="display:none;">0</span></button>
                 <button type="button" class="expansion-tab" data-tab="activity" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'activity')">&#128196; Activity</button>
                 <button type="button" class="expansion-tab" data-tab="reviews" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'reviews')">&#128270; Reviews</button>
               </div>
@@ -179,11 +179,14 @@
           {% endif %}
         </div>
 
+        {% set normalized_stage_name = stage.name|lower|replace('-', ' ')|replace('_', ' ')|trim %}
+        {% if normalized_stage_name in ['backlog', 'to do'] %}
         <div class="kanban-column-footer-revamp">
           <button class="btn-add-task" onclick="openAddTaskModal({{ stage.id }}, '{{ stage.name }}')">
             <span>+</span> Add Task
           </button>
         </div>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
@@ -197,6 +200,31 @@
         <button class="btn-icon" onclick="closeActivityPopup()">&times;</button>
       </div>
       <div id="activity-popup-body" style="flex:1;overflow-y:auto;padding:1rem 1.25rem;"></div>
+    </div>
+  </div>
+
+  <!-- Approval prompt modal -->
+  <div id="approval-popup-overlay" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeApprovalPopup()">
+    <div class="modal-card approval-popup-card">
+      <div class="modal-header">
+        <div>
+          <p class="approval-popup-kicker">Agent approval request</p>
+          <h3 id="approval-popup-title">Approval needed</h3>
+        </div>
+        <button class="btn-icon" onclick="closeApprovalPopup()">&times;</button>
+      </div>
+      <div id="approval-popup-body" class="approval-popup-body">
+        <p class="text-secondary">Select a pending approval.</p>
+      </div>
+      <div class="approval-popup-note-wrap">
+        <label for="approval-popup-note">Optional note</label>
+        <input type="text" id="approval-popup-note" class="form-input" placeholder="Reason or instruction for the blocked agent">
+      </div>
+      <div class="approval-popup-actions">
+        <button type="button" class="btn" onclick="closeApprovalPopup()">Later</button>
+        <button type="button" class="btn btn-danger" id="approval-popup-reject" onclick="resolveCurrentApproval('rejected')">Reject</button>
+        <button type="button" class="btn btn-success" id="approval-popup-approve" onclick="resolveCurrentApproval('approved')">Approve</button>
+      </div>
     </div>
   </div>
 </div>
@@ -599,6 +627,11 @@
     padding: 0.05rem 0.3rem;
     border-radius: 0.5rem;
     animation: pulse-badge 1.5s infinite;
+    transition: background 0.2s, transform 0.15s;
+  }
+  .task-approval-badge:hover {
+    background: #f59e0b;
+    transform: scale(1.08);
   }
   @keyframes pulse-badge {
     0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0.3); }
@@ -755,6 +788,95 @@
     background: var(--glass-bg); color: var(--text-primary); transition: border-color 0.2s;
   }
   .approval-note:focus { outline: none; border-color: var(--accent-primary); }
+  .approval-popup-card {
+    max-width: 640px;
+    width: min(94vw, 640px);
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .approval-popup-kicker {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    margin: 0 0 0.2rem;
+    text-transform: uppercase;
+  }
+  .approval-popup-body {
+    padding: 1rem 1.25rem;
+    overflow-y: auto;
+    border-top: 1px solid var(--glass-border);
+    border-bottom: 1px solid var(--glass-border);
+  }
+  .approval-popup-message {
+    font-size: 0.92rem;
+    line-height: 1.5;
+    margin-bottom: 0.75rem;
+    white-space: pre-wrap;
+  }
+  .approval-popup-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .approval-popup-field {
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: var(--glass-bg);
+    padding: 0.5rem 0.65rem;
+    min-width: 0;
+  }
+  .approval-popup-field span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    margin-bottom: 0.2rem;
+    text-transform: uppercase;
+  }
+  .approval-popup-field strong {
+    display: block;
+    font-size: 0.82rem;
+    overflow-wrap: anywhere;
+  }
+  .approval-popup-command,
+  .approval-popup-diff {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: var(--radius-sm);
+    color: #e2e8f0;
+    font-family: monospace;
+    font-size: 0.76rem;
+    margin: 0.4rem 0 0;
+    max-height: 260px;
+    overflow: auto;
+    padding: 0.65rem 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .approval-popup-body details { margin-top: 0.75rem; }
+  .approval-popup-body summary {
+    color: var(--accent-primary);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+  .approval-popup-note-wrap { padding: 0.9rem 1.25rem 0; }
+  .approval-popup-note-wrap label {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 700;
+    margin-bottom: 0.35rem;
+  }
+  .approval-popup-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 1rem 1.25rem 1.25rem;
+  }
   .btn-sm { padding: 0.25rem 0.6rem; font-size: 0.75rem; }
   .btn-success { background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: none; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; }
   .btn-success:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16,185,129,0.3); }
@@ -773,6 +895,9 @@
     .board-header-section .d-flex.align-items-center.gap-3 { flex-wrap: wrap; }
     .header-actions { display: grid; grid-template-columns: 1fr; gap: 0.5rem; }
     #project-path-label { max-width: 72vw; }
+    .approval-popup-grid { grid-template-columns: 1fr; }
+    .approval-popup-actions { flex-wrap: wrap; }
+    .approval-popup-actions .btn { flex: 1 1 120px; }
   }
 
 </style>
@@ -1159,7 +1284,7 @@
             if (badge) {
                 if (pending.length > 0) {
                     badge.style.display = '';
-                    badge.textContent = '\u{1F6C2} ' + pending.length;
+                    badge.textContent = '\u26A0 ' + pending.length;
                 } else {
                     badge.style.display = 'none';
                 }
@@ -1197,10 +1322,8 @@
         var statusColors = { pending:'#fbbf24', approved:'#34d399', rejected:'#f87171', cancelled:'#9ca3af', expired:'#9ca3af' };
         var color = statusColors[a.status] || '#9ca3af';
         var time = a.requested_at ? timeAgo(a.requested_at) : '';
-        var cmd = a.command ? '<pre class="approval-command">' + escapeHtml(a.command) + '</pre>' : '';
-        var diff = a.diff_content ? '<details><summary>diff</summary><pre class="approval-diff">' + escapeHtml(a.diff_content.substring(0, 4000)) + '</pre></details>' : '';
         var controls = withControls
-            ? '<div class="approval-controls"><input type="text" id="approval-note-' + a.id + '" placeholder="Optional note" class="approval-note"/><button class="btn btn-success btn-sm" onclick="resolveApproval(' + a.id + ', \'approved\')">Approve</button><button class="btn btn-danger btn-sm" onclick="resolveApproval(' + a.id + ', \'rejected\')">Reject</button></div>'
+            ? '<div class="approval-controls"><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openApprovalPopup(' + a.id + ')">Review request</button></div>'
             : (a.response_message ? '<div class="activity-detail">"' + escapeHtml(a.response_message) + '"</div>' : '');
         return '<div class="insight-item">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">' +
@@ -1208,7 +1331,6 @@
             '<span style="background:' + color + ';color:#111;padding:0.1rem 0.5rem;border-radius:1rem;font-size:0.7rem;font-weight:700;">' + a.status + '</span></div>' +
             '<div class="activity-detail">' + escapeHtml(a.approval_type) + ' · agent #' + a.agent_id + (a.task_id ? ' · task #' + a.task_id : '') + (a.session_id ? ' · session #' + a.session_id : '') + '</div>' +
             '<div style="margin-top:0.35rem;font-size:0.8rem;">' + escapeHtml(a.message) + '</div>' +
-            cmd + diff +
             '<div class="insight-meta">' + time + '</div>' +
             controls + '</div>';
     }
@@ -1257,6 +1379,87 @@
     function closeActivityPopup() {
         var overlay = document.getElementById('activity-popup-overlay');
         if (overlay) overlay.style.display = 'none';
+    }
+
+    // --- Approval popup ---
+    function approvalById(approvalId) {
+        return allPendingApprovals.find(function(a) { return String(a.id || a.approval_id) === String(approvalId); }) || null;
+    }
+    function cacheApprovalFromEvent(data) {
+        if (!data) return null;
+        var approval = {
+            id: data.id || data.approval_id,
+            project_id: data.project_id,
+            task_id: data.task_id,
+            session_id: data.session_id,
+            agent_id: data.agent_id,
+            approval_type: data.approval_type || 'other',
+            title: data.title || data.approval_type || 'Approval needed',
+            message: data.message || '',
+            command: data.command || '',
+            diff_content: data.diff_content || '',
+            status: data.status || 'pending',
+            requested_at: data.requested_at || new Date().toISOString()
+        };
+        if (!approval.id) return null;
+        var existing = approvalById(approval.id);
+        if (existing) Object.assign(existing, approval);
+        else allPendingApprovals.unshift(approval);
+        return approval;
+    }
+    function renderApprovalPopup(a) {
+        var title = document.getElementById('approval-popup-title');
+        var body = document.getElementById('approval-popup-body');
+        var note = document.getElementById('approval-popup-note');
+        if (!title || !body) return;
+        title.textContent = a.title || a.approval_type || 'Approval needed';
+        if (note) note.value = '';
+        var fields = [
+            ['Type', a.approval_type || 'other'],
+            ['Agent', a.agent_id ? '#' + a.agent_id : 'unknown'],
+            ['Task', a.task_id ? '#' + a.task_id : 'project level'],
+            ['Session', a.session_id ? '#' + a.session_id : 'none']
+        ].map(function(pair) {
+            return '<div class="approval-popup-field"><span>' + escapeHtml(pair[0]) + '</span><strong>' + escapeHtml(pair[1]) + '</strong></div>';
+        }).join('');
+        var command = a.command ? '<details open><summary>Requested action</summary><pre class="approval-popup-command">' + escapeHtml(a.command) + '</pre></details>' : '';
+        var diff = a.diff_content ? '<details><summary>Proposed diff (' + String(a.diff_content).split('\n').length + ' lines)</summary><pre class="approval-popup-diff">' + escapeHtml(String(a.diff_content).substring(0, 8000)) + '</pre></details>' : '';
+        body.innerHTML =
+            '<div class="approval-popup-message">' + escapeHtml(a.message || 'The agent is waiting for approval to continue.') + '</div>' +
+            '<div class="approval-popup-grid">' + fields + '</div>' +
+            command + diff;
+    }
+    function openApprovalPopup(approvalId) {
+        var approval = approvalById(approvalId);
+        if (!approval) {
+            fetchAgentApprovals().then(function() {
+                var refreshed = approvalById(approvalId);
+                if (refreshed) openApprovalPopup(approvalId);
+            });
+            return;
+        }
+        currentApprovalId = approval.id || approval.approval_id;
+        renderApprovalPopup(approval);
+        var overlay = document.getElementById('approval-popup-overlay');
+        if (overlay) overlay.style.display = 'flex';
+        var dd = document.getElementById('bell-dropdown');
+        if (dd) dd.style.display = 'none';
+    }
+    function openTaskApprovalPopup(taskId) {
+        var approval = allPendingApprovals.find(function(a) { return String(a.task_id) === String(taskId); });
+        if (approval) openApprovalPopup(approval.id);
+    }
+    function openApprovalPopupFromEvent(data) {
+        var approval = cacheApprovalFromEvent(data);
+        if (approval) openApprovalPopup(approval.id);
+    }
+    function closeApprovalPopup() {
+        var overlay = document.getElementById('approval-popup-overlay');
+        if (overlay) overlay.style.display = 'none';
+    }
+    function resolveCurrentApproval(decision) {
+        if (!currentApprovalId) return;
+        resolveApproval(currentApprovalId, decision);
     }
 
     // --- Task reviews in card ---
@@ -1678,6 +1881,7 @@
 
     // --- Approval Queue ---
     var allPendingApprovals = [];
+    var currentApprovalId = null;
     async function fetchAgentApprovals() {
         try {
             var response = await fetch('/agents/approvals?project_id=' + PROJECT_ID + '&status_filter=pending&limit=50', { headers: {'X-Entity-ID': CURRENT_ENTITY_ID || ''} });
@@ -1711,7 +1915,7 @@
             if (!pending.length) { listEl.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">No pending approvals.</p>'; }
             else {
                 listEl.innerHTML = pending.slice(0, 10).map(function(a) {
-                    return '<div class="insight-item" style="cursor:pointer;" onclick="expandCardAndShowApprovals(' + (a.task_id || 'null') + ')"><div style="display:flex;justify-content:space-between;align-items:center;"><span class="insight-title">' + escapeHtml(a.title || a.approval_type) + '</span><span style="background:#fbbf24;color:#111;padding:0.1rem 0.5rem;border-radius:1rem;font-size:0.7rem;font-weight:700;">pending</span></div><div class="insight-meta">' + escapeHtml(a.approval_type) + ' \u00B7 ' + timeAgo(a.requested_at) + '</div></div>';
+                    return '<div class="insight-item" style="cursor:pointer;border-left:3px solid #fbbf24;" onclick="openApprovalPopup(' + a.id + ')"><div style="display:flex;justify-content:space-between;align-items:center;"><span class="insight-title">' + escapeHtml(a.title || a.approval_type) + '</span><span style="background:#fbbf24;color:#111;padding:0.1rem 0.5rem;border-radius:1rem;font-size:0.7rem;font-weight:700;">pending</span></div><div class="insight-meta">' + escapeHtml(a.approval_type) + ' \u00B7 ' + (a.task_id ? 'Task #' + a.task_id + ' \u00B7 ' : '') + timeAgo(a.requested_at) + '</div></div>';
                 }).join('');
             }
         }
@@ -1723,7 +1927,7 @@
         el.innerHTML = approvals.map(function(a) { return renderApprovalItem(a, withControls); }).join('');
     }
     async function resolveApproval(approvalId, decision) {
-        var note = (document.getElementById('approval-note-' + approvalId) || {}).value || '';
+        var note = (document.getElementById('approval-popup-note') || {}).value || (document.getElementById('approval-note-' + approvalId) || {}).value || '';
         try {
             var resp = await fetch('/agents/approvals/' + approvalId + '/resolve', {
                 method: 'PATCH',
@@ -1732,6 +1936,8 @@
             });
             if (!resp.ok) { var data = await resp.json().catch(function() { return {}; }); throw new Error(data.detail || 'Failed to resolve approval'); }
             showToast('Approval ' + decision, 'success');
+            closeApprovalPopup();
+            currentApprovalId = null;
             fetchAgentApprovals();
             // Refresh in-card approvals for any expanded cards
             document.querySelectorAll('[id^="task-approvals-list-"]').forEach(function(el) {
@@ -1836,23 +2042,25 @@
                 });
             }
             if (msg.event_type === 'agent_approval_requested') {
-                showToast('\u{1F6C2} Approval needed: ' + (msg.data.title || msg.data.approval_type), 'warning');
+                openApprovalPopupFromEvent(msg.data);
+                showToast('Approval needed: ' + (msg.data.title || msg.data.approval_type), 'warning');
                 fetchAgentApprovals();
                 sendOSNotification('Approval Requested', msg.data.title || msg.data.approval_type, msg.data.task_id);
                 // Toast should scroll to the card
                 var toastEl = document.getElementById('toast');
                 if (toastEl) {
                     var linkBtn = document.createElement('button');
-                    linkBtn.textContent = 'Open Card';
+                    linkBtn.textContent = 'Review';
                     linkBtn.className = 'btn btn-sm';
                     linkBtn.style.marginLeft = '0.5rem';
-                    linkBtn.onclick = function() { expandCardAndShowApprovals(msg.data.task_id); };
+                    linkBtn.onclick = function() { openApprovalPopupFromEvent(msg.data); };
                     toastEl.appendChild(linkBtn);
                 }
             } else if (msg.event_type === 'agent_approval_resolved') {
                 showToast('Approval #' + msg.data.approval_id + ' ' + msg.data.status, 'info');
                 fetchAgentApprovals();
                 if (msg.data.task_id) fetchTaskApprovals(msg.data.task_id);
+                if (currentApprovalId && String(currentApprovalId) === String(msg.data.approval_id)) closeApprovalPopup();
             }
         };
         socket.onclose = function() { console.log('WS Connection closed. Retrying in ' + boardWsBackoff + 'ms...'); setTimeout(initWebSocket, boardWsBackoff); boardWsBackoff = Math.min(boardWsBackoff * 2, BOARD_WS_MAX_BACKOFF); };

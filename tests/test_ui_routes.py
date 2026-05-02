@@ -1,5 +1,6 @@
 import sys
 import asyncio
+import re
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -70,10 +71,31 @@ def test_ui_routes_and_board_render():
         body = board_response.text
         assert "board-revamp-shell" in body
         assert "kanban-column-revamp" in body
+        assert 'id="approval-popup-overlay"' in body
+        assert "function openApprovalPopup" in body
+        assert "&#128272; Approvals" not in body
+
+        stage_names = re.findall(r'data-stage-name="([^"]+)"', body)
+        add_task_stages = {
+            name.lower().replace(" ", "").replace("-", "").replace("_", "")
+            for _, name in re.findall(r"openAddTaskModal\((\d+),\s*'([^']+)'\)", body)
+        }
+        assert "backlog" in add_task_stages
+        assert "todo" in add_task_stages
+        assert add_task_stages <= {"backlog", "todo"}
+        for stage_name in stage_names:
+            normalized = stage_name.lower().replace(" ", "").replace("-", "").replace("_", "")
+            if normalized in {"inprogress", "review", "done", "completed"}:
+                assert normalized not in add_task_stages
 
         workbench_response = client.get(f"/ui/projects/{project['id']}/workbench")
         assert workbench_response.status_code == 200
         assert f"{project['name']} — Workbench" in workbench_response.text
+        assert (
+            "&#9888; Approvals" in workbench_response.text
+            or "\u26a0 Approvals" in workbench_response.text
+        )
+        assert "&#128272; Approvals" not in workbench_response.text
 
         git_response = client.get(f"/ui/projects/{project['id']}/git")
         assert git_response.status_code == 200
