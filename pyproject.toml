@@ -42,6 +42,7 @@ Homepage = "https://github.com/Raman369AI/agent-kanban-pm"
 Repository = "https://github.com/Raman369AI/agent-kanban-pm"
 Issues = "https://github.com/Raman369AI/agent-kanban-pm/issues"
 Changelog = "https://github.com/Raman369AI/agent-kanban-pm/blob/main/CHANGELOG.md"
+Architecture = "https://github.com/Raman369AI/agent-kanban-pm/blob/main/ARCHITECTURE.md"
 
 [project.optional-dependencies]
 dev = [

@@ -8,7 +8,7 @@ early and subject to change.
 
 The server stores state and exposes REST/WebSocket/MCP interfaces. The
 selected orchestrator agent owns routing and task decisions. See
-[AGENTS.md](AGENTS.md) for the full architecture.
+[ARCHITECTURE.md](ARCHITECTURE.md) for the system diagram.
 
 ## Requirements
 
@@ -54,6 +54,17 @@ kanban agents discover                            # find local CLIs
 kanban sheet                                      # compact status
 kanban handoff status --workspace .               # inspect worktree state
 ```
+
+## MCP Identity
+
+CLI agents connect through `mcp_server.py` using local process identity:
+
+```bash
+KANBAN_AGENT_NAME=codex KANBAN_AGENT_ROLE=worker python mcp_server.py
+```
+
+`KANBAN_AGENT_NAME` must match an adapter entity loaded from
+`~/.kanban/agents/`.
 
 ## Identity
 
