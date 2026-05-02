@@ -54,6 +54,7 @@ Alpha release candidate for the local-first, role-based agent runtime.
 ### Changed
 - **Package layout** — Runtime templates, static assets, bundled adapters, and MCP configs now live under `kanban_runtime/data/` so the PyPI wheel contains the files needed by `kanban run`.
 - **Release status** — Package version is now `0.3.0a1` and the project is explicitly documented as alpha.
+- **Documentation surface** — Architecture notes are consolidated into a compact diagram-first `ARCHITECTURE.md`.
 - **Approval workbench UX** — Pending approval badges now open a focused review popup, approval controls are centralized, and warning indicators replace the previous lock icon.
 - **Board task creation UX** — Column-level "Add Task" controls are limited to Backlog and To Do stages to avoid adding new work directly into execution/review/done columns.
 - **Project PR sync** — `POST /agents/projects/{project_id}/contributions/sync/github` now also syncs reviews authored by the user (`gh search prs --reviewed-by`) and commits (`gh search commits`). When `gh` is missing it falls back to local `git log --author=...`, and `git config user.name` is used as a final author fallback so commit-only sync still works without `gh`.
@@ -72,6 +73,7 @@ Alpha release candidate for the local-first, role-based agent runtime.
 - **In-memory autopilot state** — `auto_pilot_enabled` global removed from `ui.py`
 - **Legacy manager file** — removed from the local runtime.
 - **Root runtime asset folders** — Root-level `agents/`, `mcp_configs/`, `static/`, and `templates/` were removed after package data was consolidated under `kanban_runtime/data/`.
+- **Development-only Markdown docs** — Repo-root agent/development notes and duplicate setup notes were removed from the package surface.
 
 ### Fixed
 - PyPI build metadata now includes project URLs, package data, and a package-driven version.

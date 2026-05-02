@@ -1,7 +1,6 @@
 include README.md
 include LICENSE
-include AGENTS.md
-include MCP_SETUP.md
+include ARCHITECTURE.md
 include CHANGELOG.md
 recursive-include kanban_runtime/data *.html *.css *.js *.yaml *.json
 prune agents
