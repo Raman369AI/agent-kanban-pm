@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, text
+from sqlalchemy.pool import NullPool
 from models import Base
 import os
 import json
@@ -29,7 +30,11 @@ def _resolve_database_url() -> str:
 DATABASE_URL = _resolve_database_url()
 SQLALCHEMY_ECHO = os.getenv("SQLALCHEMY_ECHO", "").lower() in {"1", "true", "yes", "on"}
 
-engine = create_async_engine(DATABASE_URL, echo=SQLALCHEMY_ECHO, future=True)
+_ENGINE_KWARGS = {"echo": SQLALCHEMY_ECHO, "future": True}
+if DATABASE_URL.startswith("sqlite+aiosqlite:"):
+    _ENGINE_KWARGS["poolclass"] = NullPool
+
+engine = create_async_engine(DATABASE_URL, **_ENGINE_KWARGS)
 async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

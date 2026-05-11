@@ -832,7 +832,7 @@ class KanbanMCPServer:
                 # Filter by assigned_to_me if requested
                 if args.get("assigned_to_me"):
                     assignee_ids = [a.id for a in t.assignees]
-                    if args.get("agent_id") not in assignee_ids:
+                    if self.caller_entity.id not in assignee_ids:
                         continue
 
                 task_list.append({
