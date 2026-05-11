@@ -1,5 +1,4 @@
 import sys
-import asyncio
 import re
 from pathlib import Path
 
@@ -8,14 +7,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi.testclient import TestClient
 
-from database import engine
 from main import app
 import tests_helper
 
 
 def test_ui_routes_and_board_render():
     """Smoke test key UI routes without starting/killing a real server."""
-    asyncio.run(engine.dispose())
     with TestClient(app) as client:
         routes = [
             ("/", 200),

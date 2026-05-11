@@ -82,6 +82,9 @@ Alpha release candidate for the local-first, role-based agent runtime.
 - Activity events now derive `project_id` from `task_id` for per-project filtering
 - Adapter loader now verifies CLI availability via `shutil.which()` and marks missing tools `is_active=False`
 - Heartbeat staleness reaped by background sweeper task
+- Pytest now uses a per-run temporary SQLite database and disposes it after cleanup, avoiding shared `kanban.db` state and stale aiosqlite event-loop warnings.
+- MCP `get_tasks(assigned_to_me=true)` now filters against the authenticated caller instead of an undeclared `agent_id` argument.
+- Kanban board task create/edit/assign and WebSocket task updates refresh the board region without forcing a full page reload.
 
 ---
 

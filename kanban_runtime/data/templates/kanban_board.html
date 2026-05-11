@@ -1728,6 +1728,22 @@
         }).catch(function() { commentsList.innerHTML = '<p class="text-secondary">Could not load details.</p>'; });
         document.getElementById('task-modal').style.display = 'flex';
     };
+    function refreshBoardFromServer() {
+        var board = document.getElementById('board-main-revamp');
+        if (!board) return Promise.resolve(false);
+        return fetch(window.location.href, { headers: { 'X-Requested-With': 'fetch' } })
+            .then(function(r) { if (!r.ok) throw new Error('Refresh failed'); return r.text(); })
+            .then(function(html) {
+                var doc = new DOMParser().parseFromString(html, 'text/html');
+                var freshBoard = doc.getElementById('board-main-revamp');
+                if (!freshBoard) throw new Error('Board markup missing');
+                board.replaceWith(freshBoard);
+                initDragDrop();
+                initExpandedCards();
+                fetchAgentApprovals();
+                return true;
+            });
+    }
     window.submitTaskForm = function() {
         var mode = document.getElementById('task-form-mode').value;
         var title = document.getElementById('task-form-title').value.trim();
@@ -1738,13 +1754,13 @@
             data.stage_id = parseInt(document.getElementById('task-form-stage-id').value);
             fetch('/ui/tasks/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) })
                 .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
-                .then(function() { showToast('Task created!', 'success'); closeModal('task-modal'); location.reload(); })
+                .then(function() { showToast('Task created!', 'success'); closeModal('task-modal'); return refreshBoardFromServer(); })
                 .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
         } else {
             var taskId = document.getElementById('task-form-id').value;
             fetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) })
                 .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
-                .then(function() { showToast('Task updated!', 'success'); closeModal('task-modal'); location.reload(); })
+                .then(function() { showToast('Task updated!', 'success'); closeModal('task-modal'); return refreshBoardFromServer(); })
                 .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
         }
     };
@@ -1777,14 +1793,14 @@
         btn.disabled = true; btn.textContent = '...';
         fetch('/ui/tasks/' + taskId + '/assign-role', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ role: roleName }) })
             .then(function(r) { if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'Failed'); }); return r.json(); })
-            .then(function() { showToast('Assigned to ' + roleName, 'success'); closeModal('assign-modal'); location.reload(); })
+            .then(function() { showToast('Assigned to ' + roleName, 'success'); closeModal('assign-modal'); return refreshBoardFromServer(); })
             .catch(function(err) { showToast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Assign'; });
     };
     window.assignEntity = function(taskId, entityId, btn) {
         btn.disabled = true; btn.textContent = '...';
         fetch('/ui/tasks/' + taskId + '/assign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ entity_id: entityId, action: 'assign' }) })
             .then(function(r) { if (!r.ok) throw new Error('Failed'); })
-            .then(function() { showToast('Assigned!', 'success'); closeModal('assign-modal'); location.reload(); })
+            .then(function() { showToast('Assigned!', 'success'); closeModal('assign-modal'); return refreshBoardFromServer(); })
             .catch(function(err) { showToast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Assign'; });
     };
     window.unassignEntity = function(taskId, entityId, badge) {
@@ -1985,7 +2001,7 @@
             var data = await resp.json();
             input.value = '';
             showToast('Created ' + data.tasks.length + ' backlog cards', 'success');
-            setTimeout(function() { location.reload(); }, 1000);
+            refreshBoardFromServer();
         } catch(err) { showToast('Error: ' + err.message, 'error'); }
     }
 
@@ -2007,12 +2023,12 @@
                 showToast('Task #' + data.task_id + ': ' + statusLabel, 'info');
                 var badge = document.getElementById('status-task-' + data.task_id);
                 if (badge && data.status) { badge.className = 'badge badge-' + data.status; badge.textContent = statusLabel; }
-                if (msg.event_type === 'task_moved' || data.status === 'completed') { setTimeout(function() { location.reload(); }, 2000); }
+                if (msg.event_type === 'task_moved' || data.status === 'completed') { setTimeout(refreshBoardFromServer, 500); }
             } else if (msg.event_type === 'task_commented') {
                 showToast('\u{1F4AC} Task #' + msg.data.task_id + ': ' + msg.data.comment.substring(0, 30) + '...', 'info');
             } else if (msg.event_type === 'task_assigned') {
                 showToast('\u{1F464} Task #' + msg.data.task_id + ' assigned', 'info');
-                setTimeout(function() { location.reload(); }, 1500);
+                setTimeout(refreshBoardFromServer, 500);
             } else if (msg.event_type === 'agent_status_updated') {
                 var data = msg.data;
                 // Update card session indicator
