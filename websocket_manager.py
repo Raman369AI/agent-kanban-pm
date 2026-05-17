@@ -1,7 +1,10 @@
 from fastapi import WebSocket
 from typing import Dict, Set, List
 import json
+import logging
 from datetime import UTC, datetime
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -38,7 +41,7 @@ class ConnectionManager:
         try:
             await websocket.send_json(message)
         except Exception as e:
-            print(f"Error sending personal message: {e}")
+            logger.warning("Error sending personal message: %s", e)
     
     async def broadcast_to_project(self, message: dict, project_id: int):
         """Broadcast a message to all connections watching a project"""
@@ -50,7 +53,7 @@ class ConnectionManager:
             try:
                 await connection.send_json(message)
             except Exception as e:
-                print(f"Error broadcasting to project {project_id}: {e}")
+                logger.warning("Error broadcasting to project %s: %s", project_id, e)
                 disconnected.add(connection)
         
         # Clean up disconnected connections
@@ -64,7 +67,7 @@ class ConnectionManager:
             try:
                 await connection.send_json(message)
             except Exception as e:
-                print(f"Error broadcasting to all: {e}")
+                logger.warning("Error broadcasting to all: %s", e)
                 disconnected.add(connection)
         
         # Clean up disconnected connections

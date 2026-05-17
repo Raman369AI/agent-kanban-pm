@@ -21,8 +21,8 @@ from event_bus import event_bus, EventType
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["tasks"])
 
-def _actor_id(entity: Optional[Entity]) -> int:
-    return entity.id if entity else 1
+def _actor_id(entity: Optional[Entity]) -> Optional[int]:
+    return entity.id if entity else None
 
 async def _check_predecessor(task: Task, db: AsyncSession) -> Optional[str]:
     """Block start if any earlier ordered sibling is not completed."""

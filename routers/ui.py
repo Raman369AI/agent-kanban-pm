@@ -18,6 +18,7 @@ from models import (
 from schemas import ProjectResponse, ChatPlanRequest
 from auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
 from event_bus import event_bus, EventType
+from kanban_runtime.default_stages import DEFAULT_STAGES
 from kanban_runtime.handoff_protocol import update_status_file
 from kanban_runtime.paths import templates_dir
 
@@ -27,10 +28,6 @@ logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory=str(templates_dir()))
 
 router = APIRouter(include_in_schema=False)
-
-
-def _is_noisy_project(project: Project) -> bool:
-    return False
 
 
 def _role_to_entity_role(role_name: str) -> Role:
@@ -242,7 +239,7 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     projects_result = await db.execute(select(Project))
     visible_projects = [
         p for p in projects_result.scalars().all()
-        if p.approval_status != ApprovalStatus.REJECTED and not _is_noisy_project(p)
+        if p.approval_status != ApprovalStatus.REJECTED
     ]
     total_tasks = await db.execute(select(func.count(Task.id)))
     completed_tasks = await db.execute(select(func.count(Task.id)).where(Task.status == TaskStatus.COMPLETED))
@@ -293,7 +290,7 @@ async def ui_projects(
     if not all:
         projects = [
             p for p in projects
-            if p.approval_status != ApprovalStatus.REJECTED and not _is_noisy_project(p)
+            if p.approval_status != ApprovalStatus.REJECTED
         ]
 
     agents_result = await db.execute(
@@ -1291,18 +1288,11 @@ async def ui_create_project(
             is_primary=True,
         ))
 
-    default_stages = [
-        ("Backlog", "Tasks to be done", 1),
-        ("To Do", "Ready to start", 2),
-        ("In Progress", "Currently being worked on", 3),
-        ("Review", "Awaiting review", 4),
-        ("Done", "Completed tasks", 5),
-    ]
-    for stage_name, stage_desc, order in default_stages:
+    for stage_data in DEFAULT_STAGES:
         stage = Stage(
-            name=stage_name,
-            description=stage_desc,
-            order=order,
+            name=stage_data["name"],
+            description=stage_data["description"],
+            order=stage_data["order"],
             project_id=project.id
         )
         db.add(stage)

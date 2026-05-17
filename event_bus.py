@@ -41,6 +41,7 @@ class EventType(str, Enum):
     PROJECT_UPDATED = "project_updated"
     PROJECT_DELETED = "project_deleted"
     PROJECT_APPROVED = "project_approved"
+    PROJECT_REJECTED = "project_rejected"
 
     # Entity events
     ENTITY_REGISTERED = "entity_registered"

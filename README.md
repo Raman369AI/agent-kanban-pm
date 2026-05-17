@@ -55,6 +55,36 @@ kanban sheet                                      # compact status
 kanban handoff status --workspace .               # inspect worktree state
 ```
 
+## Per-task execution
+
+Each Kanban task that's assigned to an agent runs in its own git worktree
+under `~/.kanban/worktrees/project-{id}/task-{id}-{agent}` on a branch named
+`kanban/task-{id}-{agent}`. The branch is started from the project's detected
+base ref (`origin/HEAD`, then `origin/main`/`origin/master`, then a local
+`main`/`master`).
+
+Before each session starts the launcher:
+
+1. Fetches the base ref (when an `origin` remote exists).
+2. Rebases the task branch onto the base so parallel tasks don't drift from
+   mainline.
+3. Records the result (`rebased onto …`, `skipped (uncommitted changes)`,
+   `aborted (conflicts)`, …) as an `AgentActivity` you can audit from the
+   board.
+
+If the project directory isn't a git worktree, the agent runs in the project
+folder directly with no isolation.
+
+## Auto-approval
+
+Bundled adapters launch their CLI in auto-approval mode by default
+(`claude --permission-mode bypassPermissions`, `gemini --approval-mode yolo`,
+`codex --full-auto`, `aider --yes-always`). Combined with the per-task
+worktree, the blast radius is scoped to that worktree, and risky actions are
+expected to be recorded in `STATUS.md` rather than queued for human approval.
+To roll back to supervised execution, edit the corresponding YAML in
+`kanban_runtime/data/agents/` (or your `~/.kanban/agents/` override).
+
 ## MCP Identity
 
 CLI agents connect through `mcp_server.py` using local process identity:

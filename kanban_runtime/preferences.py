@@ -9,6 +9,7 @@ Legacy `manager` and `workers` keys are auto-migrated to the new shape.
 
 import os
 import re
+import time
 from pathlib import Path
 from typing import List, Optional, Dict
 from enum import Enum
@@ -72,6 +73,18 @@ class AutonomyConfig(BaseModel):
     auto_approve: List[str] = Field(default_factory=lambda: ["task_move", "task_assign", "comment"])
 
 
+class SchedulingConfig(BaseModel):
+    """Conservative defaults for local agent execution.
+
+    The runtime should feel predictable before it feels autonomous: one active
+    implementation task per project, and one active task per agent.
+    """
+    project_parallel_limit: int = 1
+    agent_active_task_limit: int = 1
+    allow_parallel_review: bool = True
+    allow_parallel_implementation: bool = False
+
+
 class ManagerConfig(BaseModel):
     agent: str
     model: str
@@ -84,6 +97,7 @@ class Preferences(BaseModel):
     roles: Optional[RoleConfig] = None
     custom_roles: Dict[str, RoleAssignment] = Field(default_factory=dict)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
+    scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
 
     def get_roles(self) -> RoleConfig:
         if self.roles:
@@ -139,22 +153,48 @@ def validate_role_name(role_name: str) -> str:
     return role_name
 
 
-def load_preferences() -> Optional[Preferences]:
+_cache: Optional["Preferences"] = None
+_cache_ts: float = 0.0
+_cache_mtime: float = 0.0
+_CACHE_TTL: float = 5.0  # seconds
+
+
+def load_preferences() -> Optional["Preferences"]:
+    global _cache, _cache_ts, _cache_mtime
     if not PREFERENCES_PATH.exists():
+        _cache = None
         return None
+    try:
+        current_mtime = PREFERENCES_PATH.stat().st_mtime
+    except OSError:
+        _cache = None
+        return None
+    now = time.monotonic()
+    if _cache is not None and current_mtime == _cache_mtime and (now - _cache_ts) < _CACHE_TTL:
+        return _cache
     try:
         with open(PREFERENCES_PATH, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        return Preferences(**data)
+        _cache = Preferences(**data)
+        _cache_ts = now
+        _cache_mtime = current_mtime
+        return _cache
     except Exception as e:
         logger.error(f"Failed to load preferences: {e}")
         return None
 
 
 def save_preferences(prefs: Preferences):
+    global _cache, _cache_ts, _cache_mtime
     PREFERENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(PREFERENCES_PATH, "w", encoding="utf-8") as f:
         yaml.safe_dump(prefs.model_dump(exclude_none=True), f, sort_keys=False, allow_unicode=True)
+    _cache = prefs
+    _cache_ts = time.monotonic()
+    try:
+        _cache_mtime = PREFERENCES_PATH.stat().st_mtime
+    except OSError:
+        _cache_mtime = 0.0
     logger.info(f"Preferences saved to {PREFERENCES_PATH}")
 
 

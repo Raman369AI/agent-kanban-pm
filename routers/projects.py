@@ -12,6 +12,7 @@ from schemas import (
     ProjectCreate, ProjectUpdate, ProjectResponse, ProjectDetailResponse
 )
 from auth import get_current_entity, require_manager, require_owner, is_owner_or_manager, require_project_approval_for_mutation
+from kanban_runtime.default_stages import DEFAULT_STAGES
 from event_bus import event_bus, EventType
 
 logger = logging.getLogger(__name__)
@@ -51,15 +52,7 @@ async def create_project(
         ))
 
     # Create default stages
-    default_stages = [
-        {"name": "Backlog", "description": "Tasks to be done", "order": 1},
-        {"name": "To Do", "description": "Ready to start", "order": 2},
-        {"name": "In Progress", "description": "Currently being worked on", "order": 3},
-        {"name": "Review", "description": "Awaiting review", "order": 4},
-        {"name": "Done", "description": "Completed tasks", "order": 5}
-    ]
-
-    for stage_data in default_stages:
+    for stage_data in DEFAULT_STAGES:
         stage = Stage(project_id=db_project.id, **stage_data)
         db.add(stage)
 
@@ -252,7 +245,7 @@ async def reject_project(
     logger.info(f"Project rejected: {project.name} by {current_entity.name}")
 
     await event_bus.publish(
-        EventType.PROJECT_APPROVED.value,
+        EventType.PROJECT_REJECTED.value,
         {"project_id": project.id, "name": project.name, "status": "REJECTED"},
         project_id=project.id,
         entity_id=current_entity.id

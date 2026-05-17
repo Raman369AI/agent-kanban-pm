@@ -112,20 +112,15 @@ async def _heartbeat_sweeper():
                     if not active_result.scalars().first():
                         idle_heartbeat.task_id = None
 
+                # Single JOIN query to fetch heartbeats with entity names
                 result = await db.execute(
-                    select(AgentHeartbeat).filter(
-                        AgentHeartbeat.status_type != AgentStatusType.IDLE
-                    ).join(Entity, AgentHeartbeat.agent_id == Entity.id)
+                    select(AgentHeartbeat, Entity.name)
+                    .filter(AgentHeartbeat.status_type != AgentStatusType.IDLE)
+                    .join(Entity, AgentHeartbeat.agent_id == Entity.id)
                 )
-                heartbeats = result.scalars().all()
+                rows = result.all()
 
-                for heartbeat in heartbeats:
-                    entity_result = await db.execute(
-                        select(Entity).filter(Entity.id == heartbeat.agent_id)
-                    )
-                    entity = entity_result.scalar_one_or_none()
-                    agent_name = entity.name if entity else "unknown"
-
+                for heartbeat, agent_name in rows:
                     threshold = adapter_thresholds.get(agent_name, global_default)
                     stale_time = (datetime.now(UTC) - timedelta(seconds=threshold)).replace(tzinfo=None)
 
@@ -192,7 +187,7 @@ async def _pending_event_sweeper(ttl_hours: int = 6, interval_seconds: int = 600
     """
     from datetime import UTC, datetime, timedelta
     from models import PendingEvent
-    from sqlalchemy import or_, and_
+    from sqlalchemy import or_, and_, delete
 
     while True:
         try:
@@ -201,28 +196,22 @@ async def _pending_event_sweeper(ttl_hours: int = 6, interval_seconds: int = 600
             consumed_cutoff = now - timedelta(hours=1)
             unconsumed_cutoff = now - timedelta(hours=ttl_hours)
             async with async_session_maker() as db:
-                result = await db.execute(
-                    select(PendingEvent).filter(
-                        or_(
-                            # Consumed events older than 1 hour
-                            and_(
-                                PendingEvent.consumed_at.isnot(None),
-                                PendingEvent.consumed_at < consumed_cutoff,
-                            ),
-                            # Unconsumed events older than ttl_hours
-                            and_(
-                                PendingEvent.consumed_at.is_(None),
-                                PendingEvent.created_at < unconsumed_cutoff,
-                            ),
-                        )
+                stmt = delete(PendingEvent).where(
+                    or_(
+                        and_(
+                            PendingEvent.consumed_at.isnot(None),
+                            PendingEvent.consumed_at < consumed_cutoff,
+                        ),
+                        and_(
+                            PendingEvent.consumed_at.is_(None),
+                            PendingEvent.created_at < unconsumed_cutoff,
+                        ),
                     )
                 )
-                stale = result.scalars().all()
-                if stale:
-                    for row in stale:
-                        await db.delete(row)
+                result = await db.execute(stmt)
+                if result.rowcount:
                     await db.commit()
-                    logger.info("Purged %d stale PendingEvent rows", len(stale))
+                    logger.info("Purged %d stale PendingEvent rows", result.rowcount)
         except asyncio.CancelledError:
             break
         except Exception as e:

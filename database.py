@@ -188,6 +188,11 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+        if DATABASE_URL.startswith("sqlite"):
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+            await conn.execute(text("PRAGMA busy_timeout=5000"))
+            await conn.execute(text("PRAGMA foreign_keys=ON"))
+
     # Run custom migrations for existing databases
     await _migrate_db_schema()
 

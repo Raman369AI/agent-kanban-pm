@@ -25,7 +25,7 @@ reporting:
   heartbeat_interval: 30
 
 task_command:
-  args: ["--message", "{prompt}"]
+  args: ["--yes-always", "--message", "{prompt}"]
 
 # Handoff profile (P1-2)
 owns: []

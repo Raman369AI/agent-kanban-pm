@@ -13,8 +13,8 @@ from event_bus import event_bus, EventType
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["stages"])
 
-def _actor_id(entity: Optional[Entity]) -> int:
-    return entity.id if entity else 1
+def _actor_id(entity: Optional[Entity]) -> Optional[int]:
+    return entity.id if entity else None
 
 @router.post("/projects/{project_id}/stages", response_model=StageResponse, status_code=status.HTTP_201_CREATED)
 async def create_stage(

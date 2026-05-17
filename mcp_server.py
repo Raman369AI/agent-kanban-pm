@@ -36,6 +36,7 @@ from models import (
 )
 from event_bus import event_bus, EventType
 from auth import is_owner_or_manager
+from kanban_runtime.default_stages import DEFAULT_STAGES
 
 logging.basicConfig(
     level=logging.INFO,
@@ -682,16 +683,8 @@ class KanbanMCPServer:
             await db.refresh(project)
 
             # Create default stages
-            default_stages = [
-                ("Backlog", "Tasks to be done", 1),
-                ("To Do", "Ready to start", 2),
-                ("In Progress", "Currently being worked on", 3),
-                ("Review", "Awaiting review", 4),
-                ("Done", "Completed tasks", 5)
-            ]
-
-            for name, desc, order in default_stages:
-                stage = Stage(name=name, description=desc, order=order, project_id=project.id)
+            for stage_data in DEFAULT_STAGES:
+                stage = Stage(project_id=project.id, **stage_data)
                 db.add(stage)
 
             await db.commit()
