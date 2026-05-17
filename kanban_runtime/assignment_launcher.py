@@ -361,10 +361,11 @@ async def _scheduling_blocker(
         )
 
     review_role = _role_is_review(role_name)
-    if review_role and scheduling.allow_parallel_review:
-        return None
-    if not review_role and scheduling.allow_parallel_implementation:
-        return None
+    review_role = _role_is_review(role_name)
+    if review_role and not scheduling.allow_parallel_review:
+        project_limit = 1
+    elif not review_role and not scheduling.allow_parallel_implementation:
+        project_limit = 1
 
     project_active_result = await db.execute(
         select(AgentSession).filter(
