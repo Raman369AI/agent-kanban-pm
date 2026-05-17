@@ -699,7 +699,7 @@ class KanbanMCPServer:
                 "success": True,
                 "project_id": project.id,
                 "message": f"Project '{project.name}' created successfully",
-                "stages": len(default_stages)
+                "stages": len(DEFAULT_STAGES)
             }
 
     async def _handle_get_projects(self, args: dict) -> list:
