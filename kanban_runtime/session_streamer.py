@@ -45,15 +45,21 @@ from models import (
     ActivitySummary,
     ActivityType,
     ApprovalType,
+    Stage,
     Task,
     TaskLog,
+    TaskStatus,
+    task_assignments,
 )
 from kanban_runtime.assignment_launcher import _tmux_session_name
 from kanban_runtime.handoff_protocol import read_status_file
 from kanban_runtime.prompt_patterns import detect_prompt
-from kanban_runtime.role_supervisor import (
-    tmux_capture_pane,
-    tmux_send_text,
+from kanban_runtime.process_launcher import (
+    runner_available,
+    has_session,
+    kill_session,
+    capture_pane,
+    send_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,19 +81,11 @@ def reset_streamer():
 
 
 def _tmux_available() -> bool:
-    return shutil.which("tmux") is not None
+    return runner_available()
 
 
 def _tmux_has_session(session_name: str) -> bool:
-    try:
-        result = subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
-            capture_output=True, timeout=3,
-        )
-        return result.returncode == 0
-    except Exception as exc:
-        logger.warning("tmux has-session check failed for %s: %s", session_name, exc)
-        return False
+    return has_session(session_name)
 
 
 def _new_text_since_cursor(pane: str, cursor: Optional[str]) -> str:
@@ -253,12 +251,119 @@ def _check_completion(pane: str, workspace_path: Optional[str]) -> Optional[str]
     return fallback
 
 
-async def _finalize_completed_session(session: AgentSession, pane: str, summary: str) -> bool:
-    """Mark the session as DONE and record activity, but do NOT move the task card.
+async def _stage_for_key(db, project_id: int, keys: set[str]) -> Optional[Stage]:
+    from kanban_runtime.stage_policy import normalize_stage_key
 
-    Card movement must be an explicit decision by the orchestrator or human.
-    This only records the activity and session termination.
-    """
+    result = await db.execute(
+        select(Stage)
+        .filter(Stage.project_id == project_id)
+        .order_by(Stage.order)
+    )
+    for stage in result.scalars().all():
+        if normalize_stage_key(stage.name) in keys:
+            return stage
+    return None
+
+
+async def _assigned_role_for_session(session: AgentSession) -> str:
+    try:
+        status_data = read_status_file(session.workspace_path) if session.workspace_path else {}
+        role = status_data.get("assigned_role")
+        if role:
+            return str(role).strip().lower()
+    except Exception:
+        pass
+    return "worker"
+
+
+async def _assign_stage_entry_roles(db, task: Task, stage: Stage, *, skip_agent_id: Optional[int] = None) -> list[dict]:
+    from kanban_runtime.preferences import load_preferences
+    from kanban_runtime.stage_policy import get_stage_policy_for_stage, policy_roles
+    from models import Entity, EntityType
+
+    policy = await get_stage_policy_for_stage(db, task.project_id, stage.id)
+    roles = policy_roles(policy) if policy else []
+    if not roles:
+        return []
+
+    prefs = load_preferences()
+    assignments = prefs.get_role_assignments() if prefs else {}
+    assigned: list[dict] = []
+    for role_name in roles:
+        assignment = assignments.get(role_name)
+        if not assignment or not assignment.agent:
+            continue
+        entity = (await db.execute(
+            select(Entity).filter(
+                Entity.name == assignment.agent,
+                Entity.entity_type == EntityType.AGENT,
+                Entity.is_active == True,
+            )
+        )).scalar_one_or_none()
+        if not entity or entity.id == skip_agent_id:
+            continue
+
+        exists = await db.execute(
+            select(task_assignments.c.task_id).where(
+                task_assignments.c.task_id == task.id,
+                task_assignments.c.entity_id == entity.id,
+            )
+        )
+        if exists.first():
+            assigned.append({"role": role_name, "entity_id": entity.id, "agent": entity.name, "already_assigned": True})
+            continue
+        await db.execute(task_assignments.insert().values(task_id=task.id, entity_id=entity.id))
+        assigned.append({"role": role_name, "entity_id": entity.id, "agent": entity.name, "already_assigned": False})
+    return assigned
+
+
+async def _advance_task_after_session(db, session: AgentSession, task: Task) -> tuple[Optional[dict], list[dict]]:
+    from kanban_runtime.stage_policy import normalize_stage_key
+
+    current_stage = None
+    if task.stage_id:
+        current_stage = (await db.execute(select(Stage).filter(Stage.id == task.stage_id))).scalar_one_or_none()
+    current_key = normalize_stage_key(current_stage.name) if current_stage else ""
+    assigned_role = await _assigned_role_for_session(session)
+
+    target_stage = None
+    target_status = None
+    if current_key in {"to_do", "in_progress"}:
+        target_stage = await _stage_for_key(db, task.project_id, {"review"})
+        target_status = TaskStatus.IN_REVIEW
+    elif current_key == "review" and assigned_role in {"test", "diff_review"}:
+        target_stage = await _stage_for_key(db, task.project_id, {"done"})
+        target_status = TaskStatus.COMPLETED
+
+    if not target_stage or target_stage.id == task.stage_id:
+        return None, []
+
+    old_stage_id = task.stage_id
+    old_stage_name = current_stage.name if current_stage else None
+    task.stage_id = target_stage.id
+    task.stage = target_stage
+    task.status = target_status
+    task.version += 1
+    task.updated_at = datetime.now(UTC)
+    if target_status == TaskStatus.COMPLETED and task.completed_at is None:
+        task.completed_at = datetime.now(UTC)
+
+    assigned = await _assign_stage_entry_roles(db, task, target_stage, skip_agent_id=session.agent_id)
+    return {
+        "task_id": task.id,
+        "title": task.title,
+        "project_id": task.project_id,
+        "from_stage_id": old_stage_id,
+        "to_stage_id": target_stage.id,
+        "from_stage_name": old_stage_name,
+        "to_stage_name": target_stage.name,
+        "status": target_status.value,
+        "assigned_role": assigned_role,
+    }, assigned
+
+
+async def _finalize_completed_session(session: AgentSession, pane: str, summary: str) -> bool:
+    """Mark the session DONE, record handoff, and advance the card to the next collaboration stage."""
     now = datetime.now(UTC)
     async with async_session_maker() as db:
         row = (await db.execute(
@@ -273,6 +378,8 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
         row.status = AgentSessionStatus.DONE
         row.ended_at = now
         row.last_seen_at = now
+
+        transition_event, assigned_stage_roles = await _advance_task_after_session(db, row, task)
 
         pending = (await db.execute(
             select(AgentApproval).filter(
@@ -325,13 +432,55 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
             source="session_streamer",
             message=(
                 f"Session #{session.id} appears complete. "
-                f"Orchestrator or human should decide whether to move the card. "
-                f"Summary: {summary[:500]}"
+                + (
+                    f"Moved task to {transition_event['to_stage_name']}. "
+                    if transition_event else
+                    "No automatic card movement was available. "
+                )
+                + f"Summary: {summary[:500]}"
             ),
             workspace_path=session.workspace_path,
             created_at=now,
         ))
         await db.commit()
+
+    if transition_event:
+        await event_bus.publish(
+            EventType.TASK_MOVED.value,
+            {
+                "task_id": transition_event["task_id"],
+                "title": transition_event["title"],
+                "from_stage_id": transition_event["from_stage_id"],
+                "to_stage_id": transition_event["to_stage_id"],
+                "status": transition_event["status"],
+                "summary": "Agent session completed and handed off",
+            },
+            project_id=transition_event["project_id"],
+            entity_id=session.agent_id,
+        )
+        await event_bus.publish(
+            EventType.TASK_UPDATED.value,
+            {
+                "task_id": transition_event["task_id"],
+                "title": transition_event["title"],
+                "status": transition_event["status"],
+                "stage_id": transition_event["to_stage_id"],
+            },
+            project_id=transition_event["project_id"],
+            entity_id=session.agent_id,
+        )
+        for assignment in assigned_stage_roles:
+            await event_bus.publish(
+                EventType.TASK_ASSIGNED.value,
+                {
+                    "task_id": transition_event["task_id"],
+                    "entity_id": assignment["entity_id"],
+                    "role": assignment["role"],
+                    "trigger": "stage_entry",
+                },
+                project_id=transition_event["project_id"],
+                entity_id=session.agent_id,
+            )
 
     await event_bus.publish(
         EventType.AGENT_STATUS_UPDATED.value,
@@ -341,7 +490,11 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
             "project_id": session.project_id,
             "task_id": session.task_id,
             "status_type": "done",
-            "message": f"Session completed; task #{session.task_id} awaiting orchestrator review",
+            "message": (
+                f"Session completed; task #{session.task_id} advanced to {transition_event['to_stage_name']}"
+                if transition_event else
+                f"Session completed; task #{session.task_id} awaiting review decision"
+            ),
         },
         project_id=session.project_id,
         entity_id=session.agent_id,
@@ -369,6 +522,90 @@ async def _get_latest_session_approval(session_id: int) -> Optional[AgentApprova
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+
+async def _cleanup_worktree_for_session(session_id: int) -> None:
+    try:
+        from kanban_runtime.assignment_launcher import prune_git_worktree
+        from models import Project
+        async with async_session_maker() as db:
+            row = (await db.execute(
+                select(AgentSession).filter(AgentSession.id == session_id)
+            )).scalar_one_or_none()
+            if not row or not row.workspace_path or not row.project_id:
+                return
+            project = (await db.execute(
+                select(Project).filter(Project.id == row.project_id)
+            )).scalar_one_or_none()
+            if not project or not project.path:
+                return
+
+            if row.workspace_path != project.path:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, prune_git_worktree, project.path, row.workspace_path)
+    except Exception as exc:
+        logger.warning("Failed to clean up worktree for session %s: %s", session_id, exc)
+
+
+async def gc_leak_worktrees() -> None:
+    """Scan all projects for registered git worktrees and prune those with no active sessions."""
+    try:
+        from kanban_runtime.assignment_launcher import prune_git_worktree
+        from models import Project
+        from pathlib import Path
+        import shutil
+        import subprocess
+
+        git = shutil.which("git")
+        if not git:
+            return
+
+        async with async_session_maker() as db:
+            projects_result = await db.execute(select(Project))
+            projects = projects_result.scalars().all()
+
+            active_sessions_result = await db.execute(
+                select(AgentSession).filter(
+                    AgentSession.ended_at.is_(None),
+                    AgentSession.workspace_path.is_not(None)
+                )
+            )
+            active_worktree_paths = {
+                Path(s.workspace_path).resolve()
+                for s in active_sessions_result.scalars().all()
+            }
+
+        for project in projects:
+            if not project.path or not Path(project.path).exists():
+                continue
+
+            try:
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        [git, "-C", project.path, "worktree", "list", "--porcelain"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                )
+                if result.returncode != 0:
+                    continue
+
+                for line in result.stdout.splitlines():
+                    if line.startswith("worktree "):
+                        wt_path_str = line.split("worktree ", 1)[1].strip()
+                        wt_path = Path(wt_path_str).resolve()
+                        project_path_resolved = Path(project.path).resolve()
+
+                        if wt_path != project_path_resolved and wt_path not in active_worktree_paths:
+                            logger.info("GC pruning orphaned worktree: %s", wt_path_str)
+                            await loop.run_in_executor(None, prune_git_worktree, project.path, wt_path_str)
+            except Exception as e:
+                logger.warning("Error GC scanning worktrees for project %s: %s", project.path, e)
+    except Exception as exc:
+        logger.warning("Error running gc_leak_worktrees: %s", exc)
 
 
 async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
@@ -399,6 +636,7 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
                     project_id=row.project_id,
                     entity_id=row.agent_id,
                 )
+        await _cleanup_worktree_for_session(session.id)
         _pane_cursor.pop(session.id, None)
         _pending_approvals.pop(session.id, None)
         return
@@ -444,10 +682,12 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
         entity_id=session.agent_id,
     )
 
-    pane = tmux_capture_pane(tmux_session, lines=200)
+    pane = capture_pane(tmux_session, lines=200)
     await _upsert_checkpoint(session, pane, status_type)
     summary = _check_completion(pane, session.workspace_path)
     if summary and await _finalize_completed_session(session, pane, summary):
+        kill_session(tmux_session)
+        await _cleanup_worktree_for_session(session.id)
         _pane_cursor.pop(session.id, None)
         _pending_approvals.pop(session.id, None)
         return
@@ -514,7 +754,7 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
                 reply = response_message.strip() or no_reply
             else:
                 reply = no_reply
-            tmux_send_text(tmux_session, reply)
+            send_text(tmux_session, reply)
             _pending_approvals.pop(session.id, None)
         return
 
@@ -566,12 +806,21 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
 async def session_streamer_loop(poll_seconds: int = 5):
     """Background task: stream pane output of active per-task tmux sessions."""
     if not _tmux_available():
-        logger.info("tmux not available — session streamer disabled")
+        logger.info("no process runner available — session streamer disabled")
         return
+
+    import time
+    last_gc_time = 0.0
 
     while True:
         try:
             await asyncio.sleep(poll_seconds)
+
+            now_time = time.time()
+            if now_time - last_gc_time > 60.0:
+                last_gc_time = now_time
+                await gc_leak_worktrees()
+
             async with async_session_maker() as db:
                 result = await db.execute(
                     select(AgentSession)

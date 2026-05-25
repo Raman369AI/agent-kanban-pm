@@ -19,8 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))          # tests dir
 _TEST_DB_DIR = tempfile.TemporaryDirectory(prefix="agent-kanban-pm-tests-")
 _TEST_DB_PATH = Path(_TEST_DB_DIR.name) / "kanban.db"
 os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_TEST_DB_PATH}")
+os.environ["KANBAN_TESTING"] = "1"
 
 import tests_helper  # noqa: F401  — side-effect: install listeners & fixture
+
 
 
 def pytest_sessionfinish(session, exitstatus):

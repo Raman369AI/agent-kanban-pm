@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Opt-out via env var if a test ever wants to keep its rows.
 _DISABLED = os.environ.get("KANBAN_KEEP_TEST_ENTITIES") == "1"
+os.environ["KANBAN_TESTING"] = "1"
 
 _created_entity_ids: Set[int] = set()
 _created_project_ids: Set[int] = set()

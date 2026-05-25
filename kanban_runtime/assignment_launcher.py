@@ -52,10 +52,10 @@ from kanban_runtime.handoff_protocol import (
 )
 from kanban_runtime.process_launcher import (
     shell_command,
-    start_tmux_session,
-    tmux_available,
-    tmux_has_session,
-    tmux_kill_session,
+    runner_available,
+    has_session,
+    kill_session,
+    start_session,
 )
 from kanban_runtime.preferences import Preferences, load_preferences
 from kanban_runtime.instance import get_tmux_prefix
@@ -72,7 +72,7 @@ def _tmux_session_name(agent_name: str, task_id: int) -> str:
 
 
 def _tmux_available() -> bool:
-    return tmux_available()
+    return runner_available()
 
 
 def _git_worktree_path(project: Project, task: Task, agent: Entity) -> Path:
@@ -223,8 +223,33 @@ def _sync_worktree_with_base(worktree_path: str, base_ref: Optional[str]) -> tup
         return False, f"unexpected error syncing with base: {exc}"
 
 
+def prune_git_worktree(project_path: str, worktree_path: str | Path) -> bool:
+    """Safely remove a git worktree using `git worktree remove --force`."""
+    git = shutil.which("git")
+    if not git:
+        logger.warning("Cannot prune git worktree: git is not installed")
+        return False
+    try:
+        wt_str = str(worktree_path)
+        logger.info("Pruning git worktree at %s (project: %s)", wt_str, project_path)
+        result = subprocess.run(
+            [git, "-C", project_path, "worktree", "remove", "--force", wt_str],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            logger.warning("git worktree remove failed for %s: %s", wt_str, result.stderr.strip())
+            subprocess.run([git, "-C", project_path, "worktree", "prune"], capture_output=True, timeout=10)
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("Exception pruning git worktree %s: %s", worktree_path, exc)
+        return False
+
+
 def _tmux_has_session(session_name: str) -> bool:
-    return tmux_has_session(session_name)
+    return has_session(session_name)
 
 
 def _handoff_context(task: Task) -> str:
@@ -361,7 +386,6 @@ async def _scheduling_blocker(
         )
 
     review_role = _role_is_review(role_name)
-    review_role = _role_is_review(role_name)
     if review_role and not scheduling.allow_parallel_review:
         project_limit = 1
     elif not review_role and not scheduling.allow_parallel_implementation:
@@ -406,7 +430,7 @@ class AssignmentLauncher:
 
     async def launch_for_assignment(self, task_id: int, entity_id: int, assigned_role: Optional[str] = None) -> Optional[int]:
         if not _tmux_available():
-            logger.warning("Cannot auto-start assigned agent: tmux is not installed")
+            logger.warning("Cannot auto-start assigned agent: no process runner available")
             return None
 
         adapters = {a.name: a for a in load_all_adapters()}
@@ -428,10 +452,6 @@ class AssignmentLauncher:
             task = task_result.scalar_one_or_none()
             if not task or task.status == TaskStatus.COMPLETED:
                 return None
-            runnable_stages = {"to do", "todo", "in progress", "in_progress"}
-            if not task.stage or task.stage.name.strip().lower() not in runnable_stages:
-                logger.info("Task %s is assigned but not in a runnable stage; waiting for manual board movement", task.id)
-                return None
 
             agent_result = await db.execute(
                 select(Entity).filter(Entity.id == entity_id, Entity.entity_type == EntityType.AGENT)
@@ -444,6 +464,19 @@ class AssignmentLauncher:
                 (role_name for role_name, assignment in role_assignments.items() if assignment.agent == agent.name),
                 "worker",
             )
+
+            stage_key = task.stage.name.strip().lower() if task.stage else ""
+            runnable_stages = {"to do", "todo", "in progress", "in_progress"}
+            if _role_is_review(matching_role_name):
+                runnable_stages.add("review")
+            if matching_role_name == "git_pr":
+                runnable_stages.update({"done", "completed"})
+            if not task.stage or stage_key not in runnable_stages:
+                logger.info(
+                    "Task %s is assigned to role %s but stage %r is not runnable for that role",
+                    task.id, matching_role_name, task.stage.name if task.stage else None,
+                )
+                return None
 
             project = task.project
             if not project:
@@ -653,15 +686,15 @@ class AssignmentLauncher:
         env["KANBAN_AGENT_ROLE"] = matching_role_name
         env["KANBAN_API_BASE"] = self.api_base
         if _tmux_has_session(session_name):
-            tmux_kill_session(session_name)
-        start_tmux_session(
+            kill_session(session_name)
+        start_session(
             session_name=session_name,
             cwd=workspace_path,
             args=args,
             env=env,
             kill_existing=False,
         )
-        logger.info("Auto-started %s for task #%s in tmux session %s", agent.name, task_id, session_name)
+        logger.info("Auto-started %s for task #%s in session %s", agent.name, task_id, session_name)
         return session_id
 
     async def _mark_task_started(self, db, task: Task, agent: Entity) -> Optional[dict]:
@@ -758,7 +791,7 @@ class AssignmentLauncher:
     async def resume_runnable_assignments(self, workspace_path: Optional[str] = None) -> int:
         """Replay already-assigned runnable tasks after a server/runtime restart."""
         if not _tmux_available():
-            logger.warning("Cannot resume assigned agents: tmux is not installed")
+            logger.warning("Cannot resume assigned agents: no process runner available")
             return 0
 
         await self.assign_orphaned_tasks(workspace_path=workspace_path)

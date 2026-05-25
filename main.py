@@ -1,6 +1,7 @@
 import asyncio
 import getpass
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -340,6 +341,56 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Entity-ID"],
 )
 
+
+@app.middleware("http")
+async def token_auth_middleware(request: Request, call_next):
+    if os.getenv("KANBAN_TESTING") == "1":
+        return await call_next(request)
+
+    path = request.url.path
+
+    # Exempt public, static, and websocket endpoints
+    if path == "/health" or path.startswith("/static") or path.startswith("/ws"):
+        return await call_next(request)
+
+    is_html_route = (path == "/" or path.startswith("/ui"))
+
+    if not is_html_route:
+        # Check header, cookie, or Authorization header
+        token = request.headers.get("x-kanban-token") or request.cookies.get("kanban-token")
+
+        # Check Authorization header (e.g. Bearer <token>)
+        auth_header = request.headers.get("authorization")
+        if not token and auth_header:
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header[7:]
+            else:
+                token = auth_header
+
+        from kanban_runtime.instance import get_auth_token
+        expected_token = get_auth_token()
+        if not token or token != expected_token:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized: Invalid or missing Kanban Auth Token"}
+            )
+
+    response = await call_next(request)
+
+    # Set cookie for HTML pages so browser AJAX calls send it automatically
+    if is_html_route:
+        from kanban_runtime.instance import get_auth_token
+        response.set_cookie(
+            key="kanban-token",
+            value=get_auth_token(),
+            path="/",
+            samesite="lax",
+            httponly=False
+        )
+
+    return response
+
+
 # Include routers
 app.include_router(ui.router)
 app.include_router(auth.router)
@@ -360,4 +411,4 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     _default_port = get_port()
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("KANBAN_PORT", _default_port)))
+    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("KANBAN_PORT", _default_port)))

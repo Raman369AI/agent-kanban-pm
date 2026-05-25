@@ -38,10 +38,12 @@ from kanban_runtime.adapter_loader import (
     AdapterSpec,
 )
 from kanban_runtime.process_launcher import (
-    start_tmux_session,
-    tmux_available as shared_tmux_available,
-    tmux_has_session as shared_tmux_has_session,
-    tmux_kill_session as shared_tmux_kill_session,
+    runner_available,
+    has_session,
+    kill_session,
+    start_session,
+    capture_pane,
+    send_text,
 )
 from kanban_runtime.instance import get_tmux_prefix, get_mcp_config_dir
 
@@ -76,33 +78,13 @@ class ManagedSession:
 
 
 def tmux_capture_pane(session_name: str, lines: int = 50) -> str:
-    """Capture the last N lines from a tmux pane."""
-    try:
-        result = subprocess.run(
-            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", f"-{lines}"],
-            capture_output=True, text=True, timeout=3,
-        )
-        if result.returncode == 0:
-            return result.stdout
-    except Exception as exc:
-        logger.debug(f"tmux capture-pane failed for {session_name}: {exc}")
-    return ""
+    """Capture the last N lines from a session."""
+    return capture_pane(session_name, lines)
 
 
 def tmux_send_text(session_name: str, text: str, press_enter: bool = True) -> None:
-    """Send literal text to a tmux pane, optionally followed by Enter."""
-    try:
-        subprocess.run(
-            ["tmux", "send-keys", "-t", session_name, "-l", text],
-            capture_output=True, timeout=3,
-        )
-        if press_enter:
-            subprocess.run(
-                ["tmux", "send-keys", "-t", session_name, "Enter"],
-                capture_output=True, timeout=3,
-            )
-    except Exception as exc:
-        logger.warning(f"tmux send-keys failed for {session_name}: {exc}")
+    """Send literal text to a session, optionally followed by Enter."""
+    send_text(session_name, text, press_enter)
 
 
 def detect_prompt(pane_text: str) -> Optional[Tuple[str, str, str, str]]:
@@ -125,7 +107,7 @@ def detect_prompt(pane_text: str) -> Optional[Tuple[str, str, str, str]]:
 
 
 def tmux_available() -> bool:
-    return shared_tmux_available()
+    return runner_available()
 
 
 def _tmux_session_prefix():
@@ -137,11 +119,11 @@ def tmux_session_name(role: str) -> str:
 
 
 def tmux_kill(session_name: str) -> bool:
-    return shared_tmux_kill_session(session_name)
+    return kill_session(session_name)
 
 
 def tmux_is_running(session_name: str) -> bool:
-    return shared_tmux_has_session(session_name)
+    return has_session(session_name)
 
 
 def build_env_for_role(
@@ -181,6 +163,18 @@ def build_command_for_role(
     model = assignment.model or (adapter.models[0].id if adapter.models else None)
     if model and adapter.invoke.model_flag:
         args.extend([adapter.invoke.model_flag, model])
+
+    # Include task_command.args for auto-approval flags (e.g. --permission-mode bypassPermissions)
+    if adapter.task_command and adapter.task_command.args:
+        for arg in adapter.task_command.args:
+            # Persistent roles should not receive task prompt/workspace CLI args since they run as background services
+            if "{prompt}" in arg or "{workspace}" in arg:
+                continue
+            clean_arg = arg
+            if clean_arg in ["--print", "-p"]:
+                continue
+            if clean_arg not in args:
+                args.append(clean_arg)
 
     return args
 
@@ -230,7 +224,7 @@ def spawn_role_in_tmux(
         args.extend(["-p", task_prompt])
 
     if tmux_available():
-        start_tmux_session(
+        start_session(
             session_name=session_name,
             cwd=cwd,
             args=args,
@@ -238,18 +232,22 @@ def spawn_role_in_tmux(
             kill_existing=True,
         )
 
-        logger.info(f"Spawned role '{role}' (agent={adapter.name}) in tmux session '{session_name}'")
+        from kanban_runtime.pty_manager import pty_manager
+        proc = pty_manager.get_session_process(session_name)
+
+        logger.info(f"Spawned role '{role}' (agent={adapter.name}) in session '{session_name}'")
         return ManagedSession(
             role=role,
             agent=adapter.name,
             tmux_session=session_name,
+            pid=proc.pid if proc else None,
+            process=proc,
             adapter=adapter,
             last_seen=time.time(),
         )
 
     raise RuntimeError(
-        "tmux is required for headless role supervision because approval "
-        "prompt capture/resume depends on tmux capture-pane/send-keys."
+        "No execution runner available."
     )
 
 
@@ -261,7 +259,6 @@ class RoleSupervisor:
             from kanban_runtime.instance import get_api_base
             self.api_base = get_api_base()
         self.sessions: Dict[str, ManagedSession] = {}
-        self._task_session_cache: Dict[str, ManagedSession] = {}
         self._running = False
 
     def start(self):
@@ -412,6 +409,11 @@ class RoleSupervisor:
         if entity_id is not None:
             req.add_header("X-Entity-ID", str(entity_id))
         try:
+            from kanban_runtime.instance import get_auth_token
+            req.add_header("X-Kanban-Token", get_auth_token())
+        except Exception:
+            pass
+        try:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 payload = resp.read().decode("utf-8")
                 return json.loads(payload) if payload else {}
@@ -452,10 +454,11 @@ class RoleSupervisor:
         session.project_id = record.get("project_id")
 
     def _request_approval(self, session: ManagedSession, prompt_line: str, approval_type: str) -> Optional[int]:
-        if session.project_id is None or session.entity_id is None:
+        if session.entity_id is None:
             return None
+        project_id = session.project_id if session.project_id is not None else 1
         body = {
-            "project_id": session.project_id,
+            "project_id": project_id,
             "session_id": session.agent_session_id,
             "agent_id": session.entity_id,
             "approval_type": approval_type,
@@ -524,109 +527,16 @@ class RoleSupervisor:
             if not detection:
                 session.last_pane_signature = signature
                 continue
-            prompt_line, approval_type, _, _ = detection
-            if session.project_id is None or session.agent_session_id is None:
-                self._refresh_project_binding(session)
-            approval_id = self._request_approval(session, prompt_line, approval_type)
-            if approval_id:
-                session.pending_approval_id = approval_id
-                session.last_pane_signature = signature
+            prompt_line, approval_type, yes_reply, no_reply = detection
 
-        self._poll_task_sessions()
-
-    def _poll_task_sessions(self):
-        """Monitor kanban-task-* tmux sessions for approval prompts."""
-        if not tmux_available():
-            return
-        try:
-            result = subprocess.run(
-                ["tmux", "list-sessions", "-F", "#{session_name}"],
-                capture_output=True, text=True, timeout=5,
-            )
-            session_names = result.stdout.strip().splitlines()
-        except Exception as exc:
-            logger.warning("tmux list-sessions failed: %s", exc)
-            return
-
-        current_prefix = re.escape(_tmux_session_prefix())
-        task_pattern = re.compile(rf"^{current_prefix}-task-(\d+)-(.+)$")
-        for session_name in session_names:
-            m = task_pattern.match(session_name)
-            if not m:
-                continue
-            task_id = int(m.group(1))
-            agent_name = m.group(2)
-
-            cached = self._task_session_cache.get(session_name)
-            if cached is None:
-                entity_id = self._resolve_agent_entity_id(agent_name)
-                if not entity_id:
-                    continue
-                sessions_data = self._api_request(
-                    "GET", f"/agents/sessions?task_id={task_id}&limit=5", entity_id=entity_id
-                )
-                agent_session_id = None
-                project_id = None
-                if isinstance(sessions_data, list):
-                    for s in sessions_data:
-                        if s.get("status") == "active" and s.get("agent_id") == entity_id:
-                            agent_session_id = s.get("id")
-                            project_id = s.get("project_id")
-                            break
-                cached = ManagedSession(
-                    role=f"task-{task_id}",
-                    agent=agent_name,
-                    tmux_session=session_name,
-                    adapter=None,
-                    last_seen=time.time(),
-                )
-                cached.entity_id = entity_id
-                cached.agent_session_id = agent_session_id
-                cached.project_id = project_id
-                self._task_session_cache[session_name] = cached
-
-            session = cached
-            if not tmux_is_running(session_name):
-                self._task_session_cache.pop(session_name, None)
-                continue
-
-            if session.pending_approval_id is not None:
-                if session.entity_id is None:
-                    continue
-                approval = self._fetch_approval(session.pending_approval_id, session.entity_id)
-                if not approval:
-                    continue
-                status_value = approval.get("status")
-                if status_value == "pending":
-                    continue
-                response_message = approval.get("response_message") or ""
-                detection = detect_prompt(tmux_capture_pane(session_name, lines=10))
-                yes_reply = detection[2] if detection else "y"
-                no_reply = detection[3] if detection else "n"
-                if status_value == "approved":
-                    reply = response_message.strip() or yes_reply
-                elif status_value == "rejected":
-                    reply = response_message.strip() or no_reply
-                else:
-                    reply = no_reply
-                tmux_send_text(session_name, reply)
-                logger.info(
-                    "Resumed task session '%s' after approval #%s (decision=%s)",
-                    session_name, approval.get("id"), status_value,
-                )
-                session.pending_approval_id = None
+            # Auto-approve the Claude security disclaimer for role agents
+            if approval_type == "system" and "bypass permissions mode" in prompt_line.lower():
+                tmux_send_text(session.tmux_session, yes_reply)
+                logger.info(f"Auto-approved Claude security disclaimer for role '{role_name}'")
                 session.last_pane_signature = None
                 continue
-
-            pane_text = tmux_capture_pane(session_name, lines=20)
-            signature = pane_text[-400:] if pane_text else None
-            if signature and signature == session.last_pane_signature:
-                continue
-            detection = detect_prompt(pane_text)
-            if not detection:
-                session.last_pane_signature = signature
-                continue
-            prompt_line, approval_type, _, _ = detection
+            if session.project_id is None or session.agent_session_id is None:
+                self._refresh_project_binding(session)
             approval_id = self._request_approval(session, prompt_line, approval_type)
             if approval_id:
                 session.pending_approval_id = approval_id

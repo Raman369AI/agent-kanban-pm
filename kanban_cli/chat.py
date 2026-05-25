@@ -75,6 +75,11 @@ def _api_request(
     if entity_id is not None:
         req.add_header("X-Entity-ID", str(entity_id))
     try:
+        from kanban_runtime.instance import get_auth_token
+        req.add_header("X-Kanban-Token", get_auth_token())
+    except Exception:
+        pass
+    try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = resp.read().decode("utf-8")
             return resp.status, (json.loads(payload) if payload else None), ""

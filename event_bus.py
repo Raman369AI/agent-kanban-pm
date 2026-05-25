@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import async_session_maker
-from models import PendingEvent, AgentConnection, ProtocolType
+from models import PendingEvent, AgentConnection, ProtocolType, ConnectionStatus
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +235,7 @@ class EventBus:
             result = await session.execute(
                 select(AgentConnection).filter(
                     AgentConnection.protocol == ProtocolType.MCP,
-                    AgentConnection.status == "online"
+                    AgentConnection.status == ConnectionStatus.ONLINE
                 )
             )
             connections = result.scalars().all()

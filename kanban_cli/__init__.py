@@ -225,7 +225,7 @@ def cmd_run(args):
     """Start the full local system: server + UI + role supervisor."""
     from kanban_runtime.instance import get_port, get_api_base, get_instance_info
 
-    host = args.host or "0.0.0.0"
+    host = args.host or "127.0.0.1"
     info = get_instance_info(host=host)
     default_port = info["port"]
     default_api_base = info["api_base"]
@@ -686,7 +686,7 @@ def main():
     daemon_parser.set_defaults(func=cmd_daemon)
 
     run_parser = subparsers.add_parser("run", help="Start server + UI + role supervisor")
-    run_parser.add_argument("--host", default="0.0.0.0", help="Server host")
+    run_parser.add_argument("--host", default="127.0.0.1", help="Server host")
     run_parser.add_argument("--port", type=int, default=None, help="Server port (default: auto-detected from worktree)")
     run_parser.add_argument("--api-base", default=None, help="API base URL (default: auto-detected from worktree)")
     run_parser.add_argument("--no-supervisor", action="store_true", help="Skip role supervisor")

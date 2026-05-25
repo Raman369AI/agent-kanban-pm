@@ -27,7 +27,7 @@ from sqlalchemy.orm import selectinload
 from database import async_session_maker
 from models import (
     Project, Task, Entity, Stage, TaskStatus, EntityType,
-    ApprovalStatus, AgentConnection, ProtocolType, PendingEvent, Role,
+    ApprovalStatus, AgentConnection, ProtocolType, ConnectionStatus, PendingEvent, Role,
     Comment, AgentSession, AgentSessionStatus, AgentActivity, ActivityType,
     OrchestrationDecision, DecisionType, TaskLease, LeaseStatus,
     ActivitySummary, UserContribution, ContributionType, ProjectWorkspace,
@@ -35,6 +35,7 @@ from models import (
     AgentApproval, AgentApprovalStatus, ApprovalType
 )
 from event_bus import event_bus, EventType
+from kanban_runtime.task_transitions import apply_task_transition_fields, validate_task_transition
 from auth import is_owner_or_manager
 from kanban_runtime.default_stages import DEFAULT_STAGES
 
@@ -942,45 +943,37 @@ class KanbanMCPServer:
             if not task:
                 return {"error": "Task not found"}
 
-            # Stage policy transition validation (P0-3)
-            old_stage = task.stage_id
-            if stage_id and old_stage and stage_id != old_stage:
-                try:
-                    from kanban_runtime.stage_policy import get_stage_policy_for_stage, validate_transition, gather_transition_context
-                    from_policy = await get_stage_policy_for_stage(db, task.project_id, old_stage)
-                    to_policy = await get_stage_policy_for_stage(db, task.project_id, stage_id)
-                    move_initiator = self.caller_entity.name
-                    ctx = await gather_transition_context(db, task_id, task.project_id)
-                    transition_warning = validate_transition(
-                        from_policy=from_policy,
-                        to_policy=to_policy,
-                        move_initiator=move_initiator,
-                        has_diff_review=ctx["has_diff_review"],
-                        has_required_outputs=True,
-                        is_critical=ctx["is_critical"],
-                    )
-                    if transition_warning:
-                        return {"error": transition_warning, "transition_blocked": True}
-                except ImportError:
-                    pass  # stage_policy not available, skip validation
+            transition_warning = await validate_task_transition(
+                db,
+                task,
+                self.caller_entity,
+                new_stage_id=stage_id,
+                new_status=status,
+            )
+            if transition_warning:
+                return {"error": transition_warning, "transition_blocked": True}
 
-            if stage_id:
-                task.stage_id = stage_id
-            if status:
-                task.status = status
-                if status == "completed" and task.completed_at is None:
-                    task.completed_at = datetime.now(UTC)
-
-            task.updated_at = datetime.now(UTC)
+            transition_state = await apply_task_transition_fields(
+                db,
+                task,
+                stage_id=stage_id,
+                status=status,
+            )
+            task.version += 1
             await db.commit()
 
             await event_bus.publish(
                 EventType.TASK_MOVED.value,
-                {"task_id": task.id, "stage_id": task.stage_id, "status": str(task.status)},
+                {
+                    "task_id": task.id,
+                    "from_stage_id": transition_state.old_stage_id,
+                    "stage_id": task.stage_id,
+                    "status": task.status.value,
+                },
                 project_id=task.project_id
             )
 
-            return {"success": True, "task_id": task_id, "new_stage_id": task.stage_id, "status": str(task.status)}
+            return {"success": True, "task_id": task_id, "new_stage_id": task.stage_id, "status": task.status.value}
 
     async def _handle_assign_task(self, args: dict) -> dict:
         """Assign an entity to a task using ORM and publish event"""
@@ -1111,7 +1104,7 @@ class KanbanMCPServer:
                     entity_id=agent_id,
                     protocol=ProtocolType.MCP,
                     config="{}",
-                    status="online"
+                    status=ConnectionStatus.ONLINE
                 )
                 db.add(conn)
 

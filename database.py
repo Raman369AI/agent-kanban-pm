@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, text
+from sqlalchemy import select, text, event
 from sqlalchemy.pool import NullPool
 from models import Base
 import os
@@ -35,6 +35,18 @@ if DATABASE_URL.startswith("sqlite+aiosqlite:"):
     _ENGINE_KWARGS["poolclass"] = NullPool
 
 engine = create_async_engine(DATABASE_URL, **_ENGINE_KWARGS)
+
+@event.listens_for(engine.sync_engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    try:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=10000")
+        cursor.close()
+    except Exception as e:
+        logger.debug("Failed to set SQLite PRAGMAs: %s", e)
+
 async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
