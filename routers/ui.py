@@ -499,15 +499,27 @@ async def ui_move_task(
 @router.get("/ui/api/settings")
 async def ui_get_settings():
     """Get current app settings. Manager-owned PM: reads from preferences.yaml."""
-    from kanban_runtime.preferences import load_preferences
+    from kanban_runtime.preferences import (
+        load_preferences,
+        get_manager_agent_name,
+        get_manager_mode,
+    )
     prefs = load_preferences()
-    if prefs:
-        return {
-            "manager": prefs.manager.agent,
-            "mode": prefs.manager.mode,
-            "workers": [w.agent for w in prefs.workers]
-        }
-    return {"manager": None, "mode": None, "workers": []}
+    if not prefs:
+        return {"manager": None, "mode": None, "workers": []}
+    # A config may use only the new `roles:` shape, in which case the legacy
+    # `manager`/`workers` blocks are absent. Derive from role assignments
+    # instead of dereferencing prefs.manager unconditionally.
+    manager = prefs.manager.agent if prefs.manager else get_manager_agent_name()
+    mode = prefs.manager.mode if prefs.manager else get_manager_mode()
+    workers = [w.agent for w in prefs.workers]
+    if not workers:
+        workers = sorted({
+            a.agent
+            for role, a in prefs.get_role_assignments().items()
+            if role != "orchestrator"
+        })
+    return {"manager": manager, "mode": mode, "workers": workers}
 
 
 @router.get("/ui/api/entities")
