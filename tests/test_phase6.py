@@ -30,45 +30,48 @@ def test_phase6():
         for a in agents:
             print(f"  - {a['name']}: role={a['role']}, active={a['is_active']}")
 
-        # Find an active agent to use as mock caller
-        active_agent = next((a for a in agents if a["is_active"]), None)
-        assert active_agent, "Need at least one active adapter entity"
-        agent_name = active_agent["name"]
-        print(f"\nUsing active agent '{agent_name}' as mock MCP caller")
+        # The MCP server is an optional component: the `mcp` library may be
+        # absent (e.g. on CI), in which case KanbanMCPServer() raises
+        # RuntimeError rather than ImportError. The identity tests also need an
+        # *active* adapter, which requires the agent's CLI to be installed —
+        # never true on CI. Skip the whole MCP section when mcp is unavailable;
+        # Test 3 below still verifies the REST path.
+        from mcp_server import KanbanMCPServer, MCP_AVAILABLE
 
-        print("\n=== Test 1: MCP server without KANBAN_AGENT_NAME fails ===")
-        # Clear any existing env var
-        for key in ["KANBAN_AGENT_NAME"]:
-            os.environ.pop(key, None)
+        if not MCP_AVAILABLE:
+            print("\nSKIP: MCP library not installed; skipping MCP identity tests")
+        else:
+            # Find an active agent to use as mock caller
+            active_agent = next((a for a in agents if a["is_active"]), None)
+            assert active_agent, "Need at least one active adapter entity"
+            agent_name = active_agent["name"]
+            print(f"\nUsing active agent '{agent_name}' as mock MCP caller")
 
-        try:
-            from mcp_server import KanbanMCPServer
-            # mcp library may not be installed; skip if unavailable
-            server = KanbanMCPServer()
-            print("FAIL: Server should not start without KANBAN_AGENT_NAME")
-            assert False, "Expected RuntimeError"
-        except RuntimeError as e:
-            print(f"PASS: Got expected error: {e}")
-        except ImportError:
-            print("SKIP: MCP library not installed")
+            print("\n=== Test 1: MCP server without KANBAN_AGENT_NAME fails ===")
+            # Clear any existing env var
+            for key in ["KANBAN_AGENT_NAME"]:
+                os.environ.pop(key, None)
 
-        print("\n=== Test 2: MCP server with KANBAN_AGENT_NAME resolves identity ===")
-        os.environ["KANBAN_AGENT_NAME"] = agent_name
-        os.environ["KANBAN_AGENT_ROLE"] = active_agent["role"]
+            try:
+                server = KanbanMCPServer()
+                print("FAIL: Server should not start without KANBAN_AGENT_NAME")
+                assert False, "Expected RuntimeError"
+            except RuntimeError as e:
+                print(f"PASS: Got expected error: {e}")
 
-        try:
-            from mcp_server import KanbanMCPServer
+            print("\n=== Test 2: MCP server with KANBAN_AGENT_NAME resolves identity ===")
+            os.environ["KANBAN_AGENT_NAME"] = agent_name
+            os.environ["KANBAN_AGENT_ROLE"] = active_agent["role"]
+
             server = KanbanMCPServer()
             # Run async auth
             entity = asyncio.run(server._authenticate())
             print(f"PASS: Authenticated as {entity.name} (role={entity.role.value})")
             assert entity.name == agent_name, f"Expected name={agent_name}, got {entity.name}"
-        except ImportError:
-            print("SKIP: MCP library not installed")
 
-        # Cleanup
-        for key in ["KANBAN_AGENT_NAME", "KANBAN_AGENT_ROLE"]:
-            os.environ.pop(key, None)
+            # Cleanup
+            for key in ["KANBAN_AGENT_NAME", "KANBAN_AGENT_ROLE"]:
+                os.environ.pop(key, None)
 
         print("\n=== Test 3: REST endpoints still work with X-Entity-ID ===")
         r = client.post("/projects", json={

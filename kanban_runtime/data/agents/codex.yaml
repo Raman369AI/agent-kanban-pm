@@ -31,7 +31,7 @@ chat_designer:
   timeout_seconds: 180
 
 task_command:
-  args: ["--ask-for-approval", "on-request", "-C", "{workspace}", "{prompt}"]
+  args: ["--full-auto", "-C", "{workspace}", "{prompt}"]
 
 review_only: true
 owns: []

@@ -24,7 +24,7 @@ import httpx
 from event_bus import event_bus, EventType
 from websocket_manager import manager as ws_manager
 from database import async_session_maker
-from models import AgentConnection, ProtocolType
+from models import AgentConnection, ProtocolType, ConnectionStatus
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class WebSocketAdapter:
                 )
                 conn = result.scalar_one_or_none()
                 if conn:
-                    conn.status = "online"
+                    conn.status = ConnectionStatus.ONLINE
                     conn.last_seen = datetime.now(UTC)
                     await session.commit()
         except Exception as e:
@@ -130,7 +130,7 @@ async def handle_event_for_adapters(event: dict):
         # Get all agent connections that should receive this event
         result = await session.execute(
             select(AgentConnection).filter(
-                AgentConnection.status == "online"
+                AgentConnection.status == ConnectionStatus.ONLINE
             )
         )
         connections = result.scalars().all()

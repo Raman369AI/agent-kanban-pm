@@ -349,11 +349,11 @@ class AgentActivity(Base):
     """Append-only activity log for agents."""
     __tablename__ = "agent_activities"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, index=True)
     agent_id = Column(Integer, ForeignKey('entities.id', ondelete='CASCADE'), nullable=False, index=True)
     session_id = Column(Integer, ForeignKey('agent_sessions.id', ondelete='SET NULL'), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=True, index=True)
-    task_id = Column(Integer, ForeignKey('tasks.id', ondelete='SET NULL'), nullable=True)
+    task_id = Column(Integer, ForeignKey('tasks.id', ondelete='SET NULL'), nullable=True, index=True)
     activity_type = Column(SQLEnum(ActivityType), nullable=False)
     source = Column(String(100), nullable=True)
     message = Column(Text, nullable=False)
@@ -400,7 +400,7 @@ class PendingEvent(Base):
     payload = Column(Text, nullable=False)  # JSON
     project_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    consumed_at = Column(DateTime, nullable=True, default=None)  # Soft-delete: set on read
+    consumed_at = Column(DateTime, nullable=True, default=None, index=True)  # Soft-delete: set on read
 
 
 class DiffReviewStatus(str, enum.Enum):

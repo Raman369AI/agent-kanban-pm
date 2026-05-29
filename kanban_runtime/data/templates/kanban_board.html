@@ -5,61 +5,52 @@
 {% block content %}
 <link rel="stylesheet" href="/static/css/kanban_premium.css?v=6">
 
-<div class="project-sub-nav" style="margin-bottom:0.75rem;">
-  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill active">&#128203; Board</a>
-  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">&#128295; Workbench</a>
-  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Git</a>
-</div>
-
-<div class="board-revamp-shell">
-  <section class="board-header-section">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <div class="header-main-content">
+<div class="board-revamp-shell board-simple-shell">
+  <section class="board-header-section board-simple-header">
+    <div class="board-title-row">
+      <div class="board-title-block">
         <div class="d-flex align-items-center gap-2">
           <h2 id="project-title" class="m-0">{{ project.name }}</h2>
-          <button class="btn-icon btn-sm" onclick="editProject()" title="Edit project name/description">&#9998;</button>
-          <div id="project-managed-badge-compact" style="margin-left:0.5rem;">
-             {% if project.creator and project.creator.entity_type.value == 'agent' %}
-                <span class="badge badge-agent" title="Managed by {{ project.creator.name }}">&#129302;</span>
-             {% endif %}
-          </div>
+          <button class="btn-icon btn-sm" onclick="editProject()" title="Edit project">&#9998;</button>
+          {% if project.creator and project.creator.entity_type.value == 'agent' %}
+          <span class="badge badge-agent" title="Managed by {{ project.creator.name }}">Agent managed</span>
+          {% endif %}
         </div>
-      </div>
-      
-      <div id="header-chat-wrap" class="header-chat-wrap flex-grow-1 mx-4">
-        <div class="chat-task-input-wrap-compact">
-          <input type="text" id="chat-task-input" class="form-input chat-input-compact" placeholder="Quick task: describe what needs to be done..."
-            onkeydown="if(event.key==='Enter') createTaskFromChat()">
-          <button class="btn btn-primary chat-btn-compact" onclick="createTaskFromChat()">
-            <span class="icon">&#128640;</span>
-          </button>
+        <div class="board-project-meta">
+          <span class="badge {% if project.approval_status and project.approval_status.value == 'APPROVED' %}badge-success{% elif project.approval_status and project.approval_status.value == 'REJECTED' %}badge-blocked{% else %}badge-pending{% endif %}" title="Project approval status">{{ (project.approval_status.value | lower) if project.approval_status else 'pending' }}</span>
+          <span title="Project workspace folder"><code id="project-path-label">{{ project.path or 'No folder selected' }}</code></span>
         </div>
       </div>
 
-      <div class="header-actions">
+      <div id="header-chat-wrap" class="header-chat-wrap">
+        <div class="chat-task-input-wrap-compact">
+          <input type="text" id="chat-task-input" class="form-input chat-input-compact" placeholder="Add a task..."
+            onkeydown="if(event.key==='Enter') createTaskFromChat()">
+          <button class="btn btn-primary chat-btn-compact" onclick="createTaskFromChat()" title="Add task">Add</button>
+        </div>
+      </div>
+
+      <div class="header-actions board-primary-actions">
         <button class="btn btn-icon" id="header-bell-btn" onclick="toggleBellDropdown()" title="Pending approvals">
           <span id="header-bell-icon">&#128276;</span> <span id="header-bell-count" class="badge" style="display:none;background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;position:absolute;top:0;right:0;border-radius:1rem;">0</span>
         </button>
-        <button class="btn btn-secondary" onclick="openTeamModal()" title="Roles & Team">
-          <span class="icon">&#9881;</span>
-        </button>
-        <button class="btn btn-primary stage-policy-btn" onclick="openStagePolicyModal()" title="Stage Policy">
-          <span class="icon">&#9881;</span>
-        </button>
-        <button class="btn btn-secondary notification-settings-btn" onclick="toggleNotificationSettings()" title="Notification settings">
-          &#128276;
-        </button>
+        <a class="btn btn-secondary" href="/ui/projects/{{ project.id }}/workbench">Workbench</a>
       </div>
     </div>
-    
-    <div class="d-flex align-items-center gap-3 flex-wrap" style="font-size: 0.85rem;">
-      <span class="badge {% if project.approval_status and project.approval_status.value == 'APPROVED' %}badge-success{% elif project.approval_status and project.approval_status.value == 'REJECTED' %}badge-blocked{% else %}badge-pending{% endif %}" title="Project Approval Status">&#128230; {{ (project.approval_status.value | lower) if project.approval_status else 'pending' }}</span>
-      <span class="text-secondary" title="Project workspace folder">&#128193; <code id="project-path-label">{{ project.path or 'No folder selected' }}</code></span>
-      {% if project.path %}
-      <button class="btn-icon btn-sm" onclick="openWorkspace('{{ project.path }}')" title="Open workspace folder">&#128194;</button>
-      {% endif %}
-      <button class="btn btn-link btn-sm" onclick="syncGithub()" title="Sync GitHub PRs/issues">&#8644; GitHub</button>
-    </div>
+
+    <details class="board-advanced-details">
+      <summary>Advanced</summary>
+      <div class="board-advanced-actions">
+        {% if project.path %}
+        <button class="btn btn-secondary btn-sm" onclick="openWorkspace('{{ project.path }}')" title="Open workspace folder">Open folder</button>
+        {% endif %}
+        <button class="btn btn-secondary btn-sm" onclick="openTeamModal()">Team roles</button>
+        <button class="btn btn-secondary btn-sm stage-policy-btn" onclick="openStagePolicyModal()">Stage policy</button>
+        <button class="btn btn-secondary btn-sm notification-settings-btn" onclick="toggleNotificationSettings()">Notifications</button>
+        <button class="btn btn-link btn-sm" onclick="syncGithub()" title="Sync GitHub PRs/issues">GitHub sync</button>
+        <a class="btn btn-link btn-sm" href="/ui/projects/{{ project.id }}/git">Git view</a>
+      </div>
+    </details>
     <div id="bell-dropdown" class="bell-dropdown" style="display:none;">
       <div class="bell-dropdown-header">
         <strong>Pending Approvals</strong>
@@ -252,6 +243,85 @@
     flex-direction: column;
     min-height: calc(100vh - var(--header-height) - 2rem);
     gap: 0;
+  }
+
+  .board-simple-shell {
+    gap: 0.75rem;
+  }
+
+  .board-simple-header {
+    padding: 1rem 1.1rem;
+  }
+
+  .board-title-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(280px, 560px) auto;
+    gap: 1rem;
+    align-items: center;
+  }
+
+  .board-title-block h2 {
+    font-size: 1.25rem;
+    font-weight: 800;
+  }
+
+  .board-project-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.35rem;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+  }
+
+  .board-project-meta code {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+
+  .board-primary-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .board-advanced-details {
+    margin-top: 0.75rem;
+    border-top: 1px solid var(--glass-border);
+    padding-top: 0.65rem;
+  }
+
+  .board-advanced-details summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 700;
+    user-select: none;
+    width: max-content;
+  }
+
+  .board-advanced-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.65rem;
+  }
+
+  .board-simple-shell .task-expansion-panel {
+    display: none !important;
+  }
+
+  @media(max-width: 900px) {
+    .board-title-row {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+
+    .board-primary-actions {
+      justify-content: flex-start;
+    }
   }
 
   .board-header-section {

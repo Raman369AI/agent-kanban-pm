@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Per-task git worktrees on real branches** — Each agent session now runs on a `kanban/task-{id}-{agent}` branch started from the detected base ref (`origin/HEAD` → `origin/main` → `origin/master` → `main` → `master`) instead of a detached `HEAD`. This unblocks the eventual merge-back path (PR or `merge --ff-only`).
+- **Launch-time rebase** — Before the tmux session starts, the worktree is `fetch`ed and `rebase`d onto the base. If the worktree is dirty, no base is found, or the rebase conflicts, the launcher logs the reason as an `AgentActivity` and leaves the worktree untouched. Records `branch`, `base_ref`, and `base_sync` in the activity payload for audit.
+- **`SchedulingConfig` in preferences** — Caps on per-agent active tasks and per-project parallel implementation (defaults: 1/1, review parallelism allowed). Surfaced via the existing `_scheduling_blocker` path.
+- **Preferences cache with mtime invalidation** — Repeated `load_preferences()` calls inside a single launch no longer re-parse `preferences.yaml`; the cache busts on file mtime change or 5-second TTL.
+- **`PROJECT_REJECTED` event type** — Project rejection now emits its own event instead of reusing `PROJECT_APPROVED`.
+- **`kanban_runtime/default_stages.py`** — Single source of truth for the default Backlog/To Do/In Progress/Review/Done stages, consumed by `mcp_server.py`, `routers/projects.py`, and `routers/ui.py`.
+- **Tests** — `tests/test_worktree_integration.py` (20 cases): locks in the auto-mode CLI flags, exercises base-ref detection, branch reuse, rebase sync (clean / dirty / conflict / no-base), and verifies the launcher wires the new helpers. Adds a scheduling-blocker test to `test_roles_and_reviews.py`.
+
+### Changed
+- **Per-task session stage handoff** — Completed worker sessions now advance the task from To Do/In Progress to Review, and completed review sessions (`test` / `diff_review`) advance Review tasks to Done. Stage-entry policy roles are assigned and emitted as `TASK_ASSIGNED` events so the next agent can continue the chain.
+- **Role-specific launch gates** — Assigned `test` and `diff_review` agents can now launch from Review, and `git_pr` agents can launch from Done; implementation roles remain limited to To Do/In Progress.
+- **Bundled adapter CLIs run in auto-approval mode** — `claude` uses `--permission-mode bypassPermissions`, `gemini` uses `--approval-mode yolo`, `codex` uses `--full-auto`, `aider` uses `--yes-always`. Previously they launched in their respective prompting modes, which halted every session at the first restricted file/shell/git action.
+- **Agent prompt template** — Tells the agent to operate autonomously and record risky actions in `STATUS.md` instead of waiting for terminal approval. Workspace guidance reworded so it no longer references a human approval queue.
+- **SQLite pragmas on startup** — `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON` are applied in `init_db()` for safer concurrent writes under the local-first runtime.
+- **Heartbeat sweeper** — Single JOIN query returns `(AgentHeartbeat, Entity.name)` rows instead of an N+1 fetch per heartbeat.
+- **Pending-event sweeper** — Uses `DELETE … WHERE` with a single round-trip; reports purge count from `rowcount`.
+- **Board header UI** — Simpler title row with inline project meta (status badge + path), a tighter chat input, and an `<details>` "Advanced" disclosure for less-used actions (Open folder, Team roles, Stage policy, Notifications, GitHub sync, Git view).
+- **WebSocket / connection-manager logging** — `print(...)` replaced with `logger.warning(...)`.
+
+### Fixed
+- **Tmux collaboration not crossing Review/Done** — Worker tmux sessions previously only marked the `AgentSession` done and logged a handoff, leaving cards stuck in In Progress. Session completion now updates the board stage/status and publishes task movement/update events.
+- **Connection status enum comparisons** — Event delivery paths now compare `AgentConnection.status` with `ConnectionStatus.ONLINE` instead of raw string values, keeping MCP pending-event persistence and adapter dispatch on the same enum contract.
+- **Pydantic / Starlette deprecations** — Response schemas now use `ConfigDict(from_attributes=True)`, and UI templates use the current `TemplateResponse(request, name, context)` call order.
+- **`_actor_id()` in `routers/stages.py` and `routers/tasks.py`** — No longer falls back to a fake `id=1` when the entity is missing; returns `None` so audit-trail rows stay accurate.
+- **Project rejection event** — Previously published `PROJECT_APPROVED` on reject.
+- **Database indexes** — `agent_activities.id`, `agent_activities.task_id`, and `pending_events.consumed_at` are now indexed (faster sweeper and per-task activity queries).
+- **`routers/ui.py` list-comprehension indentation** — Cleaned up after the removal of `_is_noisy_project()`.
+
+---
+
 ## [0.3.0a1] — 2026-05-02
 
 Alpha release candidate for the local-first, role-based agent runtime.

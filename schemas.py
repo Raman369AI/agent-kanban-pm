@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List, Any
 from datetime import datetime
 from models import (
@@ -27,8 +27,7 @@ class EntityResponse(EntityBase):
     is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Project Schemas
@@ -56,8 +55,7 @@ class ProjectResponse(ProjectBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Stage Schemas
@@ -82,8 +80,7 @@ class StageResponse(StageBase):
     project_id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Task Schemas
@@ -131,8 +128,7 @@ class TaskResponse(TaskBase):
     def ensure_assignees_list(cls, v: Any) -> Any:
         return v if v is not None else []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Comment Schemas
@@ -150,8 +146,7 @@ class CommentResponse(CommentBase):
     author_id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Assignment Schema
@@ -167,8 +162,7 @@ class TaskLogResponse(BaseModel):
     log_type: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Detailed Project Response with nested data
@@ -176,8 +170,7 @@ class ProjectDetailResponse(ProjectResponse):
     stages: List[StageResponse] = []
     tasks: List[TaskResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Task Detail with subtasks
@@ -191,8 +184,7 @@ class TaskDetailResponse(TaskResponse):
     def ensure_list(cls, v: Any) -> Any:
         return v if v is not None else []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Agent Activity Schemas
@@ -204,8 +196,7 @@ class AgentHeartbeatResponse(BaseModel):
     message: Optional[str] = None
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentStatusUpdate(BaseModel):
@@ -242,8 +233,7 @@ class AgentActivityResponse(BaseModel):
     command: Optional[str] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentSessionCreate(BaseModel):
@@ -275,8 +265,7 @@ class AgentSessionResponse(BaseModel):
     ended_at: Optional[datetime] = None
     last_seen_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectWorkspaceCreate(BaseModel):
@@ -292,8 +281,7 @@ class ProjectWorkspaceResponse(ProjectWorkspaceCreate):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OrchestrationDecisionCreate(BaseModel):
@@ -310,8 +298,7 @@ class OrchestrationDecisionResponse(OrchestrationDecisionCreate):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskLeaseCreate(BaseModel):
@@ -331,8 +318,7 @@ class TaskLeaseResponse(BaseModel):
     created_at: datetime
     released_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ActivitySummaryCreate(BaseModel):
@@ -348,8 +334,7 @@ class ActivitySummaryResponse(ActivitySummaryCreate):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentCheckpointCreate(BaseModel):
@@ -376,8 +361,7 @@ class AgentCheckpointResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserContributionCreate(BaseModel):
@@ -397,8 +381,7 @@ class UserContributionResponse(UserContributionCreate):
     id: int
     recorded_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentTerminalResponse(BaseModel):
@@ -442,8 +425,7 @@ class AgentApprovalResponse(BaseModel):
     resolved_by_entity_id: Optional[int] = None
     response_message: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiffReviewCreate(BaseModel):
@@ -477,8 +459,7 @@ class DiffReviewResponse(BaseModel):
     created_at: datetime
     reviewed_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Agent Connection Schemas
@@ -499,8 +480,7 @@ class AgentConnectionResponse(BaseModel):
     status: str
     last_seen: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Chat Designer Schemas
@@ -585,8 +565,7 @@ class StagePolicyResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @classmethod
     def from_model(cls, obj) -> "StagePolicyResponse":

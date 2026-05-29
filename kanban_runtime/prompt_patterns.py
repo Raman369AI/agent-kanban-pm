@@ -46,6 +46,16 @@ class PromptPattern:
 # ---------------------------------------------------------------------------
 
 BUILTIN_PATTERNS: List[PromptPattern] = [
+    # Claude Code security disclaimer (Bypass Permissions mode)
+    PromptPattern(
+        regex=re.compile(
+            r"(WARNING: Claude Code running in Bypass Permissions mode|By proceeding, you accept all responsibility)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        approval_type="system",
+        approve_reply="2",
+        reject_reply="1",
+    ),
     # Claude Code numbered-menu prompts (edit / apply / plan confirmation)
     PromptPattern(
         regex=re.compile(

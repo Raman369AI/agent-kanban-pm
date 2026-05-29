@@ -57,6 +57,7 @@ dev = [
 [project.scripts]
 kanban = "kanban_cli:main"
 kanban-cli = "kanban_cli:main"
+antigravity = "kanban_cli.antigravity_cli:main"
 
 [tool.setuptools]
 py-modules = [

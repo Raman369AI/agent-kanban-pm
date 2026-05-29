@@ -1,6 +1,7 @@
 import asyncio
 import getpass
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -112,20 +113,15 @@ async def _heartbeat_sweeper():
                     if not active_result.scalars().first():
                         idle_heartbeat.task_id = None
 
+                # Single JOIN query to fetch heartbeats with entity names
                 result = await db.execute(
-                    select(AgentHeartbeat).filter(
-                        AgentHeartbeat.status_type != AgentStatusType.IDLE
-                    ).join(Entity, AgentHeartbeat.agent_id == Entity.id)
+                    select(AgentHeartbeat, Entity.name)
+                    .filter(AgentHeartbeat.status_type != AgentStatusType.IDLE)
+                    .join(Entity, AgentHeartbeat.agent_id == Entity.id)
                 )
-                heartbeats = result.scalars().all()
+                rows = result.all()
 
-                for heartbeat in heartbeats:
-                    entity_result = await db.execute(
-                        select(Entity).filter(Entity.id == heartbeat.agent_id)
-                    )
-                    entity = entity_result.scalar_one_or_none()
-                    agent_name = entity.name if entity else "unknown"
-
+                for heartbeat, agent_name in rows:
                     threshold = adapter_thresholds.get(agent_name, global_default)
                     stale_time = (datetime.now(UTC) - timedelta(seconds=threshold)).replace(tzinfo=None)
 
@@ -192,7 +188,7 @@ async def _pending_event_sweeper(ttl_hours: int = 6, interval_seconds: int = 600
     """
     from datetime import UTC, datetime, timedelta
     from models import PendingEvent
-    from sqlalchemy import or_, and_
+    from sqlalchemy import or_, and_, delete
 
     while True:
         try:
@@ -201,28 +197,22 @@ async def _pending_event_sweeper(ttl_hours: int = 6, interval_seconds: int = 600
             consumed_cutoff = now - timedelta(hours=1)
             unconsumed_cutoff = now - timedelta(hours=ttl_hours)
             async with async_session_maker() as db:
-                result = await db.execute(
-                    select(PendingEvent).filter(
-                        or_(
-                            # Consumed events older than 1 hour
-                            and_(
-                                PendingEvent.consumed_at.isnot(None),
-                                PendingEvent.consumed_at < consumed_cutoff,
-                            ),
-                            # Unconsumed events older than ttl_hours
-                            and_(
-                                PendingEvent.consumed_at.is_(None),
-                                PendingEvent.created_at < unconsumed_cutoff,
-                            ),
-                        )
+                stmt = delete(PendingEvent).where(
+                    or_(
+                        and_(
+                            PendingEvent.consumed_at.isnot(None),
+                            PendingEvent.consumed_at < consumed_cutoff,
+                        ),
+                        and_(
+                            PendingEvent.consumed_at.is_(None),
+                            PendingEvent.created_at < unconsumed_cutoff,
+                        ),
                     )
                 )
-                stale = result.scalars().all()
-                if stale:
-                    for row in stale:
-                        await db.delete(row)
+                result = await db.execute(stmt)
+                if result.rowcount:
                     await db.commit()
-                    logger.info("Purged %d stale PendingEvent rows", len(stale))
+                    logger.info("Purged %d stale PendingEvent rows", result.rowcount)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -322,7 +312,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     event_bus.unsubscribe(EventType.TASK_ASSIGNED.value, assignment_launcher.handle_event)
-    event_bus.stop()
+    await event_bus.stop_async()
 
 app = FastAPI(
     title="Agent Kanban Project Management API",
@@ -351,6 +341,56 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Entity-ID"],
 )
 
+
+@app.middleware("http")
+async def token_auth_middleware(request: Request, call_next):
+    if os.getenv("KANBAN_TESTING") == "1":
+        return await call_next(request)
+
+    path = request.url.path
+
+    # Exempt public, static, and websocket endpoints
+    if path == "/health" or path.startswith("/static") or path.startswith("/ws"):
+        return await call_next(request)
+
+    is_html_route = (path == "/" or path.startswith("/ui"))
+
+    if not is_html_route:
+        # Check header, cookie, or Authorization header
+        token = request.headers.get("x-kanban-token") or request.cookies.get("kanban-token")
+
+        # Check Authorization header (e.g. Bearer <token>)
+        auth_header = request.headers.get("authorization")
+        if not token and auth_header:
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header[7:]
+            else:
+                token = auth_header
+
+        from kanban_runtime.instance import get_auth_token
+        expected_token = get_auth_token()
+        if not token or token != expected_token:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized: Invalid or missing Kanban Auth Token"}
+            )
+
+    response = await call_next(request)
+
+    # Set cookie for HTML pages so browser AJAX calls send it automatically
+    if is_html_route:
+        from kanban_runtime.instance import get_auth_token
+        response.set_cookie(
+            key="kanban-token",
+            value=get_auth_token(),
+            path="/",
+            samesite="lax",
+            httponly=False
+        )
+
+    return response
+
+
 # Include routers
 app.include_router(ui.router)
 app.include_router(auth.router)
@@ -371,4 +411,4 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     _default_port = get_port()
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("KANBAN_PORT", _default_port)))
+    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("KANBAN_PORT", _default_port)))

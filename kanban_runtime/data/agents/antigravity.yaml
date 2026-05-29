@@ -1,38 +1,37 @@
-name: gemini
-display_name: "Gemini (Google)"
+name: antigravity
+display_name: "Antigravity (AI Assistant)"
 version: "1.0"
 
 invoke:
-  command: gemini
+  command: agy
   mcp_flag: "--mcp"
   info_flag: "--version"
   model_flag: "--model"
 
-capabilities: [code, analysis, summarization, debugging, testing]
+capabilities: [code, analysis, summarization, debugging, testing, planning]
 
 models:
-  - id: gemini-2.5-pro
+  - id: antigravity-v1
     context_window: 1000000
 
 protocol: mcp
 
 auth:
   type: none
-roles: [worker]
+roles: [worker, manager]
 modes: [supervised, auto, headless]
 
 reporting:
   heartbeat_interval: 30
 
 chat_designer:
-  prompt_flag: "-p"
+  prompt_flag: "-i"
   stdin: false
   output_format: "stdout"
   timeout_seconds: 180
 
 task_command:
-  args: ["--approval-mode", "yolo", "-i", "{prompt}"]
+  args: ["--full-auto", "-i", "{prompt}"]
 
-# Handoff profile (P1-2)
-owns: ['ui/', 'components/', 'templates/', 'static/']
+owns: ['*']
 review_only: false

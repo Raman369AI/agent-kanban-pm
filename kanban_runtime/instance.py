@@ -136,7 +136,7 @@ def _find_available_port(start: int, host: str = "127.0.0.1") -> Optional[int]:
     return None
 
 
-def get_port(host: str = "0.0.0.0") -> int:
+def get_port(host: str = "127.0.0.1") -> int:
     """Return the HTTP port for this instance.
 
     Priority:
@@ -236,7 +236,7 @@ def get_mcp_config_dir() -> Path:
     return config_dir
 
 
-def get_instance_info(host: str = "0.0.0.0") -> dict:
+def get_instance_info(host: str = "127.0.0.1") -> dict:
     """Return a summary dict of all instance-specific values.
 
     Useful for `kanban sheet` and `kanban run` startup output.
@@ -253,3 +253,30 @@ def get_instance_info(host: str = "0.0.0.0") -> dict:
         "database_url": get_database_url(),
         "mcp_config_dir": str(get_mcp_config_dir()),
     }
+
+
+def get_auth_token() -> str:
+    """Retrieve or generate a secure, cached auth token for the Kanban PM service.
+
+    The token is stored in ~/.kanban/token to allow authenticating CLI
+    actions and role supervisors locally.
+    """
+    token_dir = Path.home() / ".kanban"
+    token_dir.mkdir(parents=True, exist_ok=True)
+    token_file = token_dir / "token"
+
+    if token_file.exists():
+        try:
+            token = token_file.read_text(encoding="utf-8").strip()
+            if token:
+                return token
+        except Exception:
+            pass
+
+    import secrets
+    token = secrets.token_hex(32)
+    try:
+        token_file.write_text(token, encoding="utf-8")
+    except Exception as e:
+        logger.warning("Could not write auth token file: %s", e)
+    return token

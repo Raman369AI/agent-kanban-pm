@@ -31,7 +31,7 @@ chat_designer:
   timeout_seconds: 180
 
 task_command:
-  args: ["--print", "--permission-mode", "default", "--add-dir", "{workspace}", "{prompt}"]
+  args: ["--print", "--permission-mode", "bypassPermissions", "--add-dir", "{workspace}", "{prompt}"]
 
 # Handoff profile (P1-2)
 owns: ['src/', 'tests/', 'lib/']

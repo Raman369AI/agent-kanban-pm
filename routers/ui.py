@@ -18,6 +18,11 @@ from models import (
 from schemas import ProjectResponse, ChatPlanRequest
 from auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
 from event_bus import event_bus, EventType
+from kanban_runtime.task_transitions import (
+    apply_task_transition_fields,
+    validate_task_transition,
+)
+from kanban_runtime.default_stages import DEFAULT_STAGES
 from kanban_runtime.handoff_protocol import update_status_file
 from kanban_runtime.paths import templates_dir
 
@@ -27,10 +32,6 @@ logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory=str(templates_dir()))
 
 router = APIRouter(include_in_schema=False)
-
-
-def _is_noisy_project(project: Project) -> bool:
-    return False
 
 
 def _role_to_entity_role(role_name: str) -> Role:
@@ -242,7 +243,7 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     projects_result = await db.execute(select(Project))
     visible_projects = [
         p for p in projects_result.scalars().all()
-        if p.approval_status != ApprovalStatus.REJECTED and not _is_noisy_project(p)
+        if p.approval_status != ApprovalStatus.REJECTED
     ]
     total_tasks = await db.execute(select(func.count(Task.id)))
     completed_tasks = await db.execute(select(func.count(Task.id)).where(Task.status == TaskStatus.COMPLETED))
@@ -268,7 +269,7 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     )
     recent_tasks = result.scalars().all()
 
-    return templates.TemplateResponse("dashboard.html", {
+    return templates.TemplateResponse(request, "dashboard.html", {
         "request": request,
         "stats": stats,
         "recent_projects": recent_projects,
@@ -293,7 +294,7 @@ async def ui_projects(
     if not all:
         projects = [
             p for p in projects
-            if p.approval_status != ApprovalStatus.REJECTED and not _is_noisy_project(p)
+            if p.approval_status != ApprovalStatus.REJECTED
         ]
 
     agents_result = await db.execute(
@@ -301,7 +302,7 @@ async def ui_projects(
     )
     agents = agents_result.scalars().all()
 
-    return templates.TemplateResponse("projects.html", {
+    return templates.TemplateResponse(request, "projects.html", {
         "request": request,
         "projects": projects,
         "agents": agents,
@@ -332,7 +333,7 @@ async def project_kanban_board(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    return templates.TemplateResponse("kanban_board.html", {
+    return templates.TemplateResponse(request, "kanban_board.html", {
         "request": request,
         "project": project,
         "current_entity": current_entity
@@ -352,7 +353,7 @@ async def project_workbench(
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return templates.TemplateResponse("project_workbench.html", {
+    return templates.TemplateResponse(request, "project_workbench.html", {
         "request": request, "project": project, "current_entity": current_entity
     })
 
@@ -370,7 +371,7 @@ async def project_git(
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return templates.TemplateResponse("project_git.html", {
+    return templates.TemplateResponse(request, "project_git.html", {
         "request": request, "project": project, "current_entity": current_entity
     })
 
@@ -403,41 +404,25 @@ async def ui_move_task(
 
     await require_task_access(task, current_entity, db, require_write=True)
 
-    # Sequence order enforcement
-    if new_status == "in_progress" and task.status != "in_progress":
-        from routers.tasks import _check_predecessor
-        err = await _check_predecessor(task, db)
-        if err:
-            raise HTTPException(status_code=409, detail=err)
+    transition_warning = await validate_task_transition(
+        db,
+        task,
+        current_entity,
+        new_stage_id=new_stage_id,
+        new_status=new_status,
+        allow_human_policy_warning=True,
+    )
+    if transition_warning and current_entity.entity_type != EntityType.HUMAN:
+        raise HTTPException(status_code=409, detail=transition_warning)
 
-    from kanban_runtime.stage_policy import get_stage_policy_for_stage, validate_transition, gather_transition_context
-    transition_warning = None
-    if task.stage_id and new_stage_id and task.stage_id != new_stage_id:
-        from_policy = await get_stage_policy_for_stage(db, task.project_id, task.stage_id)
-        to_policy = await get_stage_policy_for_stage(db, task.project_id, new_stage_id)
-        move_initiator = "human" if current_entity.entity_type == EntityType.HUMAN else current_entity.name
-        ctx = await gather_transition_context(db, task_id, task.project_id)
-        transition_warning = validate_transition(
-            from_policy=from_policy,
-            to_policy=to_policy,
-            move_initiator=move_initiator,
-            has_diff_review=ctx["has_diff_review"],
-            has_required_outputs=True,
-            is_critical=ctx["is_critical"],
-        )
-        if transition_warning and current_entity.entity_type != EntityType.HUMAN:
-            raise HTTPException(status_code=409, detail=transition_warning)
-
-    old_stage_id = task.stage_id
     old_stage_name = task.stage.name if task.stage else "Unknown"
-    task.stage_id = new_stage_id
-    task.status = new_status
-    new_stage_result = await db.execute(select(Stage).filter(Stage.id == new_stage_id))
-    task.stage = new_stage_result.scalar_one_or_none()
-    if new_status == "completed" and task.completed_at is None:
-        task.completed_at = datetime.now(UTC)
+    transition_state = await apply_task_transition_fields(
+        db,
+        task,
+        stage_id=new_stage_id,
+        status=new_status,
+    )
     task.version += 1
-    task.updated_at = datetime.now(UTC)
 
     db.add(TaskLog(
         task_id=task.id,
@@ -466,9 +451,9 @@ async def ui_move_task(
         {
             "task_id": task_id,
             "title": task.title,
-            "from_stage_id": old_stage_id,
+            "from_stage_id": transition_state.old_stage_id,
             "to_stage_id": new_stage_id,
-            "status": new_status,
+            "status": task.status.value,
             "summary": move_summary,
         },
         project_id=task.project_id,
@@ -505,7 +490,7 @@ async def ui_move_task(
         "ok": True,
         "task_id": task_id,
         "stage_id": new_stage_id,
-        "status": new_status,
+        "status": task.status.value,
         "stage_policy_hint": auto_policy_hint,
         "transition_warning": transition_warning,
     }
@@ -514,15 +499,27 @@ async def ui_move_task(
 @router.get("/ui/api/settings")
 async def ui_get_settings():
     """Get current app settings. Manager-owned PM: reads from preferences.yaml."""
-    from kanban_runtime.preferences import load_preferences
+    from kanban_runtime.preferences import (
+        load_preferences,
+        get_manager_agent_name,
+        get_manager_mode,
+    )
     prefs = load_preferences()
-    if prefs:
-        return {
-            "manager": prefs.manager.agent,
-            "mode": prefs.manager.mode,
-            "workers": [w.agent for w in prefs.workers]
-        }
-    return {"manager": None, "mode": None, "workers": []}
+    if not prefs:
+        return {"manager": None, "mode": None, "workers": []}
+    # A config may use only the new `roles:` shape, in which case the legacy
+    # `manager`/`workers` blocks are absent. Derive from role assignments
+    # instead of dereferencing prefs.manager unconditionally.
+    manager = prefs.manager.agent if prefs.manager else get_manager_agent_name()
+    mode = prefs.manager.mode if prefs.manager else get_manager_mode()
+    workers = [w.agent for w in prefs.workers]
+    if not workers:
+        workers = sorted({
+            a.agent
+            for role, a in prefs.get_role_assignments().items()
+            if role != "orchestrator"
+        })
+    return {"manager": manager, "mode": mode, "workers": workers}
 
 
 @router.get("/ui/api/entities")
@@ -971,48 +968,27 @@ async def ui_edit_task(
 
     await require_task_access(task, current_entity, db, require_write=True)
 
-    # Stage policy transition validation for status changes (P0-3)
     new_status = body.get("status")
-    if new_status and new_status != task.status:
-        terminal_statuses = ("completed", "review", "done")
-        if new_status in terminal_statuses:
-            try:
-                from kanban_runtime.stage_policy import get_stage_policy_for_stage, validate_transition, gather_transition_context
-                from models import DiffReview, DiffReviewStatus
-                from_policy = await get_stage_policy_for_stage(db, task.project_id, task.stage_id)
-                to_policy = await get_stage_policy_for_stage(db, task.project_id, task.stage_id) if task.stage_id else None
-                if from_policy:
-                    move_initiator = "human" if current_entity.entity_type == EntityType.HUMAN else current_entity.name
-                    ctx = await gather_transition_context(db, task_id, task.project_id)
-                    transition_warning = validate_transition(
-                        from_policy=from_policy,
-                        to_policy=to_policy,
-                        move_initiator=move_initiator,
-                        has_diff_review=ctx["has_diff_review"],
-                        has_required_outputs=True,
-                        is_critical=ctx["is_critical"],
-                    )
-                    if transition_warning and current_entity.entity_type != EntityType.HUMAN:
-                        raise HTTPException(status_code=409, detail=transition_warning)
-            except ImportError:
-                pass
+    transition_warning = await validate_task_transition(
+        db,
+        task,
+        current_entity,
+        new_status=new_status,
+        allow_human_policy_warning=True,
+    )
+    if transition_warning and current_entity.entity_type != EntityType.HUMAN:
+        raise HTTPException(status_code=409, detail=transition_warning)
 
-    # Sequence order enforcement
-    if new_status == "in_progress" and task.status != "in_progress":
-        from routers.tasks import _check_predecessor
-        err = await _check_predecessor(task, db)
-        if err:
-            raise HTTPException(status_code=409, detail=err)
-
-    for field in ["title", "description", "priority", "required_skills", "status"]:
+    for field in ["title", "description", "priority", "required_skills"]:
         if field in body:
             setattr(task, field, body[field])
 
-    if body.get("status") == "completed" and task.completed_at is None:
-        task.completed_at = datetime.now(UTC)
-
+    await apply_task_transition_fields(
+        db,
+        task,
+        status=new_status if "status" in body else None,
+    )
     task.version += 1
-    task.updated_at = datetime.now(UTC)
     await db.commit()
 
     await event_bus.publish(
@@ -1291,18 +1267,11 @@ async def ui_create_project(
             is_primary=True,
         ))
 
-    default_stages = [
-        ("Backlog", "Tasks to be done", 1),
-        ("To Do", "Ready to start", 2),
-        ("In Progress", "Currently being worked on", 3),
-        ("Review", "Awaiting review", 4),
-        ("Done", "Completed tasks", 5),
-    ]
-    for stage_name, stage_desc, order in default_stages:
+    for stage_data in DEFAULT_STAGES:
         stage = Stage(
-            name=stage_name,
-            description=stage_desc,
-            order=order,
+            name=stage_data["name"],
+            description=stage_data["description"],
+            order=stage_data["order"],
             project_id=project.id
         )
         db.add(stage)
@@ -1324,7 +1293,7 @@ async def ui_users(request: Request, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Entity).order_by(Entity.created_at.desc()))
     users = result.scalars().all()
 
-    return templates.TemplateResponse("users.html", {
+    return templates.TemplateResponse(request, "users.html", {
         "request": request,
         "users": users
     })

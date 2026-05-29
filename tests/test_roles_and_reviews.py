@@ -30,6 +30,7 @@ from schemas import DiffReviewCreate, DiffReviewResponse, DiffReviewUpdate
 from kanban_runtime.preferences import (
     Preferences, RoleConfig, RoleAssignment, AgentRole,
     ManagerConfig, WorkerConfig, AutonomyConfig,
+    SchedulingConfig,
     load_preferences, save_preferences,
 )
 from main import app
@@ -341,6 +342,79 @@ class TestAdapterRoleMapping:
 
 
 class TestAssignmentLauncher:
+    def test_scheduling_blocks_second_implementation_task_by_default(self):
+        from kanban_runtime.assignment_launcher import _scheduling_blocker
+
+        async def run_case():
+            test_db = Path("./test_assignment_scheduling.db")
+            test_db.unlink(missing_ok=True)
+            engine = create_async_engine(f"sqlite+aiosqlite:///{test_db}", echo=False)
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+            try:
+                async with session_maker() as db_session:
+                    owner = Entity(name="owner", entity_type=EntityType.HUMAN, role=Role.OWNER, is_active=True)
+                    running_agent = Entity(name="running-agent", entity_type=EntityType.AGENT, role=Role.WORKER, is_active=True)
+                    queued_agent = Entity(name="queued-agent", entity_type=EntityType.AGENT, role=Role.WORKER, is_active=True)
+                    db_session.add_all([owner, running_agent, queued_agent])
+                    await db_session.flush()
+
+                    project = Project(
+                        name="Scheduling Project",
+                        path="/tmp/scheduling-project",
+                        creator_id=owner.id,
+                        approval_status=ApprovalStatus.APPROVED,
+                    )
+                    db_session.add(project)
+                    await db_session.flush()
+
+                    stage = Stage(name="In Progress", description="", order=1, project_id=project.id)
+                    db_session.add(stage)
+                    await db_session.flush()
+
+                    running_task = Task(
+                        title="Already running",
+                        project_id=project.id,
+                        stage_id=stage.id,
+                        status=TaskStatus.IN_PROGRESS,
+                    )
+                    queued_task = Task(
+                        title="Should wait",
+                        project_id=project.id,
+                        stage_id=stage.id,
+                        status=TaskStatus.PENDING,
+                    )
+                    db_session.add_all([running_task, queued_task])
+                    await db_session.flush()
+
+                    db_session.add(AgentSession(
+                        agent_id=running_agent.id,
+                        project_id=project.id,
+                        task_id=running_task.id,
+                        workspace_path="/tmp/scheduling-project",
+                        status=AgentSessionStatus.ACTIVE,
+                    ))
+                    await db_session.flush()
+
+                    blocker = await _scheduling_blocker(
+                        db_session,
+                        queued_task,
+                        queued_agent,
+                        "worker",
+                        Preferences(scheduling=SchedulingConfig()),
+                    )
+
+                    assert blocker is not None
+                    assert "project parallel task limit reached" in blocker
+            finally:
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.drop_all)
+                await engine.dispose()
+                test_db.unlink(missing_ok=True)
+
+        asyncio.run(run_case())
+
     def test_mark_task_started_moves_todo_card_to_in_progress(self):
         from kanban_runtime.assignment_launcher import AssignmentLauncher
 

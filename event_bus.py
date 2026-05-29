@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import async_session_maker
-from models import PendingEvent, AgentConnection, ProtocolType
+from models import PendingEvent, AgentConnection, ProtocolType, ConnectionStatus
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ class EventType(str, Enum):
     PROJECT_UPDATED = "project_updated"
     PROJECT_DELETED = "project_deleted"
     PROJECT_APPROVED = "project_approved"
+    PROJECT_REJECTED = "project_rejected"
 
     # Entity events
     ENTITY_REGISTERED = "entity_registered"
@@ -101,10 +102,30 @@ class EventBus:
             logger.info("Event bus worker started")
 
     def stop(self):
-        """Stop the background event processing worker."""
+        """Request background event processing worker shutdown.
+
+        This synchronous method is intentionally best-effort for callers that
+        are not inside async shutdown code. Async callers should prefer
+        stop_async() so the cancelled worker is awaited before DB disposal.
+        """
         if self._worker_task:
             self._worker_task.cancel()
             self._worker_task = None
+            logger.info("Event bus worker stop requested")
+
+    async def stop_async(self):
+        """Stop and await the background event processing worker."""
+        task = self._worker_task
+        if not task:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._worker_task = None
+            self._queue = None
             logger.info("Event bus worker stopped")
 
     def reset(self):
@@ -234,7 +255,7 @@ class EventBus:
             result = await session.execute(
                 select(AgentConnection).filter(
                     AgentConnection.protocol == ProtocolType.MCP,
-                    AgentConnection.status == "online"
+                    AgentConnection.status == ConnectionStatus.ONLINE
                 )
             )
             connections = result.scalars().all()
