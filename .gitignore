@@ -37,6 +37,17 @@ wheels/
 
 # Environment variables
 .env
+.env.*
+!.env.example
+
+# Secrets / credentials
+credentials.json
+token.json
+*.pem
+*.key
+*.p12
+id_rsa
+id_rsa.pub
 
 # IDE
 .vscode/
@@ -56,10 +67,15 @@ Thumbs.db
 # Testing
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 
 # Temporary files
 *.tmp
+
+# Merge / editor backups
+*.orig
+*.bak
 
 # Per-worktree agent handoff state — must not be committed at repo root
 STATUS.md
