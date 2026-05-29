@@ -268,7 +268,8 @@ async def _stage_for_key(db, project_id: int, keys: set[str]) -> Optional[Stage]
 async def _assigned_role_for_session(session: AgentSession) -> str:
     try:
         status_data = read_status_file(session.workspace_path) if session.workspace_path else {}
-        role = status_data.get("assigned_role")
+        frontmatter = status_data.get("frontmatter") or {}
+        role = frontmatter.get("assigned_role")
         if role:
             return str(role).strip().lower()
     except Exception:

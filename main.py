@@ -312,7 +312,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     event_bus.unsubscribe(EventType.TASK_ASSIGNED.value, assignment_launcher.handle_event)
-    event_bus.stop()
+    await event_bus.stop_async()
 
 app = FastAPI(
     title="Agent Kanban Project Management API",

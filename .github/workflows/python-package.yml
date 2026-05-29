@@ -36,4 +36,3 @@ jobs:
     - name: Test with pytest
       run: |
         pytest -v --timeout=60 --timeout-method=thread
-        pytest tests/

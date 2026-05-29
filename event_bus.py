@@ -102,10 +102,30 @@ class EventBus:
             logger.info("Event bus worker started")
 
     def stop(self):
-        """Stop the background event processing worker."""
+        """Request background event processing worker shutdown.
+
+        This synchronous method is intentionally best-effort for callers that
+        are not inside async shutdown code. Async callers should prefer
+        stop_async() so the cancelled worker is awaited before DB disposal.
+        """
         if self._worker_task:
             self._worker_task.cancel()
             self._worker_task = None
+            logger.info("Event bus worker stop requested")
+
+    async def stop_async(self):
+        """Stop and await the background event processing worker."""
+        task = self._worker_task
+        if not task:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._worker_task = None
+            self._queue = None
             logger.info("Event bus worker stopped")
 
     def reset(self):
