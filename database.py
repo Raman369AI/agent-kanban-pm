@@ -178,6 +178,31 @@ async def _migrate_db_schema():
                 await conn.execute(text("ALTER TABLE tasks ADD COLUMN sequence_order INTEGER"))
             await _record_migration(7, "tasks_sequence_order")
 
+        # --- Migration v8: Project.is_demo flag (replaces hardcoded name/path heuristics) ---
+        if not await _migration_applied(8):
+            if not await _column_exists(conn, "projects", "is_demo"):
+                await conn.execute(
+                    text("ALTER TABLE projects ADD COLUMN is_demo BOOLEAN NOT NULL DEFAULT 0")
+                )
+            # Backfill: rows previously hidden by kanban_cli.cmd_sheet's
+            # hardcoded markers are marked as demo so the new is_demo filter
+            # preserves existing local behavior without keeping the heuristic
+            # in product code.
+            await conn.execute(text(
+                "UPDATE projects SET is_demo = 1 WHERE is_demo = 0 AND ("
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%test%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%phase 6%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%visibility%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%coordination%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%approval queue%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%diff review%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%reject project%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%folder picker smoke%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%/tmp/%'"
+                ")"
+            ))
+            await _record_migration(8, "projects_is_demo_flag")
+
     # Backfill default roles
     async with async_session_maker() as session:
         from models import Entity
