@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table, Enum as SQLEnum, text
 from sqlalchemy.orm import relationship, declarative_base
 import enum
 
@@ -97,6 +97,7 @@ class Project(Base):
     path = Column(Text, nullable=True)  # Filesystem path for folder-as-project
     creator_id = Column(Integer, ForeignKey('entities.id'))
     approval_status = Column(SQLEnum(ApprovalStatus), default=ApprovalStatus.PENDING)
+    is_demo = Column(Boolean, default=False, nullable=False, server_default=text("0"))
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
     

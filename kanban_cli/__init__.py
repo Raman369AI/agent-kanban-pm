@@ -456,26 +456,9 @@ def cmd_sheet(args):
             tasks_by_project.setdefault(task.project_id, []).append(task)
         assigned_task_ids = {row.task_id for row in assignment_rows}
 
-        def is_noisy_project(project):
-            text = f"{project.name or ''} {project.path or ''}".lower()
-            noisy_markers = [
-                "test", "phase 6", "visibility", "coordination",
-                "approval queue", "diff review", "reject project",
-                "folder picker smoke", "/tmp/",
-            ]
-            return any(marker in text for marker in noisy_markers)
-
-        def is_noisy_agent(agent):
-            if agent.name in role_agent_names:
-                return False
-            if agent.name in adapter_names:
-                return False
-            text = (agent.name or "").lower()
-            noisy_markers = ["test", "visibility", "heartbeat", "worker agent", "other agent", "coordination"]
-            return any(marker in text for marker in noisy_markers)
-
         visible_projects = projects if args.all else [
-            p for p in projects if not is_noisy_project(p) and p.approval_status.value != "REJECTED"
+            p for p in projects
+            if not p.is_demo and p.approval_status.value != "REJECTED"
         ]
         visible_agents = agents if args.all else [
             a for a in agents if a.name in role_agent_names
@@ -495,7 +478,7 @@ def cmd_sheet(args):
 
         hidden_projects = len(projects) - len(visible_projects)
         if hidden_projects:
-            print(f"... hidden {hidden_projects} test/demo projects. Use --all to show them.")
+            print(f"... hidden {hidden_projects} demo/rejected projects. Use --all to show them.")
 
         print("\nAgents")
         print(f"{'ID':<5} {'Name':<18} {'Role':<10} {'Active':<8} {'Source':<12} Skills")
@@ -508,7 +491,7 @@ def cmd_sheet(args):
             )
         hidden_agents = len(agents) - len(visible_agents)
         if hidden_agents:
-            print(f"... hidden {hidden_agents} non-role/test/demo agents. Use --all to show them.")
+            print(f"... hidden {hidden_agents} non-role agents. Use --all to show them.")
 
         if assignments:
             print("\nRole Assignments")

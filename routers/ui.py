@@ -1179,7 +1179,7 @@ async def ui_edit_project(
     if not is_owner_or_manager(current_entity) and project.creator_id != current_entity.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only edit projects you created")
 
-    for field in ["name", "description", "path", "approval_status"]:
+    for field in ["name", "description", "path", "approval_status", "is_demo"]:
         if field in body:
             setattr(project, field, body[field])
 

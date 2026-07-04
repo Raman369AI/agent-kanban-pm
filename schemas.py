@@ -46,12 +46,14 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     path: Optional[str] = None
     approval_status: Optional[ApprovalStatus] = None
+    is_demo: Optional[bool] = None
 
 
 class ProjectResponse(ProjectBase):
     id: int
     creator_id: int
     approval_status: ApprovalStatus
+    is_demo: bool = False
     created_at: datetime
     updated_at: datetime
 
