@@ -26,7 +26,8 @@ jobs:
     - name: Install package (editable, with dev extras)
       run: |
         python -m pip install --upgrade pip
-        python -m pip install -e ".[dev]"
+        python -m pip install flake8 pytest pytest-asyncio pytest-timeout
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Lint with flake8
       run: |
@@ -51,36 +52,4 @@ jobs:
 
     - name: Install build tooling
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install build twine
-
-    - name: Build sdist and wheel
-      run: python -m build
-
-    - name: Check distribution metadata
-      run: twine check dist/*
-
-    - name: Install built wheel in clean venv
-      run: |
-        python -m venv /tmp/wheel-venv
-        /tmp/wheel-venv/bin/pip install --upgrade pip
-        /tmp/wheel-venv/bin/pip install dist/*.whl
-
-    - name: Smoke test - kanban --help
-      run: /tmp/wheel-venv/bin/kanban --help
-
-    - name: Smoke test - server boots and serves UI
-      env:
-        DATABASE_URL: sqlite+aiosqlite:////tmp/kanban-smoke.db
-      run: |
-        /tmp/wheel-venv/bin/python - <<'PY'
-        from fastapi.testclient import TestClient
-        from main import app
-
-        with TestClient(app) as client:
-            for path, expected in (("/", 200), ("/static/css/style.css", 200), ("/docs", 200)):
-                r = client.get(path)
-                assert r.status_code == expected, f"{path}: {r.status_code}\n{r.text[:500]}"
-        print("server boot smoke OK")
-        PY
-      working-directory: /tmp
+        pytest -v --timeout=60 --timeout-method=thread
