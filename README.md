@@ -152,6 +152,26 @@ Package data is served from `kanban_runtime/data/`; the historical root-level
 `agents/`, `mcp_configs/`, `static/`, and `templates/` folders are not part of
 the packaged runtime.
 
+## Roadmap
+
+See [PLAN.md](PLAN.md) for the full roadmap to a standalone, fully available
+release. Each phase is releasable on its own.
+
+- [x] **Phase 0 — Stabilize** (done): failing UI test fixed, CI installs the
+  package and smoke-tests the built wheel, single-sourced dependencies,
+  `.env.example` documents real env vars, dev-artifact name heuristics
+  replaced with a `Project.is_demo` flag.
+- [ ] **Phase 1 — Packaging correctness**: `src/` layout, declared `mcp`
+  dependency, install-safe data home.
+- [ ] **Phase 2 — Security hardening**: close the `/ui` auth bypass, CSRF,
+  token-file permissions, supervised-by-default autonomy.
+- [ ] **Phase 3 — Runtime correctness**: async subprocess work, service
+  layer, Alembic, MCP identity freshness.
+- [ ] **Phase 4 — Product surface & docs**: README landing page, community
+  scaffolding, mkdocs site.
+- [ ] **Phase 5 — Release & distribution**: PyPI trusted publishing, version
+  tags, alternative install paths.
+
 ## License
 
 MIT
