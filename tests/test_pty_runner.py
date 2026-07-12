@@ -2,8 +2,8 @@ import sys
 import time
 import pytest
 from unittest import mock
-from kanban_runtime.pty_manager import pty_manager, strip_ansi
-from kanban_runtime.process_launcher import (
+from agent_kanban_pm.runtime.pty_manager import pty_manager, strip_ansi
+from agent_kanban_pm.runtime.process_launcher import (
     runner_available,
     has_session,
     kill_session,
@@ -65,7 +65,7 @@ def test_pty_session_lifecycle():
 
 
 def test_process_launcher_fallback():
-    with mock.patch("kanban_runtime.process_launcher.tmux_available", return_value=False):
+    with mock.patch("agent_kanban_pm.runtime.process_launcher.tmux_available", return_value=False):
         session_name = "test-launcher-fallback"
         cmd = [
             sys.executable,

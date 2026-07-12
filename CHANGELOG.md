@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Collision-safe src package layout** — Application, CLI, routers, runtime, MCP server, and packaged assets now live under `src/agent_kanban_pm/`; installed distributions expose only the `agent_kanban_pm` namespace.
 - **Per-task git worktrees on real branches** — Each agent session now runs on a `kanban/task-{id}-{agent}` branch started from the detected base ref (`origin/HEAD` → `origin/main` → `origin/master` → `main` → `master`) instead of a detached `HEAD`. This unblocks the eventual merge-back path (PR or `merge --ff-only`).
 - **Launch-time rebase** — Before the tmux session starts, the worktree is `fetch`ed and `rebase`d onto the base. If the worktree is dirty, no base is found, or the rebase conflicts, the launcher logs the reason as an `AgentActivity` and leaves the worktree untouched. Records `branch`, `base_ref`, and `base_sync` in the activity payload for audit.
 - **`SchedulingConfig` in preferences** — Caps on per-agent active tasks and per-project parallel implementation (defaults: 1/1, review parallelism allowed). Surfaced via the existing `_scheduling_blocker` path.

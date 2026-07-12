@@ -7,15 +7,15 @@ from sqlalchemy.orm import selectinload
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from database import async_session_maker, init_db
-from kanban_runtime.handoff_protocol import update_status_file
-from kanban_runtime.preferences import RoleAssignment
-from kanban_runtime.session_streamer import (
+from agent_kanban_pm.db import async_session_maker, init_db
+from agent_kanban_pm.runtime.handoff_protocol import update_status_file
+from agent_kanban_pm.runtime.preferences import RoleAssignment
+from agent_kanban_pm.runtime.session_streamer import (
     _check_completion,
     _finalize_completed_session,
     _terminal_completion_summary,
 )
-from models import (
+from agent_kanban_pm.models import (
     AgentSession,
     AgentSessionStatus,
     ApprovalStatus,
@@ -74,9 +74,9 @@ async def test_worker_completion_moves_task_to_review_and_assigns_review_roles(t
     async def _publish_noop(*args, **kwargs):
         return None
 
-    monkeypatch.setattr("kanban_runtime.session_streamer.event_bus.publish", _publish_noop)
+    monkeypatch.setattr("agent_kanban_pm.runtime.session_streamer.event_bus.publish", _publish_noop)
     monkeypatch.setattr(
-        "kanban_runtime.preferences.load_preferences",
+        "agent_kanban_pm.runtime.preferences.load_preferences",
         lambda: _FakePrefs({
             "test": RoleAssignment(agent="handoff-test-agent"),
             "diff_review": RoleAssignment(agent="handoff-review-agent"),
@@ -176,9 +176,9 @@ async def test_review_completion_moves_task_to_done_and_assigns_git_pr(tmp_path,
     async def _publish_noop(*args, **kwargs):
         return None
 
-    monkeypatch.setattr("kanban_runtime.session_streamer.event_bus.publish", _publish_noop)
+    monkeypatch.setattr("agent_kanban_pm.runtime.session_streamer.event_bus.publish", _publish_noop)
     monkeypatch.setattr(
-        "kanban_runtime.preferences.load_preferences",
+        "agent_kanban_pm.runtime.preferences.load_preferences",
         lambda: _FakePrefs({"git_pr": RoleAssignment(agent="handoff-git-agent")}),
     )
 

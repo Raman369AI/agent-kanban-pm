@@ -7,7 +7,10 @@ is releasable on its own.
 
 ---
 
-## Phase 0 — Stabilize what exists (small, do first)
+## Phase 0 — Stabilize what exists (completed)
+
+Phase 0 was completed in July 2026. The items below are retained as the
+implementation record.
 
 1. **Fix the failing test.** `tests/test_ui_routes.py::test_ui_routes_and_board_render`
    fails because one UI route still uses the legacy
@@ -34,11 +37,11 @@ is releasable on its own.
 
 ## Phase 1 — Packaging correctness (blocks everything else)
 
-1. **Adopt a single-package src layout.** Today `pip install` drops `main`,
+1. **Adopt a single-package src layout (completed).** Previously, `pip install` dropped `main`,
    `auth`, `database`, `models`, `schemas`, `adapters`, `event_bus`,
    `websocket_manager`, `open_project`, `mcp_server`, and a generic `routers`
    package into top-level site-packages — near-guaranteed collisions with any
-   other installed package. Restructure:
+   other installed package. Implemented structure:
 
    ```
    src/agent_kanban_pm/
@@ -94,8 +97,10 @@ is releasable on its own.
    per-role `autonomy: supervised|auto` knob in `preferences.yaml`, default
    `supervised`, and have `kanban init` ask once, loudly, before enabling
    bypass modes. Keep worktree isolation as the second layer, not the only one.
-4. **WebSocket auth.** `/ws` is exempted from the token middleware; require the
-   token as a query param or first message before subscribing.
+4. **WebSocket auth (completed).** The HTTP middleware exempts WebSocket
+   upgrades, but both `/ws` and `/ws/projects/{project_id}` now verify the
+   Kanban token before subscribing. Keep regression coverage for query-string,
+   cookie, and authorization-header authentication.
 
 ## Phase 3 — Runtime correctness
 
@@ -125,6 +130,17 @@ is releasable on its own.
    `API_BASE = "http://localhost:8000"`, ignoring the instance port logic —
    route it through `kanban_runtime.instance.get_api_base()` (or fold it into
    `kanban open` as a CLI subcommand and delete the standalone script).
+
+6. **Cleanly close async database resources in tests and shutdown.** The suite
+   passes, but currently emits an unhandled `aiosqlite` worker-thread warning
+   after an event loop has closed. Ensure test fixtures and application
+   lifespan shutdown dispose engines and finish outstanding database work; make
+   thread/resource warnings fail CI once the cleanup is in place.
+7. **Make assignment admission atomic.** Parallel assignment events currently
+   perform limit and active-session checks before creating the session/lease.
+   Enforce the one-active-lease/session invariants in the database (or through
+   a serialized admission transaction) so two concurrent events cannot both
+   pass the check and launch duplicate work.
 
 ## Phase 4 — Product surface & docs
 
@@ -165,7 +181,7 @@ is releasable on its own.
 
 | Order | Work | Size |
 |-------|------|------|
-| 1 | Phase 0 (stabilize, CI installs package) | ~1 day |
+| 1 | Phase 0 (completed: stabilize, CI installs package) | Done |
 | 2 | Phase 1 (src layout, `mcp` dep, data home) | 2–3 days, one big PR |
 | 3 | Phase 5.1 (claim PyPI name, publish first alpha) | hours |
 | 4 | Phase 2 (auth/CSRF/token/permissions defaults) | 2 days |

@@ -25,8 +25,8 @@ import tests_helper  # noqa: F401  — auto-clean throwaway entities/projects on
 
 from fastapi.testclient import TestClient
 
-from main import app
-from kanban_cli.chat_designer import (
+from agent_kanban_pm.app import app
+from agent_kanban_pm.cli.chat_designer import (
     ChatDesigner,
     DesignerError,
     DesignerInvocation,
@@ -34,8 +34,8 @@ from kanban_cli.chat_designer import (
     PlanTask,
     parse_plan_block,
 )
-from kanban_cli.chat import drop_task, render_plan
-from kanban_runtime.preferences import RoleAssignment
+from agent_kanban_pm.cli.chat import drop_task, render_plan
+from agent_kanban_pm.runtime.preferences import RoleAssignment
 
 
 SAMPLE_OUTPUT = """\
@@ -112,7 +112,7 @@ def test_designer_retries_on_first_failure():
         calls["n"] += 1
         return "garbage with no plan block" if calls["n"] == 1 else valid
 
-    import kanban_cli.chat_designer as cd
+    import agent_kanban_pm.cli.chat_designer as cd
     original = cd.run_subprocess
     cd.run_subprocess = fake_run
     try:
@@ -140,7 +140,7 @@ def test_designer_raises_after_retry_fails():
         display_name="fake",
     )
 
-    import kanban_cli.chat_designer as cd
+    import agent_kanban_pm.cli.chat_designer as cd
     original = cd.run_subprocess
     cd.run_subprocess = lambda inv, prompt: "still no plan block at all"
     try:
@@ -175,8 +175,8 @@ def test_drop_task_rewires_depends_on():
 def _create_human_owner(name: str) -> int:
     """Insert a HUMAN OWNER directly in the DB (no public register endpoint)."""
     import asyncio
-    from database import async_session_maker
-    from models import Entity, EntityType, Role
+    from agent_kanban_pm.db import async_session_maker
+    from agent_kanban_pm.models import Entity, EntityType, Role
 
     async def _run() -> int:
         async with async_session_maker() as db:

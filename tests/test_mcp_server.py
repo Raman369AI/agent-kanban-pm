@@ -1,9 +1,9 @@
 import pytest
 from sqlalchemy import select
 
-from database import async_session_maker, init_db
-from mcp_server import KanbanMCPServer
-from models import ApprovalStatus, Entity, EntityType, Project, Role, Stage, Task, TaskStatus
+from agent_kanban_pm.db import async_session_maker, init_db
+from agent_kanban_pm.mcp.server import KanbanMCPServer
+from agent_kanban_pm.models import ApprovalStatus, Entity, EntityType, Project, Role, Stage, Task, TaskStatus
 
 
 @pytest.mark.asyncio

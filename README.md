@@ -114,14 +114,14 @@ expected to be recorded in `STATUS.md` rather than queued for human approval.
 Critical review and approval records can still be created through the REST/MCP
 surfaces when an agent or human needs an explicit audit gate.
 To roll back to supervised execution, edit the corresponding YAML in
-`kanban_runtime/data/agents/` (or your `~/.kanban/agents/` override).
+`src/agent_kanban_pm/data/agents/` (or your `~/.kanban/agents/` override).
 
 ## MCP Identity
 
-CLI agents connect through `mcp_server.py` using local process identity:
+CLI agents connect through `agent_kanban_pm.mcp.server` using local process identity:
 
 ```bash
-KANBAN_AGENT_NAME=codex KANBAN_AGENT_ROLE=worker python mcp_server.py
+KANBAN_AGENT_NAME=codex KANBAN_AGENT_ROLE=worker python -m agent_kanban_pm.mcp.server
 ```
 
 `KANBAN_AGENT_NAME` must match an adapter entity loaded from
@@ -148,7 +148,7 @@ python -m build              # build package
 twine check dist/*           # verify artifacts
 ```
 
-Package data is served from `kanban_runtime/data/`; the historical root-level
+Package data is served from `agent_kanban_pm/data/`; the historical root-level
 `agents/`, `mcp_configs/`, `static/`, and `templates/` folders are not part of
 the packaged runtime.
 

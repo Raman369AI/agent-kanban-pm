@@ -17,7 +17,7 @@ import yaml
 
 import tests_helper  # noqa: F401  — autouse cleanup listeners
 
-from kanban_runtime.assignment_launcher import (
+from agent_kanban_pm.runtime.assignment_launcher import (
     AssignmentLauncher,
     _build_prompt,
     _create_git_worktree,
@@ -30,7 +30,7 @@ from kanban_runtime.assignment_launcher import (
 GIT = shutil.which("git")
 pytestmark = pytest.mark.skipif(GIT is None, reason="git binary not available")
 
-ADAPTER_DIR = Path(__file__).resolve().parent.parent / "kanban_runtime" / "data" / "agents"
+ADAPTER_DIR = Path(__file__).resolve().parent.parent / "src" / "agent_kanban_pm" / "data" / "agents"
 
 
 def _run(*args, cwd=None):

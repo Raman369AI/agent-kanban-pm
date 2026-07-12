@@ -1,4 +1,4 @@
-from kanban_runtime.handoff_protocol import (
+from agent_kanban_pm.runtime.handoff_protocol import (
     STATUS_TEMPLATE,
     available_handoff_agents,
     build_handoff_instructions,
@@ -10,7 +10,7 @@ from kanban_runtime.handoff_protocol import (
     read_status_file,
     status_path_for_workspace,
 )
-from kanban_runtime.preferences import Preferences, RoleAssignment, RoleConfig
+from agent_kanban_pm.runtime.preferences import Preferences, RoleAssignment, RoleConfig
 
 
 def test_default_profiles_match_multi_agent_protocol():
@@ -108,7 +108,7 @@ def test_available_handoff_agents_includes_active_team_and_defaults(monkeypatch)
     )
 
     monkeypatch.setattr(
-        "kanban_runtime.handoff_protocol.discover_popular_clis",
+        "agent_kanban_pm.runtime.handoff_protocol.discover_popular_clis",
         lambda: [],
     )
 

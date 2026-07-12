@@ -57,35 +57,19 @@ dev = [
 ]
 
 [project.scripts]
-kanban = "kanban_cli:main"
-kanban-cli = "kanban_cli:main"
-antigravity = "kanban_cli.antigravity_cli:main"
-
-[tool.setuptools]
-py-modules = [
-  "adapters",
-  "auth",
-  "database",
-  "event_bus",
-  "main",
-  "mcp_server",
-  "models",
-  "open_project",
-  "schemas",
-  "websocket_manager",
-]
+kanban = "agent_kanban_pm.cli:main"
+kanban-cli = "agent_kanban_pm.cli:main"
+antigravity = "agent_kanban_pm.cli.antigravity_cli:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["kanban_cli*", "kanban_runtime*", "routers*"]
-namespaces = true
+where = ["src"]
+include = ["agent_kanban_pm*"]
 
 [tool.setuptools.dynamic]
-version = {attr = "kanban_runtime._version.__version__"}
+version = {attr = "agent_kanban_pm.runtime._version.__version__"}
 
 [tool.setuptools.package-data]
-kanban_runtime = ["_version.py"]
-"kanban_runtime.data" = ["templates/*.html", "static/css/*.css", "static/js/*.js", "agents/*.yaml", "mcp_configs/*.json"]
+"agent_kanban_pm.data" = ["templates/*.html", "static/css/*.css", "static/js/*.js", "agents/*.yaml", "mcp_configs/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

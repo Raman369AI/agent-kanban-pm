@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import tests_helper  # noqa: F401  — auto-clean throwaway entities/projects on exit
 from fastapi.testclient import TestClient
-from main import app
+from agent_kanban_pm.app import app
 
 def test_rbac():
     suffix = uuid.uuid4().hex[:8]

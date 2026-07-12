@@ -11,13 +11,13 @@ import json
 import pytest
 from datetime import UTC, datetime
 
-from models import (
+from agent_kanban_pm.models import (
     StagePolicy, ReviewMode, Project, Stage, Task, TaskStatus,
     Entity, EntityType, Role, ApprovalStatus, AgentSession,
     AgentSessionStatus, OrchestrationDecision, DecisionType,
 )
-from schemas import StagePolicyCreate, StagePolicyUpdate, StagePolicyResponse
-from kanban_runtime.stage_policy import (
+from agent_kanban_pm.schemas import StagePolicyCreate, StagePolicyUpdate, StagePolicyResponse
+from agent_kanban_pm.runtime.stage_policy import (
     normalize_stage_key, DEFAULT_POLICIES, validate_transition,
     seed_default_policies, policy_roles, policy_outputs,
 )
@@ -231,7 +231,7 @@ class TestTransitionValidation:
 
 class TestArchitectureCleanup:
     def test_select_role_for_task_always_returns_worker(self):
-        from kanban_runtime.assignment_launcher import _select_role_for_task
+        from agent_kanban_pm.runtime.assignment_launcher import _select_role_for_task
 
         class FakeTask:
             title = "Implement OAuth login UI test"
@@ -242,7 +242,7 @@ class TestArchitectureCleanup:
         assert result == "worker"
 
     def test_select_role_for_task_no_text_matching(self):
-        from kanban_runtime.assignment_launcher import _select_role_for_task
+        from agent_kanban_pm.runtime.assignment_launcher import _select_role_for_task
 
         class FakeTask:
             title = "Fix typo"
@@ -255,7 +255,7 @@ class TestArchitectureCleanup:
     def test_finalize_session_does_not_complete_task(self):
         """Verify _finalize_completed_session does not change task status
         or stage — it only marks the session done and records activity."""
-        from kanban_runtime.session_streamer import _finalize_completed_session
+        from agent_kanban_pm.runtime.session_streamer import _finalize_completed_session
         import inspect
         source = inspect.getsource(_finalize_completed_session)
         assert "TaskStatus.COMPLETED" not in source
@@ -264,7 +264,7 @@ class TestArchitectureCleanup:
 
     def test_assign_orphaned_tasks_is_report_only(self):
         """Verify assign_orphaned_tasks is report-only: does not auto-assign."""
-        from kanban_runtime.assignment_launcher import AssignmentLauncher
+        from agent_kanban_pm.runtime.assignment_launcher import AssignmentLauncher
         import inspect
         source = inspect.getsource(AssignmentLauncher.assign_orphaned_tasks)
         assert "Auto-assigned" not in source or "Reported" in source
@@ -272,21 +272,21 @@ class TestArchitectureCleanup:
 
     def test_scan_and_advance_does_not_move_cards(self):
         """Verify scan_and_advance_completed_tasks does not move cards."""
-        from kanban_runtime.assignment_launcher import AssignmentLauncher
+        from agent_kanban_pm.runtime.assignment_launcher import AssignmentLauncher
         import inspect
         source = inspect.getsource(AssignmentLauncher.scan_and_advance_completed_tasks)
         assert "task.stage_id" not in source
         assert "Auto-advanced" not in source
 
     def test_assignment_launcher_supports_non_git_workspace_fallback(self):
-        from kanban_runtime.assignment_launcher import AssignmentLauncher
+        from agent_kanban_pm.runtime.assignment_launcher import AssignmentLauncher
         import inspect
         source = inspect.getsource(AssignmentLauncher.launch_for_assignment)
         assert "workspace_path = project.path" in source
         assert "project workspace" in source
 
     def test_assignment_launcher_uses_assigned_role_env(self):
-        from kanban_runtime.assignment_launcher import AssignmentLauncher
+        from agent_kanban_pm.runtime.assignment_launcher import AssignmentLauncher
         import inspect
         source = inspect.getsource(AssignmentLauncher.handle_event)
         assert "assigned_role=data.get(\"role\")" in source
