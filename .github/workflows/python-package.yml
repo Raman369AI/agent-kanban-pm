@@ -50,6 +50,10 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v5
       with:
+        # Pinned: uv.lock carries a format revision, and a newer uv than the
+        # one that wrote it fails `uv lock --check` even when the resolution is
+        # unchanged. Bump this together with a regenerated lockfile.
+        version: "0.12.7"
         enable-cache: true
 
     - name: Verify the lockfile is current
