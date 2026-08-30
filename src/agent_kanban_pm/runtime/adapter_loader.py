@@ -32,7 +32,7 @@ USER_ADAPTERS_DIR = Path.home() / ".kanban" / "agents"
 
 POPULAR_CLI_TOOLS = [
     ("claude", "Claude Code"),
-    ("gemini", "Gemini CLI"),
+    ("agy", "Antigravity CLI"),
     ("codex", "Codex CLI"),
     ("opencode", "OpenCode"),
     ("aider", "Aider"),
@@ -78,6 +78,10 @@ class ChatDesignerSpec(BaseModel):
     output_format: str = "stdout"
     timeout_seconds: int = 120
     extra_args: List[str] = Field(default_factory=list)
+    # Some CLIs detect whether stdout is a terminal and print nothing when it
+    # is a pipe (Antigravity's `agy --print` does this: it hangs and exits 0
+    # with zero bytes). Those adapters must be run on a pseudo-terminal.
+    requires_tty: bool = False
 
 
 class TaskCommandSpec(BaseModel):
@@ -117,6 +121,11 @@ class AdapterSpec(BaseModel):
     prompt_patterns: List[PromptPatternSpec] = Field(default_factory=list)
     owns: List[str] = Field(default_factory=list, description="File/directory patterns this agent owns for handoff routing")
     review_only: bool = Field(default=False, description="If true, agent only reviews — does not own files")
+    # Retired upstream CLIs stay loadable so existing assignments keep working,
+    # but they are hidden from discovery and warn when assigned.
+    deprecated: bool = Field(default=False, description="If true, hide from discovery and warn on use")
+    deprecation_note: Optional[str] = Field(default=None, description="Shown when a deprecated adapter is used")
+    replaced_by: Optional[str] = Field(default=None, description="Adapter name that supersedes this one")
 
 
 class CliDiscoveryResult(BaseModel):

@@ -31,6 +31,7 @@ Override any value via environment variables:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import os
 import socket
@@ -321,6 +322,24 @@ def _chmod_owner_only(path: Path) -> None:
         logger.warning("Could not tighten permissions on %s: %s", path, exc)
 
 
+def tokens_match(candidate: Optional[str], expected: str) -> bool:
+    """Constant-time comparison of a client-supplied token against *expected*.
+
+    Encodes to bytes first: hmac.compare_digest raises TypeError on str
+    arguments containing non-ASCII, and the candidate comes straight from a
+    request header, so a non-ASCII value would otherwise surface as a 500
+    instead of a clean rejection.
+    """
+    if not candidate:
+        return False
+    try:
+        return hmac.compare_digest(
+            candidate.encode("utf-8"), expected.encode("utf-8")
+        )
+    except (AttributeError, UnicodeError):
+        return False
+
+
 def get_csrf_token() -> str:
     """Return the CSRF token paired with this instance's auth token.
 
@@ -329,9 +348,6 @@ def get_csrf_token() -> str:
     authenticated by the kanban-token cookie must also present this value in
     the X-CSRF-Token header; it is embedded in UI pages as a meta tag.
     """
-    import hashlib
-    import hmac
-
     return hmac.new(
         get_auth_token().encode("utf-8"), b"kanban-csrf-v1", hashlib.sha256
     ).hexdigest()

@@ -1,10 +1,10 @@
 name: opencode
 display_name: "OpenCode"
-version: "1.0"
+version: "1.1"
 
+# Flags verified against `opencode --help` / `opencode run --help` (v1.18.22).
 invoke:
   command: opencode
-  mcp_flag: "--mcp"
   info_flag: "--version"
   model_flag: "--model"
 
@@ -14,7 +14,7 @@ models:
   - id: opencode-default
     context_window: 128000
 
-protocol: mcp
+protocol: stdio
 
 auth:
   type: none
@@ -25,15 +25,18 @@ reporting:
   heartbeat_interval: 30
 
 chat_designer:
-  prompt_flag: "-p"
+  # `opencode run <message>` is the non-interactive form — a subcommand, not a
+  # flag — so it is passed as an extra arg and the prompt is appended after it.
+  prompt_flag: ""
+  extra_args: ["run"]
   stdin: false
   output_format: "stdout"
-  timeout_seconds: 180
+  timeout_seconds: 300
 
 task_command:
-  prompt_file: ".kanban_task.md"
-  args: ["run", ".kanban_task.md"]
+  # `run` takes the message positionally; --dir scopes it to the worktree.
+  args: ["run", "--dir", "{workspace}", "{prompt}"]
+  auto_args: ["--auto"]
 
-# Handoff profile (P1-2)
 owns: []
 review_only: false

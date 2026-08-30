@@ -12,11 +12,14 @@ prompt before raising.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
+import selectors
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -28,6 +31,7 @@ from agent_kanban_pm.runtime.adapter_loader import (
     ChatDesignerSpec,
     load_all_adapters,
 )
+from agent_kanban_pm.runtime.pty_manager import strip_ansi
 from agent_kanban_pm.runtime.preferences import RoleAssignment, load_preferences
 
 
@@ -102,6 +106,10 @@ class DesignerInvocation:
     timeout_seconds: int
     adapter_name: str
     display_name: str
+    # True when the CLI only writes output to a terminal (see
+    # ChatDesignerSpec.requires_tty); such commands run on a PTY instead of
+    # through a pipe.
+    requires_tty: bool = False
 
 
 SYSTEM_PROMPT = """You are the Orchestrator Agent for an Agent Kanban PM system.
@@ -173,6 +181,7 @@ def resolve_invocation(
         timeout_seconds = role_assignment.chat_timeout_seconds or cd.timeout_seconds
         extra_args = list(cd.extra_args)
         auth_env_var = adapter.auth.env_var if adapter.auth else None
+        requires_tty = cd.requires_tty
     else:
         command = role_assignment.command or role_assignment.agent
         adapter_name = role_assignment.agent
@@ -182,6 +191,7 @@ def resolve_invocation(
         timeout_seconds = role_assignment.chat_timeout_seconds or 120
         extra_args = []
         auth_env_var = None
+        requires_tty = False
 
     if not shutil.which(command):
         raise DesignerError(
@@ -215,6 +225,7 @@ def resolve_invocation(
         timeout_seconds=timeout_seconds,
         adapter_name=adapter_name,
         display_name=display_name,
+        requires_tty=requires_tty,
     )
 
 
@@ -264,6 +275,85 @@ def parse_plan_block(text: str) -> PlanV1:
     return plan
 
 
+def _run_on_pty(cmd: List[str], env: dict, timeout_seconds: int) -> str:
+    """Run *cmd* attached to a pseudo-terminal and return its combined output.
+
+    Some CLIs check whether stdout is a terminal and print nothing when it is a
+    pipe. Antigravity's `agy --print` is one: under `subprocess.run` it blocks
+    until the timeout and exits 0 having written zero bytes, while the same
+    command on a PTY answers normally. Giving it a terminal is the only fix
+    available from this side.
+
+    Output is drained continuously — a PTY has a small kernel buffer, so a
+    process that fills it while nobody reads will deadlock.
+    """
+    import pty  # POSIX-only; the runtime already requires Linux/macOS.
+
+    master_fd, slave_fd = pty.openpty()
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+            close_fds=True,
+        )
+    except FileNotFoundError:
+        os.close(master_fd)
+        os.close(slave_fd)
+        raise
+    # The child owns the slave end now; holding it here would keep the master
+    # readable forever and hide EOF.
+    os.close(slave_fd)
+
+    chunks: List[bytes] = []
+    deadline = time.monotonic() + timeout_seconds
+    selector = selectors.DefaultSelector()
+    selector.register(master_fd, selectors.EVENT_READ)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                proc.wait()
+                raise DesignerError(
+                    f"orchestrator timed out after {timeout_seconds}s"
+                )
+            if selector.select(min(remaining, 0.5)):
+                try:
+                    data = os.read(master_fd, 65536)
+                except OSError as exc:
+                    # EIO on the master is how Linux reports the child closing
+                    # the slave — a normal end of output, not a failure.
+                    if exc.errno == errno.EIO:
+                        break
+                    raise
+                if not data:
+                    break
+                chunks.append(data)
+            elif proc.poll() is not None:
+                break
+    finally:
+        selector.close()
+        os.close(master_fd)
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+    # A PTY terminates lines with CRLF; normalise so downstream parsing sees
+    # the same text it would get from a pipe.
+    output = strip_ansi(
+        b"".join(chunks).decode("utf-8", "replace")
+    ).replace("\r\n", "\n")
+    if proc.returncode != 0:
+        raise DesignerError(
+            f"orchestrator exited {proc.returncode}: "
+            f"{output.strip()[:500] or '<no output>'}"
+        )
+    return output
+
+
 def run_subprocess(invocation: DesignerInvocation, prompt: str) -> str:
     """Run the orchestrator CLI once and return raw stdout."""
     if invocation.use_stdin:
@@ -272,6 +362,18 @@ def run_subprocess(invocation: DesignerInvocation, prompt: str) -> str:
     else:
         cmd = [invocation.command, *invocation.args, prompt]
         stdin_data = None
+
+    if invocation.requires_tty:
+        if invocation.use_stdin:
+            raise DesignerError(
+                f"{invocation.display_name} is configured with both stdin and "
+                "requires_tty; the PTY runner passes the prompt as an argument, "
+                "so set one or the other."
+            )
+        try:
+            return _run_on_pty(cmd, invocation.env, invocation.timeout_seconds)
+        except FileNotFoundError as exc:
+            raise DesignerError(f"failed to launch orchestrator CLI: {exc}") from exc
 
     try:
         proc = subprocess.run(

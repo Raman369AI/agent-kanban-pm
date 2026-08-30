@@ -1,6 +1,5 @@
 import asyncio
 import getpass
-import hmac
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -362,7 +361,11 @@ async def token_auth_middleware(request: Request, call_next):
     if path == "/health" or path.startswith("/static") or path.startswith("/ws"):
         return await call_next(request)
 
-    from agent_kanban_pm.runtime.instance import get_auth_token, get_csrf_token
+    from agent_kanban_pm.runtime.instance import (
+        get_auth_token,
+        get_csrf_token,
+        tokens_match,
+    )
 
     # /ui/api/* are JSON endpoints, not pages: they always require the token.
     # HTML page GETs are exempt so a browser can load the UI and receive the
@@ -387,19 +390,22 @@ async def token_auth_middleware(request: Request, call_next):
             else:
                 header_token = auth_header
 
+        # compare_digest keeps the comparison time independent of how many
+        # leading characters matched, so a caller cannot recover the token one
+        # byte at a time.
         if header_token:
-            if header_token != expected_token:
+            if not tokens_match(header_token, expected_token):
                 return _unauthorized()
         else:
             cookie_token = request.cookies.get("kanban-token")
-            if not cookie_token or cookie_token != expected_token:
+            if not tokens_match(cookie_token, expected_token):
                 return _unauthorized()
             # Cookie-only auth is ambient (browsers attach cookies to any
             # same-site request, including forged form posts), so mutations
             # must also present the per-page CSRF token.
             if not is_safe:
                 csrf_header = request.headers.get("x-csrf-token", "")
-                if not hmac.compare_digest(csrf_header, get_csrf_token()):
+                if not tokens_match(csrf_header, get_csrf_token()):
                     return JSONResponse(
                         status_code=403,
                         content={"detail": "Forbidden: missing or invalid CSRF token"},

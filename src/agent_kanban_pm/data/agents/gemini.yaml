@@ -1,6 +1,17 @@
 name: gemini
-display_name: "Gemini (Google)"
-version: "1.0"
+display_name: "Gemini CLI (retired)"
+version: "1.1"
+
+# Google retired Gemini CLI for consumer accounts on 2026-06-18 and replaced it
+# with Antigravity CLI. Access continues only for Gemini Code Assist
+# Standard/Enterprise licences and paid API keys, so this adapter is kept
+# loadable for those users — but hidden from discovery and warned about on use.
+deprecated: true
+replaced_by: antigravity
+deprecation_note: >-
+  Gemini CLI was retired for consumer accounts on 2026-06-18. It still works
+  with a Gemini Code Assist Standard/Enterprise licence or a paid API key.
+  Otherwise switch to Antigravity CLI: kanban roles assign <role> antigravity
 
 invoke:
   command: gemini
@@ -34,6 +45,5 @@ task_command:
   args: ["-i", "{prompt}"]
   auto_args: ["--approval-mode", "yolo"]
 
-# Handoff profile (P1-2)
 owns: ['ui/', 'components/', 'templates/', 'static/']
 review_only: false
