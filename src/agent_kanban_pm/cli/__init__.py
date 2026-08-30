@@ -51,7 +51,11 @@ def cmd_init(args):
     from agent_kanban_pm.runtime.adapter_loader import copy_bundled_adapters
     copy_bundled_adapters()
 
-    adapters = load_all_adapters()
+    all_adapters = load_all_adapters()
+    # Retired CLIs stay loadable for anyone who still has access, but a fresh
+    # setup should never be steered onto one.
+    adapters = [a for a in all_adapters if not a.deprecated]
+    hidden = [a for a in all_adapters if a.deprecated]
     if not adapters:
         print("No adapters found. Make sure you have agent YAMLs in ~/.kanban/agents/")
         sys.exit(1)
@@ -64,6 +68,11 @@ def cmd_init(args):
         print(f"  {i}. {a.display_name} (roles: {roles}){marker}")
         if "manager" in a.roles:
             manager_candidates.append(a)
+
+    if hidden:
+        names = ", ".join(a.display_name for a in hidden)
+        print(f"\n  Hidden (retired upstream): {names}")
+        print("  Assign one explicitly with `kanban roles assign` if you still have access.")
 
     if not manager_candidates:
         print("\nNo agent declares 'manager' role. Using first agent as fallback.")
@@ -204,7 +213,10 @@ def cmd_agents_list(args):
     print("-" * 110)
     for a in adapters:
         available = shutil.which(a.invoke.command) is not None
-        status = "yes" if available else "no (CLI missing)"
+        if a.deprecated:
+            status = "deprecated"
+        else:
+            status = "yes" if available else "no (CLI missing)"
         default_model = a.models[0].id if a.models else "default"
         print(f"{a.name:<20} {a.display_name:<25} {', '.join(a.roles):<20} {default_model:<24} {status}")
 
@@ -392,6 +404,10 @@ def cmd_roles_assign(args):
     explicit_models = [m.strip() for m in (args.models or "").split(",") if m.strip()]
     selected_model = args.model
     adapter = adapters.get(args.agent)
+    if adapter and adapter.deprecated:
+        print(f"WARNING: '{adapter.display_name}' is deprecated.")
+        if adapter.deprecation_note:
+            print(f"  {' '.join(adapter.deprecation_note.split())}")
     command = args.command
     if not adapter:
         command = command or args.agent

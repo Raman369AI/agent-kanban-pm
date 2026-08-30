@@ -20,7 +20,7 @@ system diagram.
 - `git`
 - Recommended: `tmux` for detachable terminal sessions. If `tmux` is not
   available, the runtime uses its native PTY subprocess fallback.
-- At least one CLI agent (Claude Code, Gemini CLI, Codex, OpenCode, Aider, etc.)
+- At least one CLI agent (Claude Code, Antigravity CLI, Codex, OpenCode, Aider, etc.)
 - Optional: `gh` for GitHub PR/issue/review sync
 
 ## Install
@@ -55,7 +55,7 @@ kanban run --no-supervisor    # server + UI only
 
 ```bash
 kanban roles list                                 # show role assignments
-kanban roles assign worker gemini --mode headless  # assign a role
+kanban roles assign worker opencode --mode headless # assign a role
 kanban agents discover                            # find local CLIs
 kanban sheet                                      # compact status
 kanban handoff status --workspace .               # inspect worktree state
@@ -106,6 +106,41 @@ The handoff source of truth is each worktree's `STATUS.md`. If an agent exits
 without updating it, the card may stay where it is because the runtime cannot
 reliably tell whether the work is ready for review.
 
+## Bundled agent adapters
+
+Each adapter is a YAML file describing how to launch one CLI. `kanban init`
+copies the bundled set into `~/.kanban/agents/`, and you can drop your own
+file there without touching Python.
+
+| Adapter | Command | Status |
+|---|---|---|
+| `claude` | `claude` | Supported |
+| `antigravity` | `agy` | Supported — Google's current CLI |
+| `codex` | `codex` | Supported |
+| `opencode` | `opencode` | Supported |
+| `aider` | `aider` | Supported |
+| `gemini` | `gemini` | **Retired upstream** — see below |
+| `goose`, `crush`, `continue` | — | Stubs; invocation not yet verified |
+
+### Gemini CLI is retired
+
+Google shut Gemini CLI down for consumer accounts on 2026-06-18 and replaced
+it with **Antigravity CLI** (`agy`). The `gemini` adapter is still shipped and
+still works for anyone with a Gemini Code Assist Standard/Enterprise licence
+or a paid API key, but it is hidden from `kanban init` and `kanban agents
+discover`, and warns when assigned.
+
+To move a role across:
+
+```bash
+kanban roles assign worker antigravity --mode headless
+```
+
+One behaviour worth knowing: `agy --print` writes nothing when its stdout is a
+pipe, so the orchestrator chat runs it on a pseudo-terminal
+(`chat_designer.requires_tty: true` in the adapter). Task sessions were
+already unaffected, since they run under tmux or a PTY.
+
 ## Autonomy & approval
 
 Agents run **supervised** by default: the CLI keeps its approval prompts, and
@@ -116,8 +151,8 @@ Auto mode is an explicit per-role opt-in. Set `autonomy: auto` on a role in
 `~/.kanban/preferences.yaml` (or answer `y` at the autonomy prompt in
 `kanban init`, or pass `--autonomy auto` to `kanban roles assign`). The
 launcher then appends the adapter's bypass flags — `claude
---permission-mode bypassPermissions`, `gemini --approval-mode yolo`,
-`codex --full-auto`, `aider --yes-always`, declared as
+--permission-mode bypassPermissions`, `agy --dangerously-skip-permissions`,
+`codex --full-auto`, `opencode --auto`, `aider --yes-always`, declared as
 `task_command.auto_args` in the adapter YAML — so the agent never pauses to
 ask. Combined with the per-task worktree, the blast radius is scoped to that
 worktree, and risky actions are expected to be recorded in `STATUS.md`.
