@@ -13,6 +13,10 @@ Flags asserted here were read from the installed binaries:
 
 from __future__ import annotations
 
+import os
+
+import pytest
+
 import tests_helper  # noqa: F401  — autouse cleanup listeners
 
 from agent_kanban_pm.runtime.adapter_loader import (
@@ -42,6 +46,25 @@ def _adapter(name: str) -> AdapterSpec:
     by_name = {a.name: a for a in bundled_adapters()}
     assert name in by_name, f"adapter {name!r} not bundled: {sorted(by_name)}"
     return by_name[name]
+
+
+@pytest.fixture
+def cli_stubs(tmp_path, monkeypatch):
+    """Put inert stubs for the bundled CLIs on PATH.
+
+    `_build_agent_command` resolves the command with shutil.which and raises if
+    it is missing. CI installs none of the agent CLIs, and these tests are about
+    the argument vector rather than the binary, so a stub is enough. They are
+    never executed.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for command in ("agy", "opencode", "claude", "codex", "aider", "gemini"):
+        stub = bin_dir / command
+        stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    return bin_dir
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +136,7 @@ def test_antigravity_chat_designer_demands_a_tty():
     assert _adapter("antigravity").chat_designer.requires_tty is True
 
 
-def test_antigravity_supervised_run_omits_the_bypass_flag(tmp_path):
+def test_antigravity_supervised_run_omits_the_bypass_flag(tmp_path, cli_stubs):
     agy = _adapter("antigravity")
     cmd = _build_agent_command(agy, str(tmp_path), "do the thing", AUTONOMY_SUPERVISED)
     assert "--dangerously-skip-permissions" not in cmd
@@ -121,7 +144,7 @@ def test_antigravity_supervised_run_omits_the_bypass_flag(tmp_path):
     assert "do the thing" in cmd
 
 
-def test_antigravity_auto_run_appends_the_bypass_flag(tmp_path):
+def test_antigravity_auto_run_appends_the_bypass_flag(tmp_path, cli_stubs):
     agy = _adapter("antigravity")
     cmd = _build_agent_command(agy, str(tmp_path), "do the thing", AUTONOMY_AUTO)
     assert "--dangerously-skip-permissions" in cmd
@@ -148,7 +171,7 @@ def test_opencode_auto_args_use_its_own_approval_flag():
     assert _adapter("opencode").task_command.auto_args == ["--auto"]
 
 
-def test_opencode_supervised_run_omits_auto(tmp_path):
+def test_opencode_supervised_run_omits_auto(tmp_path, cli_stubs):
     oc = _adapter("opencode")
     cmd = _build_agent_command(oc, str(tmp_path), "ship it", AUTONOMY_SUPERVISED)
     assert "--auto" not in cmd
@@ -156,7 +179,7 @@ def test_opencode_supervised_run_omits_auto(tmp_path):
     assert str(tmp_path) in cmd
 
 
-def test_opencode_auto_run_appends_auto(tmp_path):
+def test_opencode_auto_run_appends_auto(tmp_path, cli_stubs):
     oc = _adapter("opencode")
     cmd = _build_agent_command(oc, str(tmp_path), "ship it", AUTONOMY_AUTO)
     assert "--auto" in cmd
