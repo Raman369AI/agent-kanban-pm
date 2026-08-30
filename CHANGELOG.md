@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0rc1] — 2026-08-30
+
+Release candidate for local, single-user development.
+
+### Added
+- **`kanban audit`** — Reads the append-only agent activity trail: what each agent ran, in which workspace and branch, and under which autonomy. Filters: `--project`, `--task`, `--session`, `--agent`, `--since HOURS`, `--commands`, `--auto`, `--limit`, `--json`. It queries the database directly rather than the HTTP API, so the trail is still reachable when the server is down — which is usually when someone needs it. `GET /agents/activity` gains matching `activity_type` and `has_command` filters.
+- **mcp 1.x and 2.x are both supported** — 2.x removed the `@server.list_tools()` / `@server.call_tool()` decorators in favour of `add_request_handler`. Registration now adapts to whichever generation is installed, so the `mcp>=1.0,<2` pin is gone; it would otherwise collide with any environment needing 2.x. All 38 tools and their schemas verified identical on both (`inputSchema` survives as a validation alias in 2.x).
+- **Locked-dependency CI job** — `uv lock --check` plus a full test run against `uv.lock`. The matrix job still resolves fresh to catch upstream breakage early; this job proves the combination users actually install works. `uv.lock` regenerated for Python 3.11+ (it required 3.12+ while the project and CI support 3.11).
+
+### Changed
+- **Version is `0.4.0rc1`, classifier `Development Status :: 4 - Beta`** — previously `0.3.0a1` / Alpha.
+- **`kanban init` autonomy prompt** no longer cites the retired Gemini CLI's `--approval-mode yolo`; it names `claude` and `agy`, matching the flags the launcher appends.
+
 ## [Unreleased]
 
 ### Security

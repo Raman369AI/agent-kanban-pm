@@ -841,10 +841,16 @@ async def get_activity_feed(
     project_id: Optional[int] = None,
     session_id: Optional[int] = None,
     task_id: Optional[int] = None,
+    activity_type: Optional[ActivityType] = None,
+    has_command: bool = False,
     limit: int = 50,
     db: AsyncSession = Depends(get_db)
 ):
-    """Get recent agent activity feed, optionally filtered."""
+    """Get recent agent activity feed, optionally filtered.
+
+    `activity_type` and `has_command` narrow the feed to an audit view: what
+    the agents actually executed, rather than the full narration.
+    """
     query = select(AgentActivity).order_by(desc(AgentActivity.created_at))
 
     if agent_id:
@@ -855,6 +861,10 @@ async def get_activity_feed(
         query = query.filter(AgentActivity.session_id == session_id)
     if task_id:
         query = query.filter(AgentActivity.task_id == task_id)
+    if activity_type:
+        query = query.filter(AgentActivity.activity_type == activity_type)
+    if has_command:
+        query = query.filter(AgentActivity.command.isnot(None))
 
     result = await db.execute(query.limit(limit))
     return result.scalars().all()

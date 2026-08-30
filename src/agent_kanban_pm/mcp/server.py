@@ -47,6 +47,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 try:
+    import mcp.types as mcp_types
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
     from mcp.types import (
@@ -54,8 +55,14 @@ try:
         TextContent,
     )
     MCP_AVAILABLE = True
+    # mcp 1.x registers handlers with @server.list_tools() / @server.call_tool();
+    # 2.x dropped those decorators for explicit add_request_handler() calls.
+    # Everything else this module uses (Server.run, stdio_server, the types) is
+    # the same on both, so one flag covers the difference.
+    MCP_LEGACY_DECORATORS = hasattr(Server, "list_tools")
 except ImportError as e:
     MCP_AVAILABLE = False
+    MCP_LEGACY_DECORATORS = False
     logger.error(f"MCP library not available: {e}")
     logger.error("Install with: pip install mcp")
 
@@ -124,7 +131,6 @@ class KanbanMCPServer:
     def setup_handlers(self):
         """Setup MCP handlers"""
 
-        @self.server.list_tools()
         async def list_tools() -> list[Tool]:
             """List available MCP tools for agents"""
             return [
@@ -641,7 +647,6 @@ class KanbanMCPServer:
                 )
             ]
 
-        @self.server.call_tool()
         async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             """Handle tool calls from agents"""
             try:
@@ -659,6 +664,36 @@ class KanbanMCPServer:
             except Exception as e:
                 logger.error(f"Error in tool {name}: {e}")
                 return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+
+        self._register_tool_handlers(list_tools, call_tool)
+
+    def _register_tool_handlers(self, list_tools, call_tool) -> None:
+        """Attach the tool handlers to whichever mcp generation is installed.
+
+        1.x wraps them with @server.list_tools() / @server.call_tool(), which
+        adapt the return values themselves. 2.x removed those decorators: the
+        handlers are registered by method name, take a request context plus
+        parsed params, and must return the Result models rather than bare
+        lists.
+        """
+        if MCP_LEGACY_DECORATORS:
+            self.server.list_tools()(list_tools)
+            self.server.call_tool()(call_tool)
+            return
+
+        async def on_list_tools(_ctx, _params):
+            return mcp_types.ListToolsResult(tools=list(await list_tools()))
+
+        async def on_call_tool(_ctx, params):
+            content = await call_tool(params.name, params.arguments or {})
+            return mcp_types.CallToolResult(content=list(content))
+
+        self.server.add_request_handler(
+            "tools/list", mcp_types.PaginatedRequestParams, on_list_tools
+        )
+        self.server.add_request_handler(
+            "tools/call", mcp_types.CallToolRequestParams, on_call_tool
+        )
 
     # ========================================================================
     # HELPERS

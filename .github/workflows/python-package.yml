@@ -36,9 +36,31 @@ jobs:
     - name: Test with pytest
       run: pytest -v --timeout=60 --timeout-method=thread
 
+  locked:
+    name: Locked install (uv.lock)
+    runs-on: ubuntu-latest
+
+    # The matrix job above resolves dependencies fresh, which catches upstream
+    # breakage early but means CI tests a different set than a locked install
+    # gives a user. This job pins to uv.lock so the shipped combination is
+    # exercised too; if the two disagree, the lockfile needs refreshing.
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+
+    - name: Verify the lockfile is current
+      run: uv lock --check
+
+    - name: Test against the locked dependency set
+      run: uv run --locked --extra dev python -m pytest -q --timeout=60 --timeout-method=thread
+
   build-and-smoke:
     name: Build wheel + smoke test
-    needs: test
+    needs: [test, locked]
     runs-on: ubuntu-latest
 
     steps:
