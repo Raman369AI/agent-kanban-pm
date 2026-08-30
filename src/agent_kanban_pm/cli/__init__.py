@@ -152,10 +152,10 @@ def cmd_init(args):
     print("before file writes, shell commands, git, and network actions, and")
     print("those prompts land in the Kanban approval queue for a human.")
     print()
-    print("AUTO mode launches every CLI with its bypass flags (e.g.")
-    print("--permission-mode bypassPermissions, --approval-mode yolo) so agents")
-    print("NEVER pause to ask. Worktrees still isolate git branches, but an")
-    print("agent can then run arbitrary commands without confirmation.")
+    print("AUTO mode launches every CLI with its bypass flags (e.g. claude")
+    print("--permission-mode bypassPermissions, agy --dangerously-skip-permissions)")
+    print("so agents NEVER pause to ask. Worktrees still isolate git branches,")
+    print("but an agent can then run arbitrary commands without confirmation.")
     auto_choice = input("\nEnable AUTO mode for all roles? [y/N]: ").strip().lower()
     global_autonomy = AUTONOMY_AUTO if auto_choice in ("y", "yes") else AUTONOMY_SUPERVISED
     for ra in role_configs.values():
