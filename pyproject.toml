@@ -21,6 +21,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
   "Topic :: Software Development",
 ]
 dependencies = [
@@ -36,6 +39,7 @@ dependencies = [
   "httpx>=0.27.0",
   "jinja2>=3.1.6",
   "pyyaml>=6.0.0",
+  "mcp>=1.0",
 ]
 
 [project.urls]
@@ -59,6 +63,7 @@ dev = [
 [project.scripts]
 kanban = "agent_kanban_pm.cli:main"
 kanban-cli = "agent_kanban_pm.cli:main"
+kanban-mcp = "agent_kanban_pm.mcp.server:cli_main"
 antigravity = "agent_kanban_pm.cli.antigravity_cli:main"
 
 [tool.setuptools.packages.find]

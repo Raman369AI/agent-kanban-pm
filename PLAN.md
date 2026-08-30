@@ -35,7 +35,7 @@ implementation record.
    smoke"). Replace with a real flag on the row (e.g. `Project.is_demo`) or
    drop the filtering.
 
-## Phase 1 — Packaging correctness (blocks everything else)
+## Phase 1 — Packaging correctness (completed)
 
 1. **Adopt a single-package src layout (completed).** Previously, `pip install` dropped `main`,
    `auth`, `database`, `models`, `schemas`, `adapters`, `event_bus`,
@@ -76,27 +76,28 @@ implementation record.
    fallback imports `pty`), and emit a clear error on Windows instead of a
    traceback. WSL note in README.
 
-## Phase 2 — Security hardening (required before advertising it)
+## Phase 2 — Security hardening (completed)
 
-1. **Close the `/ui` auth bypass.** `token_auth_middleware` exempts every path
-   starting with `/ui`, but `routers/ui.py` has ~10 mutation endpoints
-   (`POST /ui/tasks/create`, `DELETE /ui/tasks/{id}`, `POST /ui/api/open-workspace`,
-   ...). Today the only thing stopping a malicious webpage is that browsers
-   won't attach `X-Entity-ID` cross-origin — and DNS-rebinding defeats
-   origin-based protection because the Host header is never validated. Fix:
-   - require the token (cookie or header) on **all** non-GET requests,
-     including `/ui/*`;
-   - set the cookie `httponly=True` and have UI JS use a same-origin
-     `fetch` that relies on the cookie plus a CSRF token embedded in the page;
-   - validate `Host` is `localhost`/`127.0.0.1` (TrustedHostMiddleware).
-2. **Protect the token file.** `get_auth_token()` writes `~/.kanban/token`
-   with default permissions; `chmod 600` it (`token_file.touch(mode=0o600)`).
-3. **Make auto-approval an explicit choice.** Bundled adapters default to
-   `--permission-mode bypassPermissions` / `--approval-mode yolo` /
-   `--full-auto`. For a public product the default should be safe: add a
-   per-role `autonomy: supervised|auto` knob in `preferences.yaml`, default
-   `supervised`, and have `kanban init` ask once, loudly, before enabling
-   bypass modes. Keep worktree isolation as the second layer, not the only one.
+1. **Close the `/ui` auth bypass (completed).** `token_auth_middleware` now
+   requires the token on every non-safe request, including `/ui/*` mutations,
+   and on all methods for `/ui/api/*` JSON endpoints. The `kanban-token`
+   cookie is `HttpOnly` + `SameSite=strict`; cookie-authenticated mutations
+   must also send `X-CSRF-Token`, an HMAC of the instance token embedded in
+   every page as a meta tag and attached by a `fetch` wrapper in `base.html`.
+   Header-authenticated callers (`X-Kanban-Token`, CLI/supervisor) skip CSRF.
+   `TrustedHostMiddleware` rejects non-loopback Host headers before routing
+   (`KANBAN_ALLOWED_HOSTS` extends the allowlist).
+2. **Protect the token file (completed).** `get_auth_token()` creates
+   `~/.kanban/token` with `0600` up front and tightens pre-existing
+   loose-permission files on read.
+3. **Make auto-approval an explicit choice (completed).** Adapter YAMLs moved
+   bypass flags (`--permission-mode bypassPermissions`, `--approval-mode
+   yolo`, `--full-auto`, `--yes-always`) from `task_command.args` to
+   `task_command.auto_args`, which the launcher and role supervisor append
+   only when the role's `autonomy` is `auto`. `RoleAssignment.autonomy`
+   defaults to `supervised` (unknown values fall back to supervised), and
+   `kanban init` asks once, loudly, before enabling AUTO for all roles;
+   `kanban roles assign --autonomy` and the roles UI API accept the knob.
 4. **WebSocket auth (completed).** The HTTP middleware exempts WebSocket
    upgrades, but both `/ws` and `/ws/projects/{project_id}` now verify the
    Kanban token before subscribing. Keep regression coverage for query-string,

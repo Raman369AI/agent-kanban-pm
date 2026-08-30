@@ -4,7 +4,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="kanban-csrf-token" content="{{ kanban_csrf_token() }}">
     <title>{% block title %}Agent Kanban PM{% endblock %}</title>
+    <script>
+        // Attach the CSRF token to every same-origin mutation. The kanban-token
+        // cookie is HttpOnly, so the page authenticates via the cookie and
+        // proves same-origin intent via this header.
+        (function () {
+            var meta = document.querySelector('meta[name="kanban-csrf-token"]');
+            var csrfToken = meta ? meta.getAttribute('content') : '';
+            if (!csrfToken || !window.fetch) { return; }
+            var originalFetch = window.fetch;
+            window.fetch = function (input, init) {
+                init = init || {};
+                var method = (init.method || (input && input.method) || 'GET').toUpperCase();
+                if (['GET', 'HEAD', 'OPTIONS'].indexOf(method) === -1) {
+                    var headers = new Headers(init.headers || (input && input.headers) || {});
+                    if (!headers.has('X-CSRF-Token')) {
+                        headers.set('X-CSRF-Token', csrfToken);
+                    }
+                    init.headers = headers;
+                }
+                return originalFetch.call(this, input, init);
+            };
+        })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link

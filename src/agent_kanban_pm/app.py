@@ -1,5 +1,6 @@
 import asyncio
 import getpass
+import hmac
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -338,8 +339,14 @@ app.add_middleware(
     allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Entity-ID"],
+    allow_headers=["Content-Type", "Authorization", "X-Entity-ID", "X-CSRF-Token"],
 )
+
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _unauthorized(detail: str = "Unauthorized: Invalid or missing Kanban Auth Token") -> JSONResponse:
+    return JSONResponse(status_code=401, content={"detail": detail})
 
 
 @app.middleware("http")
@@ -348,48 +355,90 @@ async def token_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
+    method = request.method.upper()
 
-    # Exempt public, static, and websocket endpoints
+    # Exempt public, static, and websocket endpoints. WebSocket routes verify
+    # the Kanban token themselves before subscribing (see routers/websockets.py).
     if path == "/health" or path.startswith("/static") or path.startswith("/ws"):
         return await call_next(request)
 
-    is_html_route = (path == "/" or path.startswith("/ui"))
+    from agent_kanban_pm.runtime.instance import get_auth_token, get_csrf_token
 
-    if not is_html_route:
-        # Check header, cookie, or Authorization header
-        token = request.headers.get("x-kanban-token") or request.cookies.get("kanban-token")
+    # /ui/api/* are JSON endpoints, not pages: they always require the token.
+    # HTML page GETs are exempt so a browser can load the UI and receive the
+    # auth cookie; every other request — including /ui/* mutations — requires
+    # the token.
+    is_ui_api = path.startswith("/ui/api")
+    is_html_route = (path == "/" or path.startswith("/ui")) and not is_ui_api
+    is_safe = method in _SAFE_METHODS
+    token_required = is_ui_api or not (is_html_route and is_safe)
 
-        # Check Authorization header (e.g. Bearer <token>)
-        auth_header = request.headers.get("authorization")
-        if not token and auth_header:
-            if auth_header.lower().startswith("bearer "):
-                token = auth_header[7:]
-            else:
-                token = auth_header
-
-        from agent_kanban_pm.runtime.instance import get_auth_token
+    if token_required:
         expected_token = get_auth_token()
-        if not token or token != expected_token:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Unauthorized: Invalid or missing Kanban Auth Token"}
-            )
+
+        # Header credentials (X-Kanban-Token / Authorization) cannot be set by
+        # a cross-origin webpage without passing CORS preflight, so they do
+        # not need CSRF protection.
+        header_token = request.headers.get("x-kanban-token")
+        auth_header = request.headers.get("authorization")
+        if not header_token and auth_header:
+            if auth_header.lower().startswith("bearer "):
+                header_token = auth_header[7:]
+            else:
+                header_token = auth_header
+
+        if header_token:
+            if header_token != expected_token:
+                return _unauthorized()
+        else:
+            cookie_token = request.cookies.get("kanban-token")
+            if not cookie_token or cookie_token != expected_token:
+                return _unauthorized()
+            # Cookie-only auth is ambient (browsers attach cookies to any
+            # same-site request, including forged form posts), so mutations
+            # must also present the per-page CSRF token.
+            if not is_safe:
+                csrf_header = request.headers.get("x-csrf-token", "")
+                if not hmac.compare_digest(csrf_header, get_csrf_token()):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Forbidden: missing or invalid CSRF token"},
+                    )
 
     response = await call_next(request)
 
-    # Set cookie for HTML pages so browser AJAX calls send it automatically
-    if is_html_route:
-        from agent_kanban_pm.runtime.instance import get_auth_token
+    # Set the auth cookie on HTML page loads so same-origin browser calls
+    # authenticate automatically. HttpOnly keeps it out of JS reach (the CSRF
+    # token travels via a meta tag instead); SameSite=strict blocks cross-site
+    # sending entirely.
+    if is_html_route and is_safe:
         response.set_cookie(
             key="kanban-token",
             value=get_auth_token(),
             path="/",
-            samesite="lax",
-            httponly=False
+            samesite="strict",
+            httponly=True,
         )
 
     return response
 
+
+# Reject requests with a non-loopback Host header before routing. Browsers
+# will otherwise reach the loopback server for any domain whose DNS resolves
+# to 127.0.0.1 (DNS rebinding). Added outermost so it runs before auth.
+# Extra hosts can be whitelisted via KANBAN_ALLOWED_HOSTS (comma-separated).
+if os.getenv("KANBAN_TESTING") != "1":
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    from agent_kanban_pm.runtime.instance import ALLOWED_HOSTS
+
+    _extra_hosts = [
+        h.strip() for h in os.getenv("KANBAN_ALLOWED_HOSTS", "").split(",") if h.strip()
+    ]
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[*ALLOWED_HOSTS, *_extra_hosts],
+        www_redirect=False,
+    )
 
 # Include routers
 app.include_router(ui.router)

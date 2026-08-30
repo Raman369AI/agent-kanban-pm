@@ -24,12 +24,18 @@ from agent_kanban_pm.runtime.task_transitions import (
 )
 from agent_kanban_pm.runtime.default_stages import DEFAULT_STAGES
 from agent_kanban_pm.runtime.handoff_protocol import update_status_file
+from agent_kanban_pm.runtime.instance import get_csrf_token
 from agent_kanban_pm.runtime.paths import templates_dir
 
 logger = logging.getLogger(__name__)
 
 # Initialize templates
 templates = Jinja2Templates(directory=str(templates_dir()))
+
+# Every page embeds the per-instance CSRF token as a meta tag; the fetch
+# wrapper in base.html forwards it as X-CSRF-Token on mutations. Derived from
+# the auth token, so no per-session storage is needed.
+templates.env.globals["kanban_csrf_token"] = get_csrf_token
 
 router = APIRouter(include_in_schema=False)
 
@@ -59,6 +65,7 @@ async def _role_assignment_payload():
             "display_name": adapter.display_name if adapter else (assignment.display_name or assignment.agent),
             "command": command,
             "mode": assignment.mode,
+            "autonomy": assignment.autonomy,
             "model": assignment.model or (models[0] if models else "default"),
             "models": models,
             "source": "adapter" if adapter else "standalone",
@@ -599,6 +606,15 @@ async def ui_assign_cli_to_role(
     if prefs.roles is None:
         prefs.roles = RoleConfig()
 
+    autonomy = body.get("autonomy")
+    if autonomy is not None and autonomy not in ("supervised", "auto"):
+        raise HTTPException(status_code=422, detail="autonomy must be 'supervised' or 'auto'")
+    if autonomy is None:
+        # Re-assigning a role without an explicit autonomy keeps the previous
+        # setting; new roles default to supervised.
+        previous = prefs.get_role_assignments().get(role_name)
+        autonomy = previous.autonomy if previous else "supervised"
+
     assignment = RoleAssignment(
         agent=agent,
         mode=body.get("mode") or "headless",
@@ -608,6 +624,7 @@ async def ui_assign_cli_to_role(
         display_name=body.get("display_name") or (adapter.display_name if adapter else agent),
         protocol=body.get("protocol") or (adapter.protocol if adapter else "stdio"),
         capabilities=adapter.capabilities if adapter else [role_name],
+        autonomy=autonomy,
     )
     setattr(prefs.roles, role_name, assignment)
     if role_name == "orchestrator":

@@ -29,6 +29,7 @@ from pathlib import Path
 from agent_kanban_pm.runtime.preferences import (
     Preferences, ManagerConfig, WorkerConfig, AutonomyConfig,
     RoleConfig, RoleAssignment, AgentRole,
+    AUTONOMY_AUTO, AUTONOMY_SUPERVISED,
     save_preferences, load_preferences, PREFERENCES_PATH,
 )
 from agent_kanban_pm.runtime.adapter_loader import load_all_adapters, discover_popular_clis
@@ -135,6 +136,26 @@ def cmd_init(args):
         else:
             print(f"  No match found for '{agent_choice}'. Skipping {role_key}.")
 
+    print("\n" + "=" * 60)
+    print("AUTONOMY / APPROVAL MODE")
+    print("=" * 60)
+    print("Agents run SUPERVISED by default: their CLI pauses for approval")
+    print("before file writes, shell commands, git, and network actions, and")
+    print("those prompts land in the Kanban approval queue for a human.")
+    print()
+    print("AUTO mode launches every CLI with its bypass flags (e.g.")
+    print("--permission-mode bypassPermissions, --approval-mode yolo) so agents")
+    print("NEVER pause to ask. Worktrees still isolate git branches, but an")
+    print("agent can then run arbitrary commands without confirmation.")
+    auto_choice = input("\nEnable AUTO mode for all roles? [y/N]: ").strip().lower()
+    global_autonomy = AUTONOMY_AUTO if auto_choice in ("y", "yes") else AUTONOMY_SUPERVISED
+    for ra in role_configs.values():
+        ra.autonomy = global_autonomy
+    if global_autonomy == AUTONOMY_AUTO:
+        print("AUTO mode enabled for all roles — agents will not pause for approval.")
+    else:
+        print("Supervised mode kept — risky actions require approval.")
+
     autonomy = AutonomyConfig(
         require_approval_for=["project_create", "agent_add"] if mode == "supervised" else [],
         auto_approve=["task_move", "task_assign", "comment"],
@@ -166,7 +187,7 @@ def cmd_init(args):
             if a.name == ra.agent:
                 display = a.display_name
                 break
-        print(f"  {rk:16s} -> {display} (mode: {ra.mode})")
+        print(f"  {rk:16s} -> {display} (mode: {ra.mode}, autonomy: {ra.autonomy})")
     print(f"  Config: {PREFERENCES_PATH}")
 
     print("\nStart the full system with: kanban run")
@@ -223,6 +244,10 @@ def cmd_daemon_stop(args):
 
 def cmd_run(args):
     """Start the full local system: server + UI + role supervisor."""
+    if sys.platform == "win32":
+        raise SystemExit(
+            "kanban run is supported on Linux and macOS. On Windows, run it inside WSL."
+        )
     from agent_kanban_pm.runtime.instance import get_port, get_api_base, get_instance_info
 
     host = args.host or "127.0.0.1"
@@ -405,6 +430,9 @@ def cmd_roles_assign(args):
             chat_timeout_seconds=getattr(args, "chat_timeout", None),
         )
 
+    if args.autonomy:
+        assignment.autonomy = args.autonomy
+
     if prefs.roles is None:
         prefs.roles = RoleConfig()
 
@@ -421,7 +449,10 @@ def cmd_roles_assign(args):
     display = adapter.display_name if adapter else (args.display_name or args.agent)
     source = "adapter" if adapter else f"standalone CLI: {command}"
     model_note = f", model: {assignment.model}" if assignment.model else ""
-    print(f"Assigned '{display}' to role '{role_name}' (mode: {mode}{model_note}, {source})")
+    print(
+        f"Assigned '{display}' to role '{role_name}' "
+        f"(mode: {mode}, autonomy: {assignment.autonomy}{model_note}, {source})"
+    )
 
 
 def cmd_sheet(args):
@@ -684,6 +715,13 @@ def main():
     roles_assign.add_argument("role", help="Role name (orchestrator, ui, architecture, worker, test, diff_review, git_pr)")
     roles_assign.add_argument("agent", help="Agent adapter name")
     roles_assign.add_argument("--mode", default="headless", help="Agent mode (supervised/auto/headless)")
+    roles_assign.add_argument(
+        "--autonomy",
+        choices=[AUTONOMY_SUPERVISED, AUTONOMY_AUTO],
+        default=None,
+        help="Approval autonomy: 'supervised' (default, CLI keeps approval prompts) "
+             "or 'auto' (launch with the adapter's bypass flags — use with care)",
+    )
     roles_assign.add_argument("--model", help="Default model for this role")
     roles_assign.add_argument("--models", help="Comma-separated allowed model list for standalone CLI roles")
     roles_assign.add_argument("--command", help="Standalone CLI command to run when agent is not an adapter")

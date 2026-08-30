@@ -2044,5 +2044,11 @@ async def main():
     await server.run()
 
 
+def cli_main() -> int:
+    """Synchronous console-script entry point for kanban-mcp."""
+    result = asyncio.run(main())
+    return result if isinstance(result, int) else 0
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(cli_main())

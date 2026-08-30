@@ -57,7 +57,12 @@ from agent_kanban_pm.runtime.process_launcher import (
     kill_session,
     start_session,
 )
-from agent_kanban_pm.runtime.preferences import Preferences, load_preferences
+from agent_kanban_pm.runtime.preferences import (
+    AUTONOMY_AUTO,
+    AUTONOMY_SUPERVISED,
+    Preferences,
+    load_preferences,
+)
 from agent_kanban_pm.runtime.instance import get_tmux_prefix
 
 logger = logging.getLogger(__name__)
@@ -285,6 +290,7 @@ def _build_prompt(
     workspace_path: str,
     checkpoint: Optional[AgentCheckpoint] = None,
     isolated_workspace: bool = True,
+    autonomy: str = AUTONOMY_SUPERVISED,
 ) -> str:
     workspace_guidance = (
         "Use only the isolated workspace above. Do not touch the primary project "
@@ -293,6 +299,20 @@ def _build_prompt(
         else "This project is not a Git worktree, so the task is running in the "
         "configured project workspace. Keep changes focused to this task."
     )
+    if autonomy == AUTONOMY_AUTO:
+        autonomy_guidance = (
+            "Operate autonomously: the CLI is running in auto-approval mode, so do not "
+            "stop to ask for permission on file, shell, network, git, or PR actions — "
+            "just do them. Record anything risky or surprising in STATUS.md so the "
+            "orchestrator and humans can audit afterwards."
+        )
+    else:
+        autonomy_guidance = (
+            "You are running supervised: the CLI will pause for human approval before "
+            "risky file, shell, network, git, or PR actions. Stop at those prompts — "
+            "a human or the orchestrator answers them through the Kanban approval "
+            "queue. Do not try to bypass the prompts."
+        )
     return (
         f"You are the {agent.name} worker for Agent Kanban PM. "
         f"Work on Kanban task #{task.id} in project #{project.id}.\n\n"
@@ -304,15 +324,17 @@ def _build_prompt(
         f"Durable restart checkpoint:\n{_checkpoint_context(checkpoint)}\n\n"
         f"{build_handoff_instructions(agent.name, workspace_path)}\n\n"
         "Make focused changes for this task only. Keep the Kanban server running. "
-        "Operate autonomously: the CLI is running in auto-approval mode, so do not "
-        "stop to ask for permission on file, shell, network, git, or PR actions — "
-        "just do them. Record anything risky or surprising in STATUS.md so the "
-        "orchestrator and humans can audit afterwards. Report progress back to "
-        "Kanban when practical."
+        f"{autonomy_guidance} "
+        "Report progress back to Kanban when practical."
     )
 
 
-def _build_agent_command(adapter: AdapterSpec, workspace_path: str, prompt: str) -> list[str]:
+def _build_agent_command(
+    adapter: AdapterSpec,
+    workspace_path: str,
+    prompt: str,
+    autonomy: str = AUTONOMY_SUPERVISED,
+) -> list[str]:
     cmd_path = shutil.which(adapter.invoke.command)
     if not cmd_path:
         raise FileNotFoundError(f"CLI not found: {adapter.invoke.command}")
@@ -321,9 +343,13 @@ def _build_agent_command(adapter: AdapterSpec, workspace_path: str, prompt: str)
         prompt_path = Path(workspace_path) / adapter.task_command.prompt_file
         prompt_path.write_text(prompt, encoding="utf-8")
 
+    arg_templates = list(adapter.task_command.args)
+    if autonomy == AUTONOMY_AUTO:
+        # Explicit opt-in only: append the adapter's bypass/yolo flags.
+        arg_templates.extend(adapter.task_command.auto_args)
     rendered_args = [
         arg.replace("{workspace}", workspace_path).replace("{prompt}", prompt)
-        for arg in adapter.task_command.args
+        for arg in arg_templates
     ]
     return [cmd_path, *rendered_args]
 
@@ -593,8 +619,11 @@ class AssignmentLauncher:
                 .limit(1)
             )
             checkpoint = checkpoint_result.scalar_one_or_none()
-            prompt = _build_prompt(task, project, agent, workspace_path, checkpoint, isolated_workspace)
-            args = _build_agent_command(adapter, workspace_path, prompt)
+            autonomy = prefs.autonomy_for_role(matching_role_name) if prefs else AUTONOMY_SUPERVISED
+            prompt = _build_prompt(
+                task, project, agent, workspace_path, checkpoint, isolated_workspace, autonomy
+            )
+            args = _build_agent_command(adapter, workspace_path, prompt, autonomy)
             command_text = shell_command(args)
 
             db_session = AgentSession(
@@ -673,6 +702,7 @@ class AssignmentLauncher:
                     "branch": branch_name if isolated_workspace else None,
                     "base_ref": base_ref,
                     "base_sync": sync_message,
+                    "autonomy": autonomy,
                 }),
             ))
             task_started_event = await self._mark_task_started(db, task, agent)

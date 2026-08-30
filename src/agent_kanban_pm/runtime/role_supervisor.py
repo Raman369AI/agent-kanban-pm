@@ -164,9 +164,14 @@ def build_command_for_role(
     if model and adapter.invoke.model_flag:
         args.extend([adapter.invoke.model_flag, model])
 
-    # Include task_command.args for auto-approval flags (e.g. --permission-mode bypassPermissions)
-    if adapter.task_command and adapter.task_command.args:
-        for arg in adapter.task_command.args:
+    # Include task_command.args for persistent (non-task) role sessions.
+    # Bypass/yolo flags live in task_command.auto_args and are added only when
+    # this role's assignment explicitly opts into autonomy: auto.
+    if adapter.task_command:
+        extra_args = list(adapter.task_command.args)
+        if getattr(assignment, "autonomy", "supervised") == "auto":
+            extra_args.extend(adapter.task_command.auto_args)
+        for arg in extra_args:
             # Persistent roles should not receive task prompt/workspace CLI args since they run as background services
             if "{prompt}" in arg or "{workspace}" in arg:
                 continue

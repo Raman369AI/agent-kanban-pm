@@ -133,8 +133,10 @@ share an OS account:
 - Worktrees isolate Git branches, not the host filesystem, credentials,
   network, or arbitrary shell commands. Supervised agent permissions are the
   safe default; automatic approval must be an explicit user choice.
-- Host-header validation and CSRF protection are required before treating the
-  browser UI as hardened against hostile webpages or DNS rebinding.
+- The browser token cookie is `HttpOnly` + `SameSite=strict`;
+  cookie-authenticated mutations require the per-page `X-CSRF-Token` header,
+  and requests with a non-loopback Host header are rejected before routing —
+  together these harden the UI against hostile webpages and DNS rebinding.
 
 Remote multi-user hosting, untrusted OS users, and multiple server replicas are
 not supported by the current SQLite/local-process architecture.

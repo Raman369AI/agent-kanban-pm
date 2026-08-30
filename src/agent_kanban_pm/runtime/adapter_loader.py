@@ -81,7 +81,14 @@ class ChatDesignerSpec(BaseModel):
 
 
 class TaskCommandSpec(BaseModel):
+    """Invocation for task sessions.
+
+    `args` is the supervised invocation: the CLI keeps its default approval
+    prompts. `auto_args` are appended only when the role's autonomy is `auto`
+    (see RoleAssignment.autonomy) — they carry the CLI's bypass/yolo flags.
+    """
     args: List[str] = Field(default_factory=lambda: ["{prompt}"])
+    auto_args: List[str] = Field(default_factory=list)
     prompt_file: Optional[str] = None
 
 

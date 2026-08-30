@@ -31,7 +31,8 @@ chat_designer:
   timeout_seconds: 180
 
 task_command:
-  args: ["--approval-mode", "yolo", "-i", "{prompt}"]
+  args: ["-i", "{prompt}"]
+  auto_args: ["--approval-mode", "yolo"]
 
 # Handoff profile (P1-2)
 owns: ['ui/', 'components/', 'templates/', 'static/']

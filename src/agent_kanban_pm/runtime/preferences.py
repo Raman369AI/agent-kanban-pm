@@ -32,6 +32,11 @@ class AgentRole(str, Enum):
     GIT_PR = "git_pr"
 
 
+AUTONOMY_SUPERVISED = "supervised"
+AUTONOMY_AUTO = "auto"
+_AUTONOMY_MODES = {AUTONOMY_SUPERVISED, AUTONOMY_AUTO}
+
+
 class RoleAssignment(BaseModel):
     agent: str
     mode: str = "headless"
@@ -46,11 +51,20 @@ class RoleAssignment(BaseModel):
     chat_timeout_seconds: Optional[int] = None
     owns: List[str] = Field(default_factory=list)
     review_only: bool = False
+    # "supervised" (default): the CLI keeps its approval prompts and risky
+    # actions surface in the Kanban approval queue. "auto": the launcher adds
+    # the adapter's bypass flags (task_command.auto_args, e.g.
+    # --permission-mode bypassPermissions) so the agent never pauses to ask.
+    autonomy: str = AUTONOMY_SUPERVISED
 
     @property
     def is_standalone_cli(self) -> bool:
         """True when this role directly names a local CLI instead of an adapter."""
         return self.command is not None
+
+    @property
+    def is_auto(self) -> bool:
+        return self.autonomy == AUTONOMY_AUTO
 
 
 class RoleConfig(BaseModel):
@@ -145,6 +159,20 @@ class Preferences(BaseModel):
             setattr(self.roles, role_name, assignment)
         else:
             self.custom_roles[role_name] = assignment
+
+    def autonomy_for_role(self, role_name: Optional[str]) -> str:
+        """Return the autonomy mode for *role_name* ("supervised" unless the
+        role assignment explicitly opts into "auto").
+
+        Unknown or missing values fall back to supervised: a typo in
+        preferences.yaml must never silently unlock bypass-approval flags.
+        """
+        if not role_name:
+            return AUTONOMY_SUPERVISED
+        assignment = self.get_role_assignments().get(role_name)
+        if not assignment:
+            return AUTONOMY_SUPERVISED
+        return assignment.autonomy if assignment.autonomy in _AUTONOMY_MODES else AUTONOMY_SUPERVISED
 
 
 def validate_role_name(role_name: str) -> str:

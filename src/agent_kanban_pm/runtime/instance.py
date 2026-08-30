@@ -44,6 +44,17 @@ _DEFAULT_PORT = 8000
 _MAX_PORT_PROBES = 9000
 
 
+def get_data_home() -> Path:
+    """Return the user-owned directory for persistent Kanban state."""
+    override = os.getenv("KANBAN_DATA_HOME")
+    if override:
+        return Path(override).expanduser().resolve()
+    xdg_home = os.getenv("XDG_DATA_HOME")
+    if xdg_home:
+        return Path(xdg_home).expanduser().resolve() / "agent-kanban-pm"
+    return Path.home() / ".kanban"
+
+
 def _git_worktree_root() -> Optional[str]:
     """Return the git worktree root for CWD, or None if not a git repo."""
     try:
@@ -103,12 +114,20 @@ def _derive_instance_id(project_root: str) -> str:
 def _is_primary_worktree() -> bool:
     """Return True if the project root is the main (primary) worktree.
 
-    The primary worktree keeps the default behaviour (port 8000 if
-    available, "kanban" tmux prefix, legacy ./kanban.db path).
+    The primary worktree keeps the default port and tmux prefix. Git itself,
+    rather than the installed package path, identifies the primary worktree.
     """
-    abs_root = os.path.abspath(_project_root())
-    default_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    return abs_root == default_root
+    root = Path(_project_root()).resolve()
+    try:
+        result = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"], cwd=root,
+            capture_output=True, text=True, timeout=5,
+        )
+        first = next((line.removeprefix("worktree ") for line in result.stdout.splitlines()
+                      if line.startswith("worktree ")), None)
+        return result.returncode == 0 and first is not None and Path(first).resolve() == root
+    except Exception:
+        return True
 
 
 def _port_is_available(port: int, host: str = "127.0.0.1") -> bool:
@@ -200,22 +219,22 @@ def get_database_url() -> str:
 
     Priority:
       1. DATABASE_URL env var
-      2. Legacy CWD-relative path for the primary worktree
-      3. Instance-specific path for secondary worktrees:
-         .kanban/instances/{instance_id}/kanban.db
+      2. CWD-relative path in explicit development mode or for a legacy database
+      3. Per-project instance path beneath the user data home
     """
     env_url = os.getenv("DATABASE_URL")
     if env_url:
         return env_url
 
-    if _is_primary_worktree():
+    legacy_db = Path.cwd() / "kanban.db"
+    development = os.getenv("KANBAN_DEV", "").lower() in {"1", "true", "yes", "on"}
+    if development or legacy_db.exists():
         return "sqlite+aiosqlite:///./kanban.db"
 
     instance_id = _derive_instance_id(_project_root())
-    abs_root = os.path.abspath(_project_root())
-    db_dir = os.path.join(abs_root, ".kanban", "instances", instance_id)
-    os.makedirs(db_dir, exist_ok=True)
-    db_path = os.path.join(db_dir, "kanban.db")
+    db_dir = get_data_home() / "instances" / instance_id
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_path = db_dir / "kanban.db"
     return f"sqlite+aiosqlite:///{db_path}"
 
 
@@ -226,12 +245,8 @@ def get_mcp_config_dir() -> Path:
     one per running instance so that different ports don't overwrite each
     other.
     """
-    if _is_primary_worktree():
-        return Path.home() / ".kanban" / "mcp"
-
     instance_id = _derive_instance_id(_project_root())
-    abs_root = os.path.abspath(_project_root())
-    config_dir = Path(abs_root) / ".kanban" / "instances" / instance_id / "mcp"
+    config_dir = get_data_home() / "instances" / instance_id / "mcp"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 
@@ -255,20 +270,31 @@ def get_instance_info(host: str = "127.0.0.1") -> dict:
     }
 
 
+# Hostnames the HTTP server considers legitimate. Requests whose Host header
+# does not match are rejected before routing, which blocks DNS-rebinding
+# attacks against the loopback UI. Ports are ignored by the check. IPv6
+# loopback ([::1]) is not listed: Starlette matches against the Host header
+# with the port stripped naively, so bracketed IPv6 literals cannot match —
+# use KANBAN_ALLOWED_HOSTS plus a hostname if you bind to ::1.
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+
+
 def get_auth_token() -> str:
     """Retrieve or generate a secure, cached auth token for the Kanban PM service.
 
     The token is stored in ~/.kanban/token to allow authenticating CLI
-    actions and role supervisors locally.
+    actions and role supervisors locally. The file is owner-only (0600);
+    pre-existing files with looser permissions are tightened on read.
     """
     token_dir = Path.home() / ".kanban"
-    token_dir.mkdir(parents=True, exist_ok=True)
+    token_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     token_file = token_dir / "token"
 
     if token_file.exists():
         try:
             token = token_file.read_text(encoding="utf-8").strip()
             if token:
+                _chmod_owner_only(token_file)
                 return token
         except Exception:
             pass
@@ -276,7 +302,36 @@ def get_auth_token() -> str:
     import secrets
     token = secrets.token_hex(32)
     try:
-        token_file.write_text(token, encoding="utf-8")
+        # Create with 0600 up front so the secret never sits on disk with
+        # default (umask-derived) permissions.
+        fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(token)
     except Exception as e:
         logger.warning("Could not write auth token file: %s", e)
     return token
+
+
+def _chmod_owner_only(path: Path) -> None:
+    """Best-effort tightening of *path* to owner-only read/write."""
+    try:
+        if path.stat().st_mode & 0o077:
+            path.chmod(0o600)
+    except OSError as exc:
+        logger.warning("Could not tighten permissions on %s: %s", path, exc)
+
+
+def get_csrf_token() -> str:
+    """Return the CSRF token paired with this instance's auth token.
+
+    Derived statelessly via HMAC so every server process (and every page
+    render) agrees on the value without extra storage. Browser mutations
+    authenticated by the kanban-token cookie must also present this value in
+    the X-CSRF-Token header; it is embedded in UI pages as a meta tag.
+    """
+    import hashlib
+    import hmac
+
+    return hmac.new(
+        get_auth_token().encode("utf-8"), b"kanban-csrf-v1", hashlib.sha256
+    ).hexdigest()
