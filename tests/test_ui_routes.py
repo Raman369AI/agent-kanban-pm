@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi.testclient import TestClient
 
-from main import app
+from agent_kanban_pm.app import app
 import tests_helper
 
 

@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tests_helper  # noqa: F401  — auto-clean throwaway entities/projects on exit
 import asyncio
 from fastapi.testclient import TestClient
-from main import app
+from agent_kanban_pm.app import app
 
 def test_phase6():
     """
@@ -36,7 +36,7 @@ def test_phase6():
         # *active* adapter, which requires the agent's CLI to be installed —
         # never true on CI. Skip the whole MCP section when mcp is unavailable;
         # Test 3 below still verifies the REST path.
-        from mcp_server import KanbanMCPServer, MCP_AVAILABLE
+        from agent_kanban_pm.mcp.server import KanbanMCPServer, MCP_AVAILABLE
 
         if not MCP_AVAILABLE:
             print("\nSKIP: MCP library not installed; skipping MCP identity tests")

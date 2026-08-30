@@ -7,12 +7,12 @@ import json
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_MAIN_PY = str(_PROJECT_ROOT / "main.py")
+_APP_MODULE = "agent_kanban_pm.app"
 _DB = _PROJECT_ROOT / "kanban.db"
 _LOG = _PROJECT_ROOT / "server.log"
 
 def run_smoke_test():
-    os.system("pkill -f 'python3 main.py' 2>/dev/null")
+    os.system("pkill -f 'agent_kanban_pm.app' 2>/dev/null")
     time.sleep(1)
     if _DB.exists():
         _DB.unlink()
@@ -20,7 +20,8 @@ def run_smoke_test():
         _LOG.unlink()
 
     proc = subprocess.Popen(
-        [sys.executable, _MAIN_PY],
+        [sys.executable, "-m", _APP_MODULE],
+        cwd=str(_PROJECT_ROOT / "src"),
         stdout=open(_LOG, "w"),
         stderr=subprocess.STDOUT,
         start_new_session=True

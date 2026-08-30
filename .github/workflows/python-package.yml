@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
     - uses: actions/checkout@v4
@@ -69,18 +69,43 @@ jobs:
     - name: Smoke test - kanban --help
       run: /tmp/wheel-venv/bin/kanban --help
 
-    - name: Smoke test - server boots and serves UI
+    - name: Smoke test - server boots, serves UI, and enforces auth
       env:
         DATABASE_URL: sqlite+aiosqlite:////tmp/kanban-smoke.db
       run: |
         /tmp/wheel-venv/bin/python - <<'PY'
         from fastapi.testclient import TestClient
-        from main import app
+        from agent_kanban_pm.app import app
 
-        with TestClient(app) as client:
-            for path, expected in (("/", 200), ("/static/css/style.css", 200), ("/docs", 200)):
-                r = client.get(path)
-                assert r.status_code == expected, f"{path}: {r.status_code}\n{r.text[:500]}"
+        def check(response, expected, label):
+            assert response.status_code == expected, (
+                f"{label}: expected {expected}, got {response.status_code}\n{response.text[:500]}"
+            )
+
+        # TrustedHostMiddleware only accepts loopback hosts, so the smoke test
+        # must speak to the server the way a browser on localhost does.
+        with TestClient(app, base_url="http://localhost:8000") as client:
+            # Unauthenticated: public endpoints answer, everything else is gated.
+            check(client.get("/health"), 200, "GET /health")
+            check(client.get("/static/css/style.css"), 200, "GET /static/css/style.css")
+            check(client.get("/docs"), 401, "GET /docs (unauthenticated)")
+            check(client.get("/tasks"), 401, "GET /tasks (unauthenticated)")
+
+            # Loading a page hands the browser its auth cookie.
+            page = client.get("/")
+            check(page, 200, "GET /")
+            set_cookie = page.headers.get("set-cookie", "").lower()
+            assert "kanban-token=" in set_cookie, set_cookie
+            assert "httponly" in set_cookie, set_cookie
+            assert "samesite=strict" in set_cookie, set_cookie
+
+            # With the cookie the client is authenticated for the rest.
+            check(client.get("/docs"), 200, "GET /docs (authenticated)")
+            check(client.get("/tasks"), 200, "GET /tasks (authenticated)")
+
+        # A foreign Host header is rejected before routing (DNS-rebinding defense).
+        with TestClient(app, base_url="http://evil.example.com") as client:
+            check(client.get("/health"), 400, "GET /health with foreign Host")
         print("server boot smoke OK")
         PY
       working-directory: /tmp

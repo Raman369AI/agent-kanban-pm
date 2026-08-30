@@ -9,7 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Closed the `/ui` auth bypass** — All `/ui/*` mutations (task create/edit/delete/move, project create/edit/delete, role assign, open-workspace) and every `/ui/api/*` JSON endpoint now require the Kanban token. Only HTML page GETs remain exempt so a browser can load the UI and receive the auth cookie.
+- **CSRF + hardened auth cookie** — The `kanban-token` cookie is now `HttpOnly` with `SameSite=strict`. Cookie-authenticated mutations must also send `X-CSRF-Token`, an HMAC of the instance token embedded in every page as a meta tag and attached automatically by a `fetch` wrapper in `base.html`. Header-authenticated callers (`X-Kanban-Token`, used by the CLI and role supervisor) are unaffected.
+- **Host-header validation** — `TrustedHostMiddleware` rejects requests whose `Host` is not `localhost`/`127.0.0.1` before routing, closing the DNS-rebinding path against the loopback UI. `KANBAN_ALLOWED_HOSTS` whitelists additional hostnames.
+- **Token file permissions** — `~/.kanban/token` is created `0600` (and the directory `0700`); pre-existing files with looser permissions are tightened on read.
+- **Supervised-by-default agent autonomy** — Bundled adapter CLIs no longer launch with bypass flags by default. `--permission-mode bypassPermissions` / `--approval-mode yolo` / `--full-auto` / `--yes-always` moved from `task_command.args` to `task_command.auto_args` in the adapter YAMLs and are appended only for roles with `autonomy: auto` in `preferences.yaml` (default `supervised`; unknown values fall back to supervised). `kanban init` asks once, loudly, before enabling AUTO for all roles; `kanban roles assign --autonomy` and the roles UI API accept the knob. Task prompts and the launch activity payload record the effective autonomy.
+
 ### Added
+- **Phase 1 packaging completion** — MCP is now an installed dependency with a `kanban-mcp` entry point, Python 3.13 is tested, and Linux/macOS support is explicit.
+- **Collision-safe src package layout** — Application, CLI, routers, runtime, MCP server, and packaged assets now live under `src/agent_kanban_pm/`; installed distributions expose only the `agent_kanban_pm` namespace.
 - **Per-task git worktrees on real branches** — Each agent session now runs on a `kanban/task-{id}-{agent}` branch started from the detected base ref (`origin/HEAD` → `origin/main` → `origin/master` → `main` → `master`) instead of a detached `HEAD`. This unblocks the eventual merge-back path (PR or `merge --ff-only`).
 - **Launch-time rebase** — Before the tmux session starts, the worktree is `fetch`ed and `rebase`d onto the base. If the worktree is dirty, no base is found, or the rebase conflicts, the launcher logs the reason as an `AgentActivity` and leaves the worktree untouched. Records `branch`, `base_ref`, and `base_sync` in the activity payload for audit.
 - **`SchedulingConfig` in preferences** — Caps on per-agent active tasks and per-project parallel implementation (defaults: 1/1, review parallelism allowed). Surfaced via the existing `_scheduling_blocker` path.
@@ -21,8 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Per-task session stage handoff** — Completed worker sessions now advance the task from To Do/In Progress to Review, and completed review sessions (`test` / `diff_review`) advance Review tasks to Done. Stage-entry policy roles are assigned and emitted as `TASK_ASSIGNED` events so the next agent can continue the chain.
 - **Role-specific launch gates** — Assigned `test` and `diff_review` agents can now launch from Review, and `git_pr` agents can launch from Done; implementation roles remain limited to To Do/In Progress.
-- **Bundled adapter CLIs run in auto-approval mode** — `claude` uses `--permission-mode bypassPermissions`, `gemini` uses `--approval-mode yolo`, `codex` uses `--full-auto`, `aider` uses `--yes-always`. Previously they launched in their respective prompting modes, which halted every session at the first restricted file/shell/git action.
-- **Agent prompt template** — Tells the agent to operate autonomously and record risky actions in `STATUS.md` instead of waiting for terminal approval. Workspace guidance reworded so it no longer references a human approval queue.
+- **Bundled adapter CLIs declare auto-approval flags separately** — `claude` declares `--permission-mode bypassPermissions`, `gemini` `--approval-mode yolo`, `codex` `--full-auto`, `aider` `--yes-always` as `task_command.auto_args` instead of inline in `task_command.args`. Supervised remains the default; see the Security section for the opt-in model.
+- **Agent prompt template** — Autonomy guidance now follows the role's `autonomy` setting: auto mode tells the agent to operate autonomously and record risky actions in `STATUS.md`; supervised mode tells it to stop at CLI approval prompts, which are answered through the Kanban approval queue.
 - **SQLite pragmas on startup** — `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON` are applied in `init_db()` for safer concurrent writes under the local-first runtime.
 - **Heartbeat sweeper** — Single JOIN query returns `(AgentHeartbeat, Entity.name)` rows instead of an N+1 fetch per heartbeat.
 - **Pending-event sweeper** — Uses `DELETE … WHERE` with a single round-trip; reports purge count from `rowcount`.

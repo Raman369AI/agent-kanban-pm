@@ -17,20 +17,22 @@ import yaml
 
 import tests_helper  # noqa: F401  — autouse cleanup listeners
 
-from kanban_runtime.assignment_launcher import (
+from agent_kanban_pm.runtime.assignment_launcher import (
     AssignmentLauncher,
+    _build_agent_command,
     _build_prompt,
     _create_git_worktree,
     _detect_base_ref,
     _sync_worktree_with_base,
     _task_branch_name,
 )
+from agent_kanban_pm.runtime.adapter_loader import load_adapter
 
 
 GIT = shutil.which("git")
 pytestmark = pytest.mark.skipif(GIT is None, reason="git binary not available")
 
-ADAPTER_DIR = Path(__file__).resolve().parent.parent / "kanban_runtime" / "data" / "agents"
+ADAPTER_DIR = Path(__file__).resolve().parent.parent / "src" / "agent_kanban_pm" / "data" / "agents"
 
 
 def _run(*args, cwd=None):
@@ -48,8 +50,9 @@ def _init_repo(path: Path, initial_branch: str = "main") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Adapter YAML flag assertions — locks in the auto/non-interactive flags so a
-# future edit cannot silently put an agent back into prompt-the-human mode.
+# Adapter YAML flag assertions — bypass/yolo flags must stay OUT of the
+# default (supervised) invocation and live in task_command.auto_args, which
+# the launcher only appends when a role opts into autonomy: auto.
 # ---------------------------------------------------------------------------
 
 
@@ -58,27 +61,36 @@ def _adapter_args(name: str) -> list[str]:
     return data["task_command"]["args"]
 
 
+def _adapter_auto_args(name: str) -> list[str]:
+    data = yaml.safe_load((ADAPTER_DIR / f"{name}.yaml").read_text())
+    return data["task_command"].get("auto_args") or []
+
+
 def test_claude_adapter_uses_bypass_permissions():
-    args = _adapter_args("claude")
-    assert "--permission-mode" in args
-    assert args[args.index("--permission-mode") + 1] == "bypassPermissions"
+    auto_args = _adapter_auto_args("claude")
+    assert "--permission-mode" in auto_args
+    assert auto_args[auto_args.index("--permission-mode") + 1] == "bypassPermissions"
+    assert "--permission-mode" not in _adapter_args("claude")
 
 
 def test_gemini_adapter_uses_yolo_approval_mode():
-    args = _adapter_args("gemini")
-    assert "--approval-mode" in args
-    assert args[args.index("--approval-mode") + 1] == "yolo"
+    auto_args = _adapter_auto_args("gemini")
+    assert "--approval-mode" in auto_args
+    assert auto_args[auto_args.index("--approval-mode") + 1] == "yolo"
+    assert "--approval-mode" not in _adapter_args("gemini")
 
 
 def test_codex_adapter_uses_full_auto():
-    args = _adapter_args("codex")
-    assert "--full-auto" in args
-    assert "--ask-for-approval" not in args
+    auto_args = _adapter_auto_args("codex")
+    assert "--full-auto" in auto_args
+    assert "--ask-for-approval" not in auto_args
+    assert "--full-auto" not in _adapter_args("codex")
 
 
 def test_aider_adapter_uses_yes_always():
-    args = _adapter_args("aider")
-    assert "--yes-always" in args
+    auto_args = _adapter_auto_args("aider")
+    assert "--yes-always" in auto_args
+    assert "--yes-always" not in _adapter_args("aider")
 
 
 # ---------------------------------------------------------------------------
@@ -264,11 +276,55 @@ def test_sync_with_base_aborts_on_conflict(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_build_prompt_tells_agent_to_operate_autonomously():
-    source = inspect.getsource(_build_prompt)
-    assert "Operate autonomously" in source
-    assert "auto-approval" in source
-    assert "stop to ask" in source  # "do not stop to ask…" — line-wrapped in source
+class _FakeTask:
+    id = 7
+    title = "Demo task"
+    description = "Do the thing"
+    logs = []
+    comments = []
+
+
+class _FakeProject:
+    id = 3
+
+
+class _FakeAgent:
+    name = "claude"
+
+
+def test_build_prompt_auto_mode_tells_agent_to_operate_autonomously():
+    prompt = _build_prompt(
+        _FakeTask(), _FakeProject(), _FakeAgent(), "/tmp/wt", autonomy="auto"
+    )
+    assert "Operate autonomously" in prompt
+    assert "auto-approval" in prompt
+    assert "stop to ask" in prompt  # "do not stop to ask…"
+    assert "approval queue" not in prompt
+
+
+def test_build_prompt_supervised_is_the_default():
+    prompt = _build_prompt(_FakeTask(), _FakeProject(), _FakeAgent(), "/tmp/wt")
+    assert "supervised" in prompt
+    assert "approval queue" in prompt
+    assert "Operate autonomously" not in prompt
+    assert "auto-approval" not in prompt
+
+
+def test_build_agent_command_supervised_omits_bypass_flags():
+    spec = load_adapter(ADAPTER_DIR / "claude.yaml")
+    cmd = _build_agent_command(spec, "/tmp/wt", "do it", autonomy="supervised")
+    assert "--permission-mode" not in cmd
+    assert "--print" in cmd
+    assert "/tmp/wt" in cmd
+
+
+def test_build_agent_command_auto_appends_bypass_flags():
+    spec = load_adapter(ADAPTER_DIR / "claude.yaml")
+    cmd = _build_agent_command(spec, "/tmp/wt", "do it", autonomy="auto")
+    assert "--permission-mode" in cmd
+    assert cmd[cmd.index("--permission-mode") + 1] == "bypassPermissions"
+    assert "--print" in cmd
+    assert "/tmp/wt" in cmd
 
 
 def test_launch_for_assignment_wires_branch_and_sync():

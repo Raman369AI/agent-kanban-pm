@@ -71,7 +71,7 @@ def _install_listeners() -> None:
     if _listeners_installed or _DISABLED:
         return
     # Imported lazily so this module stays cheap to import.
-    from models import Entity, Project
+    from agent_kanban_pm.models import Entity, Project
 
     @event.listens_for(Entity, "after_insert")
     def _track_entity(mapper, connection, target):  # type: ignore[no-untyped-def]
@@ -89,15 +89,15 @@ def _install_listeners() -> None:
 async def _delete_tracked_async() -> None:
     if not _created_entity_ids and not _created_project_ids:
         return
-    from database import async_session_maker
+    from agent_kanban_pm.db import async_session_maker
     from sqlalchemy import delete, update, select
-    from models import (
+    from agent_kanban_pm.models import (
         Entity, Project, Task, AgentApproval, DiffReview, AgentActivity,
         AgentSession, AgentHeartbeat, AgentConnection, Comment,
         TaskLease, ActivitySummary, OrchestrationDecision, UserContribution,
         ProjectWorkspace, TaskLog, Stage,
     )
-    from models import task_assignments
+    from agent_kanban_pm.models import task_assignments
 
     entity_ids = list(_created_entity_ids)
     project_ids = list(_created_project_ids)
@@ -144,7 +144,7 @@ async def _delete_tracked_async() -> None:
                 Comment.author_id.in_(entity_ids)
             ))
             # task_assignments is an association Table, not a model class
-            from models import task_assignments
+            from agent_kanban_pm.models import task_assignments
             await db.execute(delete(task_assignments).where(
                 task_assignments.c.entity_id.in_(entity_ids)
             ))

@@ -21,6 +21,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
   "Topic :: Software Development",
 ]
 dependencies = [
@@ -36,6 +39,10 @@ dependencies = [
   "httpx>=0.27.0",
   "jinja2>=3.1.6",
   "pyyaml>=6.0.0",
+  # The MCP server targets the 1.x low-level `Server` decorator API
+  # (@server.list_tools / @server.call_tool). 2.x replaced it with explicit
+  # request-handler registration; porting is tracked separately.
+  "mcp>=1.0,<2",
 ]
 
 [project.urls]
@@ -57,35 +64,20 @@ dev = [
 ]
 
 [project.scripts]
-kanban = "kanban_cli:main"
-kanban-cli = "kanban_cli:main"
-antigravity = "kanban_cli.antigravity_cli:main"
-
-[tool.setuptools]
-py-modules = [
-  "adapters",
-  "auth",
-  "database",
-  "event_bus",
-  "main",
-  "mcp_server",
-  "models",
-  "open_project",
-  "schemas",
-  "websocket_manager",
-]
+kanban = "agent_kanban_pm.cli:main"
+kanban-cli = "agent_kanban_pm.cli:main"
+kanban-mcp = "agent_kanban_pm.mcp.server:cli_main"
+antigravity = "agent_kanban_pm.cli.antigravity_cli:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["kanban_cli*", "kanban_runtime*", "routers*"]
-namespaces = true
+where = ["src"]
+include = ["agent_kanban_pm*"]
 
 [tool.setuptools.dynamic]
-version = {attr = "kanban_runtime._version.__version__"}
+version = {attr = "agent_kanban_pm.runtime._version.__version__"}
 
 [tool.setuptools.package-data]
-kanban_runtime = ["_version.py"]
-"kanban_runtime.data" = ["templates/*.html", "static/css/*.css", "static/js/*.js", "agents/*.yaml", "mcp_configs/*.json"]
+"agent_kanban_pm.data" = ["templates/*.html", "static/css/*.css", "static/js/*.js", "agents/*.yaml", "mcp_configs/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

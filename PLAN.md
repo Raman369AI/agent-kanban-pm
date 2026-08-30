@@ -7,7 +7,10 @@ is releasable on its own.
 
 ---
 
-## Phase 0 — Stabilize what exists (small, do first)
+## Phase 0 — Stabilize what exists (completed)
+
+Phase 0 was completed in July 2026. The items below are retained as the
+implementation record.
 
 1. **Fix the failing test.** `tests/test_ui_routes.py::test_ui_routes_and_board_render`
    fails because one UI route still uses the legacy
@@ -32,13 +35,13 @@ is releasable on its own.
    smoke"). Replace with a real flag on the row (e.g. `Project.is_demo`) or
    drop the filtering.
 
-## Phase 1 — Packaging correctness (blocks everything else)
+## Phase 1 — Packaging correctness (completed)
 
-1. **Adopt a single-package src layout.** Today `pip install` drops `main`,
+1. **Adopt a single-package src layout (completed).** Previously, `pip install` dropped `main`,
    `auth`, `database`, `models`, `schemas`, `adapters`, `event_bus`,
    `websocket_manager`, `open_project`, `mcp_server`, and a generic `routers`
    package into top-level site-packages — near-guaranteed collisions with any
-   other installed package. Restructure:
+   other installed package. Implemented structure:
 
    ```
    src/agent_kanban_pm/
@@ -73,29 +76,32 @@ is releasable on its own.
    fallback imports `pty`), and emit a clear error on Windows instead of a
    traceback. WSL note in README.
 
-## Phase 2 — Security hardening (required before advertising it)
+## Phase 2 — Security hardening (completed)
 
-1. **Close the `/ui` auth bypass.** `token_auth_middleware` exempts every path
-   starting with `/ui`, but `routers/ui.py` has ~10 mutation endpoints
-   (`POST /ui/tasks/create`, `DELETE /ui/tasks/{id}`, `POST /ui/api/open-workspace`,
-   ...). Today the only thing stopping a malicious webpage is that browsers
-   won't attach `X-Entity-ID` cross-origin — and DNS-rebinding defeats
-   origin-based protection because the Host header is never validated. Fix:
-   - require the token (cookie or header) on **all** non-GET requests,
-     including `/ui/*`;
-   - set the cookie `httponly=True` and have UI JS use a same-origin
-     `fetch` that relies on the cookie plus a CSRF token embedded in the page;
-   - validate `Host` is `localhost`/`127.0.0.1` (TrustedHostMiddleware).
-2. **Protect the token file.** `get_auth_token()` writes `~/.kanban/token`
-   with default permissions; `chmod 600` it (`token_file.touch(mode=0o600)`).
-3. **Make auto-approval an explicit choice.** Bundled adapters default to
-   `--permission-mode bypassPermissions` / `--approval-mode yolo` /
-   `--full-auto`. For a public product the default should be safe: add a
-   per-role `autonomy: supervised|auto` knob in `preferences.yaml`, default
-   `supervised`, and have `kanban init` ask once, loudly, before enabling
-   bypass modes. Keep worktree isolation as the second layer, not the only one.
-4. **WebSocket auth.** `/ws` is exempted from the token middleware; require the
-   token as a query param or first message before subscribing.
+1. **Close the `/ui` auth bypass (completed).** `token_auth_middleware` now
+   requires the token on every non-safe request, including `/ui/*` mutations,
+   and on all methods for `/ui/api/*` JSON endpoints. The `kanban-token`
+   cookie is `HttpOnly` + `SameSite=strict`; cookie-authenticated mutations
+   must also send `X-CSRF-Token`, an HMAC of the instance token embedded in
+   every page as a meta tag and attached by a `fetch` wrapper in `base.html`.
+   Header-authenticated callers (`X-Kanban-Token`, CLI/supervisor) skip CSRF.
+   `TrustedHostMiddleware` rejects non-loopback Host headers before routing
+   (`KANBAN_ALLOWED_HOSTS` extends the allowlist).
+2. **Protect the token file (completed).** `get_auth_token()` creates
+   `~/.kanban/token` with `0600` up front and tightens pre-existing
+   loose-permission files on read.
+3. **Make auto-approval an explicit choice (completed).** Adapter YAMLs moved
+   bypass flags (`--permission-mode bypassPermissions`, `--approval-mode
+   yolo`, `--full-auto`, `--yes-always`) from `task_command.args` to
+   `task_command.auto_args`, which the launcher and role supervisor append
+   only when the role's `autonomy` is `auto`. `RoleAssignment.autonomy`
+   defaults to `supervised` (unknown values fall back to supervised), and
+   `kanban init` asks once, loudly, before enabling AUTO for all roles;
+   `kanban roles assign --autonomy` and the roles UI API accept the knob.
+4. **WebSocket auth (completed).** The HTTP middleware exempts WebSocket
+   upgrades, but both `/ws` and `/ws/projects/{project_id}` now verify the
+   Kanban token before subscribing. Keep regression coverage for query-string,
+   cookie, and authorization-header authentication.
 
 ## Phase 3 — Runtime correctness
 
@@ -125,6 +131,17 @@ is releasable on its own.
    `API_BASE = "http://localhost:8000"`, ignoring the instance port logic —
    route it through `kanban_runtime.instance.get_api_base()` (or fold it into
    `kanban open` as a CLI subcommand and delete the standalone script).
+
+6. **Cleanly close async database resources in tests and shutdown.** The suite
+   passes, but currently emits an unhandled `aiosqlite` worker-thread warning
+   after an event loop has closed. Ensure test fixtures and application
+   lifespan shutdown dispose engines and finish outstanding database work; make
+   thread/resource warnings fail CI once the cleanup is in place.
+7. **Make assignment admission atomic.** Parallel assignment events currently
+   perform limit and active-session checks before creating the session/lease.
+   Enforce the one-active-lease/session invariants in the database (or through
+   a serialized admission transaction) so two concurrent events cannot both
+   pass the check and launch duplicate work.
 
 ## Phase 4 — Product surface & docs
 
@@ -165,7 +182,7 @@ is releasable on its own.
 
 | Order | Work | Size |
 |-------|------|------|
-| 1 | Phase 0 (stabilize, CI installs package) | ~1 day |
+| 1 | Phase 0 (completed: stabilize, CI installs package) | Done |
 | 2 | Phase 1 (src layout, `mcp` dep, data home) | 2–3 days, one big PR |
 | 3 | Phase 5.1 (claim PyPI name, publish first alpha) | hours |
 | 4 | Phase 2 (auth/CSRF/token/permissions defaults) | 2 days |

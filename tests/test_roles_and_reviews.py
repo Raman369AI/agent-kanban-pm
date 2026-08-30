@@ -20,20 +20,20 @@ import tests_helper  # noqa: F401  — auto-clean throwaway entities/projects on
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
-from database import init_db, get_db, Base
-from models import (
+from agent_kanban_pm.db import init_db, get_db, Base
+from agent_kanban_pm.models import (
     DiffReview, DiffReviewStatus, Entity, EntityType, Role,
     Project, Stage, ApprovalStatus, Task, TaskStatus, AgentHeartbeat,
     AgentStatusType, AgentSession, AgentSessionStatus,
 )
-from schemas import DiffReviewCreate, DiffReviewResponse, DiffReviewUpdate
-from kanban_runtime.preferences import (
+from agent_kanban_pm.schemas import DiffReviewCreate, DiffReviewResponse, DiffReviewUpdate
+from agent_kanban_pm.runtime.preferences import (
     Preferences, RoleConfig, RoleAssignment, AgentRole,
     ManagerConfig, WorkerConfig, AutonomyConfig,
     SchedulingConfig,
     load_preferences, save_preferences,
 )
-from main import app
+from agent_kanban_pm.app import app
 
 
 @pytest.fixture
@@ -116,7 +116,7 @@ class TestRolePreferences:
         assert AgentRole.DIFF_REVIEW.value == "diff_review"
 
     def test_save_and_load(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("kanban_runtime.preferences.PREFERENCES_PATH", tmp_path / "prefs.yaml")
+        monkeypatch.setattr("agent_kanban_pm.runtime.preferences.PREFERENCES_PATH", tmp_path / "prefs.yaml")
         prefs = Preferences(
             roles=RoleConfig(
                 orchestrator=RoleAssignment(agent="claude", mode="headless", model="claude-sonnet-4-6"),
@@ -147,7 +147,7 @@ class TestRolePreferences:
         assert assignment.models == ["model-a", "model-b"]
 
     def test_standalone_role_adapter_is_in_memory_only(self):
-        from kanban_runtime.adapter_loader import standalone_assignment_to_adapter
+        from agent_kanban_pm.runtime.adapter_loader import standalone_assignment_to_adapter
 
         assignment = RoleAssignment(
             agent="my-cli",
@@ -191,7 +191,7 @@ class TestDiffReviewModel:
 class TestDiffReviewAPI:
     def test_create_and_list_diff_reviews(self):
         from fastapi.testclient import TestClient
-        from database import init_db
+        from agent_kanban_pm.db import init_db
 
         asyncio.run(init_db())
 
@@ -246,7 +246,7 @@ class TestDiffReviewAPI:
 class TestApprovalQueueAPI:
     def test_approval_queue_requires_auth_and_manager_resolution(self):
         from fastapi.testclient import TestClient
-        from database import init_db
+        from agent_kanban_pm.db import init_db
 
         asyncio.run(init_db())
 
@@ -323,13 +323,13 @@ class TestApprovalQueueAPI:
 
 class TestAdapterRoleMapping:
     def test_orchestrator_maps_to_manager(self):
-        from kanban_runtime.adapter_loader import adapter_role_to_db_role
+        from agent_kanban_pm.runtime.adapter_loader import adapter_role_to_db_role
         assert adapter_role_to_db_role(["orchestrator"]) == Role.MANAGER
         assert adapter_role_to_db_role(["orchestrator", "worker"]) == Role.MANAGER
         assert adapter_role_to_db_role(["manager"]) == Role.MANAGER
 
     def test_worker_roles_map_to_worker(self):
-        from kanban_runtime.adapter_loader import adapter_role_to_db_role
+        from agent_kanban_pm.runtime.adapter_loader import adapter_role_to_db_role
         assert adapter_role_to_db_role(["worker"]) == Role.WORKER
         assert adapter_role_to_db_role(["ui"]) == Role.WORKER
         assert adapter_role_to_db_role(["test"]) == Role.WORKER
@@ -337,13 +337,13 @@ class TestAdapterRoleMapping:
         assert adapter_role_to_db_role(["git_pr"]) == Role.WORKER
 
     def test_unknown_maps_to_viewer(self):
-        from kanban_runtime.adapter_loader import adapter_role_to_db_role
+        from agent_kanban_pm.runtime.adapter_loader import adapter_role_to_db_role
         assert adapter_role_to_db_role(["unknown"]) == Role.VIEWER
 
 
 class TestAssignmentLauncher:
     def test_scheduling_blocks_second_implementation_task_by_default(self):
-        from kanban_runtime.assignment_launcher import _scheduling_blocker
+        from agent_kanban_pm.runtime.assignment_launcher import _scheduling_blocker
 
         async def run_case():
             test_db = Path("./test_assignment_scheduling.db")
@@ -416,7 +416,7 @@ class TestAssignmentLauncher:
         asyncio.run(run_case())
 
     def test_mark_task_started_moves_todo_card_to_in_progress(self):
-        from kanban_runtime.assignment_launcher import AssignmentLauncher
+        from agent_kanban_pm.runtime.assignment_launcher import AssignmentLauncher
 
         async def run_case():
             test_db = Path("./test_assignment_launcher.db")
@@ -473,8 +473,8 @@ class TestAssignmentLauncher:
         asyncio.run(run_case())
 
     def test_build_agent_command_for_installed_cli_shapes(self, monkeypatch):
-        from kanban_runtime.assignment_launcher import _build_agent_command
-        from kanban_runtime.adapter_loader import AdapterSpec, InvokeSpec, TaskCommandSpec
+        from agent_kanban_pm.runtime.assignment_launcher import _build_agent_command
+        from agent_kanban_pm.runtime.adapter_loader import AdapterSpec, InvokeSpec, TaskCommandSpec
 
         monkeypatch.setattr("shutil.which", lambda command: f"/usr/bin/{command}")
         prompt = "Work on task #1"
@@ -511,8 +511,8 @@ class TestAssignmentLauncher:
         ]
 
     def test_role_supervisor_model_flag_is_adapter_data(self, monkeypatch):
-        from kanban_runtime.role_supervisor import build_command_for_role
-        from kanban_runtime.adapter_loader import AdapterSpec, InvokeSpec
+        from agent_kanban_pm.runtime.role_supervisor import build_command_for_role
+        from agent_kanban_pm.runtime.adapter_loader import AdapterSpec, InvokeSpec
 
         monkeypatch.setattr("shutil.which", lambda command: f"/usr/bin/{command}")
         adapter = AdapterSpec(

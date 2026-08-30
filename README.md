@@ -15,6 +15,8 @@ system diagram.
 ## Requirements
 
 - Python ≥ 3.11
+- Linux or macOS. On Windows, use WSL; the local process runtime relies on
+  Unix PTY/process semantics.
 - `git`
 - Recommended: `tmux` for detachable terminal sessions. If `tmux` is not
   available, the runtime uses its native PTY subprocess fallback.
@@ -104,24 +106,42 @@ The handoff source of truth is each worktree's `STATUS.md`. If an agent exits
 without updating it, the card may stay where it is because the runtime cannot
 reliably tell whether the work is ready for review.
 
-## Auto-approval
+## Autonomy & approval
 
-Bundled adapters launch their CLI in auto-approval mode by default
-(`claude --permission-mode bypassPermissions`, `gemini --approval-mode yolo`,
-`codex --full-auto`, `aider --yes-always`). Combined with the per-task
-worktree, the blast radius is scoped to that worktree, and risky actions are
-expected to be recorded in `STATUS.md` rather than queued for human approval.
-Critical review and approval records can still be created through the REST/MCP
-surfaces when an agent or human needs an explicit audit gate.
-To roll back to supervised execution, edit the corresponding YAML in
-`kanban_runtime/data/agents/` (or your `~/.kanban/agents/` override).
+Agents run **supervised** by default: the CLI keeps its approval prompts, and
+risky actions (file writes, shell commands, git, network) surface in the
+Kanban approval queue for a human or the orchestrator.
+
+Auto mode is an explicit per-role opt-in. Set `autonomy: auto` on a role in
+`~/.kanban/preferences.yaml` (or answer `y` at the autonomy prompt in
+`kanban init`, or pass `--autonomy auto` to `kanban roles assign`). The
+launcher then appends the adapter's bypass flags — `claude
+--permission-mode bypassPermissions`, `gemini --approval-mode yolo`,
+`codex --full-auto`, `aider --yes-always`, declared as
+`task_command.auto_args` in the adapter YAML — so the agent never pauses to
+ask. Combined with the per-task worktree, the blast radius is scoped to that
+worktree, and risky actions are expected to be recorded in `STATUS.md`.
+Critical review and approval records can still be created through the
+REST/MCP surfaces when an agent or human needs an explicit audit gate.
+
+## UI & token security
+
+The server binds to loopback and authenticates every non-page request with a
+per-instance token (`~/.kanban/token`, owner-only `0600`). Browser pages
+receive the token as an `HttpOnly`, `SameSite=strict` cookie; mutations
+authenticated by that cookie must also send the `X-CSRF-Token` header
+embedded in each page (wired automatically via a `fetch` wrapper in
+`base.html`). CLI and supervisor processes use the `X-Kanban-Token` header,
+which does not need the CSRF token. Requests with a non-loopback `Host`
+header are rejected before routing (DNS-rebinding defense); extend with
+`KANBAN_ALLOWED_HOSTS` if you deliberately serve a LAN hostname.
 
 ## MCP Identity
 
-CLI agents connect through `mcp_server.py` using local process identity:
+CLI agents connect through `agent_kanban_pm.mcp.server` using local process identity:
 
 ```bash
-KANBAN_AGENT_NAME=codex KANBAN_AGENT_ROLE=worker python mcp_server.py
+KANBAN_AGENT_NAME=codex KANBAN_AGENT_ROLE=worker kanban-mcp
 ```
 
 `KANBAN_AGENT_NAME` must match an adapter entity loaded from
@@ -148,9 +168,31 @@ python -m build              # build package
 twine check dist/*           # verify artifacts
 ```
 
-Package data is served from `kanban_runtime/data/`; the historical root-level
+Package data is served from `agent_kanban_pm/data/`; the historical root-level
 `agents/`, `mcp_configs/`, `static/`, and `templates/` folders are not part of
 the packaged runtime.
+
+## Roadmap
+
+See [PLAN.md](PLAN.md) for the full roadmap to a standalone, fully available
+release. Each phase is releasable on its own.
+
+- [x] **Phase 0 — Stabilize** (done): failing UI test fixed, CI installs the
+  package and smoke-tests the built wheel, single-sourced dependencies,
+  `.env.example` documents real env vars, dev-artifact name heuristics
+  replaced with a `Project.is_demo` flag.
+- [x] **Phase 1 — Packaging correctness**: `src/` layout, declared `mcp`
+  dependency, install-safe data home.
+- [x] **Phase 2 — Security hardening**: `/ui` mutations require the token,
+  HttpOnly cookie + CSRF header, Host-header validation, token file is
+  `0600`, supervised-by-default autonomy with explicit `auto` opt-in,
+  WebSocket token verification.
+- [ ] **Phase 3 — Runtime correctness**: async subprocess work, service
+  layer, Alembic, MCP identity freshness.
+- [ ] **Phase 4 — Product surface & docs**: README landing page, community
+  scaffolding, mkdocs site.
+- [ ] **Phase 5 — Release & distribution**: PyPI trusted publishing, version
+  tags, alternative install paths.
 
 ## License
 

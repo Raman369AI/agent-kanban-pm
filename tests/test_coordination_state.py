@@ -8,9 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tests_helper  # noqa: F401  — auto-clean throwaway entities/projects on exit
 from fastapi.testclient import TestClient
 
-from models import ContributionType
-from main import app
-import routers.agent_activity as agent_activity_router
+from agent_kanban_pm.models import ContributionType
+from agent_kanban_pm.app import app
+import agent_kanban_pm.routers.agent_activity as agent_activity_router
 
 
 def test_coordination_state_and_terminal_feed():

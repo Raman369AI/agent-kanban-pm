@@ -2,7 +2,7 @@ include README.md
 include LICENSE
 include ARCHITECTURE.md
 include CHANGELOG.md
-recursive-include kanban_runtime/data *.html *.css *.js *.yaml *.json
+recursive-include src/agent_kanban_pm/data *.html *.css *.js *.yaml *.json
 prune agents
 prune mcp_configs
 prune static

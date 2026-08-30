@@ -11,7 +11,7 @@ import os
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # project root
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))          # tests dir
 
 # Keep pytest runs off the developer's real ./kanban.db. This must happen
@@ -60,7 +60,7 @@ import tests_helper  # noqa: F401  — side-effect: install listeners & fixture
 def pytest_sessionfinish(session, exitstatus):
     import asyncio
     import tests_helper
-    from database import engine
+    from agent_kanban_pm.db import engine
 
     tests_helper.cleanup_now()
     asyncio.run(engine.dispose())
