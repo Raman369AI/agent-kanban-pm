@@ -11,7 +11,7 @@ def verify_ws_token(websocket: WebSocket) -> bool:
     if os.getenv("KANBAN_TESTING") == "1":
         return True
 
-    from agent_kanban_pm.runtime.instance import get_auth_token
+    from agent_kanban_pm.runtime.instance import get_auth_token, tokens_match
     expected_token = get_auth_token()
 
     token = (
@@ -29,7 +29,9 @@ def verify_ws_token(websocket: WebSocket) -> bool:
             else:
                 token = auth_header
 
-    return token == expected_token
+    # Timing-safe: a WebSocket handshake is as good an oracle as any other
+    # endpoint for recovering the token byte by byte.
+    return tokens_match(token, expected_token)
 
 
 @router.websocket("/ws/projects/{project_id}")

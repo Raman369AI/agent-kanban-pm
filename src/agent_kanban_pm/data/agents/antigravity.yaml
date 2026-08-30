@@ -1,20 +1,21 @@
 name: antigravity
-display_name: "Antigravity (AI Assistant)"
-version: "1.0"
+display_name: "Antigravity CLI (Google)"
+version: "1.1"
 
+# Google's replacement for the retired Gemini CLI. Flags below are taken from
+# `agy --help` (v1.0.1): the CLI has no --model or --mcp flag, so those stay
+# unset rather than being guessed.
 invoke:
   command: agy
-  mcp_flag: "--mcp"
   info_flag: "--version"
-  model_flag: "--model"
 
 capabilities: [code, analysis, summarization, debugging, testing, planning]
 
 models:
-  - id: antigravity-v1
+  - id: antigravity-default
     context_window: 1000000
 
-protocol: mcp
+protocol: stdio
 
 auth:
   type: none
@@ -25,14 +26,18 @@ reporting:
   heartbeat_interval: 30
 
 chat_designer:
-  prompt_flag: "-i"
+  prompt_flag: "-p"
   stdin: false
   output_format: "stdout"
-  timeout_seconds: 180
+  timeout_seconds: 300
+  # `agy --print` writes nothing when stdout is a pipe (it hangs, then exits 0
+  # with zero bytes). The chat designer must therefore run it on a PTY.
+  requires_tty: true
 
 task_command:
-  args: ["-i", "{prompt}"]
-  auto_args: ["--full-auto"]
+  # --print runs one prompt non-interactively; --add-dir scopes the workspace.
+  args: ["--print", "--add-dir", "{workspace}", "{prompt}"]
+  auto_args: ["--dangerously-skip-permissions"]
 
 owns: ['*']
 review_only: false

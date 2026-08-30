@@ -32,6 +32,7 @@ from agent_kanban_pm.runtime.instance import (
     ALLOWED_HOSTS,
     get_auth_token,
     get_csrf_token,
+    tokens_match,
 )
 from agent_kanban_pm.runtime.preferences import Preferences, RoleAssignment
 
@@ -229,3 +230,33 @@ def test_autonomy_opt_in_and_unknown_values_fall_back_safely():
     # A typo in preferences.yaml must never unlock bypass flags.
     prefs.set_role_assignment("ui", RoleAssignment(agent="claude", autonomy="yolo"))
     assert prefs.autonomy_for_role("ui") == "supervised"
+
+
+# ---------------------------------------------------------------------------
+# Constant-time token comparison
+# ---------------------------------------------------------------------------
+
+
+def test_tokens_match_accepts_only_the_exact_token():
+    token = get_auth_token()
+    assert tokens_match(token, token) is True
+    assert tokens_match(token + "x", token) is False
+    assert tokens_match(token[:-1], token) is False
+    assert tokens_match("wrong", token) is False
+
+
+def test_tokens_match_rejects_empty_credentials_without_raising():
+    token = get_auth_token()
+    assert tokens_match(None, token) is False
+    assert tokens_match("", token) is False
+
+
+def test_tokens_match_rejects_non_ascii_without_raising():
+    """Header values reach the app latin-1 decoded, so non-ASCII is reachable.
+
+    hmac.compare_digest raises TypeError on non-ASCII str, which would turn a
+    malformed token header into a 500 instead of a 401.
+    """
+    token = get_auth_token()
+    assert tokens_match("t\xf6k\xe9n", token) is False
+    assert tokens_match("\ud800lone-surrogate", token) is False
