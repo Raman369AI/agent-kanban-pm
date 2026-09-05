@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0rc1] — 2026-09-05
+
+Release candidate for local, single-user development.
+
+### Added
+- **`kanban audit`** — Reads the append-only agent activity trail: what each agent ran, in which workspace and branch, and under which autonomy. Filters: `--project`, `--task`, `--session`, `--agent`, `--since HOURS`, `--commands`, `--auto`, `--limit`, `--json`. It queries the database directly rather than the HTTP API, so the trail is still reachable when the server is down — which is usually when someone needs it. `GET /agents/activity` gains matching `activity_type` and `has_command` filters.
+- **mcp 1.x and 2.x are both supported** — 2.x removed the `@server.list_tools()` / `@server.call_tool()` decorators in favour of `add_request_handler`. Registration now adapts to whichever generation is installed, so the `mcp>=1.0,<2` pin is gone; it would otherwise collide with any environment needing 2.x. All 38 tools and their schemas verified identical on both (`inputSchema` survives as a validation alias in 2.x).
+- **Locked-dependency CI job** — `uv lock --check` plus a full test run against `uv.lock`. The matrix job still resolves fresh to catch upstream breakage early; this job proves the combination users actually install works. `uv.lock` regenerated for Python 3.11+ (it required 3.12+ while the project and CI support 3.11).
+
+### Changed
+- **Version is `0.4.0rc1`, classifier `Development Status :: 4 - Beta`** — previously `0.3.0a1` / Alpha.
+- **`kanban init` autonomy prompt** no longer cites the retired Gemini CLI's `--approval-mode yolo`; it names `claude` and `agy`, matching the flags the launcher appends.
+
 ### Security
 - **Closed the `/ui` auth bypass** — All `/ui/*` mutations (task create/edit/delete/move, project create/edit/delete, role assign, open-workspace) and every `/ui/api/*` JSON endpoint now require the Kanban token. Only HTML page GETs remain exempt so a browser can load the UI and receive the auth cookie.
 - **CSRF + hardened auth cookie** — The `kanban-token` cookie is now `HttpOnly` with `SameSite=strict`. Cookie-authenticated mutations must also send `X-CSRF-Token`, an HMAC of the instance token embedded in every page as a meta tag and attached automatically by a `fetch` wrapper in `base.html`. Header-authenticated callers (`X-Kanban-Token`, used by the CLI and role supervisor) are unaffected.
@@ -45,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **WebSocket / connection-manager logging** — `print(...)` replaced with `logger.warning(...)`.
 
 ### Fixed
+- **macOS async database dependency** — SQLAlchemy now installs its `asyncio` extra explicitly so the required `greenlet` package is present on macOS ARM as well as Linux.
+- **MCP authorization in installed packages** — Role-protected MCP tools now import authorization helpers from the installed package namespace, and caller identity/role/active state is refreshed for every tool call.
+- **Atomic, non-blocking assignment launch** — Git/worktree operations run off the asyncio event loop after the read transaction ends. Launch admission is serialized in the supported single-server topology and reinforced by partial unique indexes for open sessions and active task-agent leases.
+- **Runtime endpoint and shutdown cleanup** — The folder registration helper uses the detected instance URL and token; background tmux checks no longer block the event loop; application shutdown disposes the async database engine.
 - **Tmux collaboration not crossing Review/Done** — Worker tmux sessions previously only marked the `AgentSession` done and logged a handoff, leaving cards stuck in In Progress. Session completion now updates the board stage/status and publishes task movement/update events.
 - **Connection status enum comparisons** — Event delivery paths now compare `AgentConnection.status` with `ConnectionStatus.ONLINE` instead of raw string values, keeping MCP pending-event persistence and adapter dispatch on the same enum contract.
 - **Pydantic / Starlette deprecations** — Response schemas now use `ConfigDict(from_attributes=True)`, and UI templates use the current `TemplateResponse(request, name, context)` call order.

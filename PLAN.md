@@ -1,8 +1,7 @@
 # Plan: Make Agent Kanban PM a Standalone, Fully Available Project
 
 Goal: a project anyone can discover, `pip install`, run in under five minutes,
-and trust enough to point at their own repositories. Current state is a working
-alpha that only runs from a source checkout. This plan is ordered so each phase
+and trust enough to point at their own repositories. Current state is a tested release candidate with installable artifacts. This plan is ordered so each phase
 is releasable on its own.
 
 ---
@@ -105,7 +104,7 @@ implementation record.
 
 ## Phase 3 — Runtime correctness
 
-1. **Stop blocking the event loop.** `launch_for_assignment()` runs
+1. **Stop blocking the event loop (completed).** `launch_for_assignment()` runs
    `git fetch`/`rebase`/`worktree add` via synchronous `subprocess.run` inside
    an async event handler **while holding an open DB session** — a slow network
    fetch freezes the entire server. The session streamer and sweepers make
@@ -123,33 +122,31 @@ implementation record.
 3. **Adopt Alembic.** The homegrown `schema_migrations` table in `database.py`
    works but reimplements Alembic poorly and mixes `create_all()` with manual
    DDL. Generate an initial Alembic baseline from current models, port
-   migrations v1–v7, and run `alembic upgrade head` from `init_db()`.
-4. **MCP identity freshness.** `KanbanMCPServer._authenticate()` caches the
+   migrations v1–v9, and run `alembic upgrade head` from `init_db()`.
+4. **MCP identity freshness (completed).** `KanbanMCPServer._authenticate()` caches the
    entity object for the life of the process; re-fetch (or at least re-check
    `is_active`/role) per call so demoting an agent takes effect.
-5. **Kill remaining hardcoded endpoints.** `open_project.py` pins
+5. **Kill remaining hardcoded endpoints (completed).** `open_project.py` pins
    `API_BASE = "http://localhost:8000"`, ignoring the instance port logic —
    route it through `kanban_runtime.instance.get_api_base()` (or fold it into
    `kanban open` as a CLI subcommand and delete the standalone script).
 
-6. **Cleanly close async database resources in tests and shutdown.** The suite
-   passes, but currently emits an unhandled `aiosqlite` worker-thread warning
-   after an event loop has closed. Ensure test fixtures and application
-   lifespan shutdown dispose engines and finish outstanding database work; make
-   thread/resource warnings fail CI once the cleanup is in place.
-7. **Make assignment admission atomic.** Parallel assignment events currently
-   perform limit and active-session checks before creating the session/lease.
-   Enforce the one-active-lease/session invariants in the database (or through
-   a serialized admission transaction) so two concurrent events cannot both
-   pass the check and launch duplicate work.
+6. **Cleanly close async database resources in tests and shutdown (completed).**
+   The suite now drains queued event work before stopping, disposes the
+   application engine during lifespan shutdown, and closes test resources
+   before their event loops end. Unhandled pytest worker-thread warnings fail CI.
+7. **Make assignment admission atomic (completed for the supported single-server topology).**
+   Parallel assignment events pass through a process-local admission lock,
+   while partial unique database indexes enforce one open session and one active
+   lease for an assignment. Conflicts are handled without spawning a duplicate
+   worker.
 
 ## Phase 4 — Product surface & docs
 
-1. **README as a landing page:** demo GIF/screenshot of the board and a
-   terminal session, a 5-minute quickstart that works verbatim
-   (`pipx install agent-kanban-pm && kanban init && kanban run`), a support
-   matrix (OS, Python, agent CLIs tested).
-2. **Community scaffolding:** CONTRIBUTING.md, issue/PR templates,
+1. **README as a landing page (partially completed):** the install quickstart
+   and support matrix work; a demo GIF/screenshot of the board and a terminal
+   session remain.
+2. **Community scaffolding (completed):** CONTRIBUTING.md, issue/PR templates,
    CODE_OF_CONDUCT.md, SECURITY.md (local-first threat model and how to report).
 3. **Docs site** (mkdocs-material): concepts (roles, stages, handoff,
    STATUS.md contract), adapter YAML reference, preferences.yaml reference,
@@ -163,18 +160,16 @@ implementation record.
 
 ## Phase 5 — Release & distribution
 
-1. **PyPI publishing.** The README already says `pip install --pre
-   agent-kanban-pm`, but the name is unregistered (pypi returns 404) — claim
-   it now. Add a `release.yml` workflow using PyPI Trusted Publishing
-   triggered on `v*` tags: build → twine check → publish; smoke-test the
-   published wheel with `pipx run`.
-2. **Versioning discipline.** Tag `v0.3.0a2` from the restructured package,
-   move the giant `[Unreleased]` CHANGELOG section under it, and cut releases
-   per phase. GitHub Releases with notes generated from CHANGELOG.
-3. **Alternative install paths:** verify `uvx agent-kanban-pm` / `pipx`
-   work; optional Dockerfile (server-only mode, no tmux) for the board UI.
-4. **Post-release checks:** a scheduled CI job that installs from PyPI and
-   boots the server, so distribution rot is caught automatically.
+1. **PyPI publishing (automation complete; account setup pending).** The tag-triggered `release.yml` workflow builds and checks artifacts, publishes through PyPI Trusted Publishing, verifies `pipx` and `uvx`, and creates the GitHub Release. Configure the `pypi` GitHub environment and pending PyPI publisher before pushing the first tag.
+2. **Versioning discipline (automation ready):** the changelog now has a dated
+   `0.4.0rc1` section and the workflow rejects a tag that differs from the
+   package version. A maintainer must push `v0.4.0rc1`; GitHub Release notes
+   and artifacts are then generated automatically.
+3. **Alternative install paths (verified):** `uvx` and `pipx` are exercised
+   by the release workflow; an optional Dockerfile (server-only mode, no tmux)
+   remains future work.
+4. **Post-release checks (completed):** a scheduled CI job installs from PyPI
+   and boots the server so distribution rot is caught automatically.
 
 ---
 

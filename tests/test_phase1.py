@@ -71,3 +71,27 @@ def test_phase1():
 
 if __name__ == "__main__":
     test_phase1()
+
+
+def test_open_project_uses_instance_url_and_token(monkeypatch):
+    from agent_kanban_pm import open_project
+    from agent_kanban_pm.runtime.instance import get_api_base, get_auth_token
+
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return []
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers")
+        return Response()
+
+    monkeypatch.setattr(open_project.httpx, "get", fake_get)
+    assert open_project.list_projects() == []
+    assert captured["url"] == f"{get_api_base()}/projects"
+    assert captured["headers"] == {"X-Kanban-Token": get_auth_token()}

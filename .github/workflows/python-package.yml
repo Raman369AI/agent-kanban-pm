@@ -36,9 +36,57 @@ jobs:
     - name: Test with pytest
       run: pytest -v --timeout=60 --timeout-method=thread
 
+  test-macos:
+    name: Test (macOS, Python 3.12)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install package
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e ".[dev]"
+
+    - name: Run fatal lint checks
+      run: flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
+
+    - name: Run tests
+      run: pytest -q --timeout=60 --timeout-method=thread
+
+  locked:
+    name: Locked install (uv.lock)
+    runs-on: ubuntu-latest
+
+    # The matrix job above resolves dependencies fresh, which catches upstream
+    # breakage early but means CI tests a different set than a locked install
+    # gives a user. This job pins to uv.lock so the shipped combination is
+    # exercised too; if the two disagree, the lockfile needs refreshing.
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        # Pinned: uv.lock carries a format revision, and a newer uv than the
+        # one that wrote it fails `uv lock --check` even when the resolution is
+        # unchanged. Bump this together with a regenerated lockfile.
+        version: "0.12.7"
+        enable-cache: true
+
+    - name: Verify the lockfile is current
+      run: uv lock --check
+
+    - name: Test against the locked dependency set
+      run: uv run --locked --extra dev python -m pytest -q --timeout=60 --timeout-method=thread
+
   build-and-smoke:
     name: Build wheel + smoke test
-    needs: test
+    needs: [test, test-macos, locked]
     runs-on: ubuntu-latest
 
     steps:

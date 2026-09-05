@@ -2,9 +2,12 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
-Status: alpha (`0.3.0a1`). The local runtime, board UI, per-task agent
-sessions, and MCP surface work, but the CLI-agent workflow and packaging
-surface should still be treated as early and subject to change.
+Status: release candidate (`0.4.0rc1`) for local, single-user development.
+The local runtime, board UI, per-task agent sessions, and MCP surface work and
+are covered by tests, including a database upgrade path. It is a single-operator
+tool by design: one shared token guards the local server, so do not expose it to
+an untrusted network or share an instance with people you would not give shell
+access.
 
 The server stores state, starts assigned local agents, streams terminal output,
 and advances cards through the standard execution/review handoff. The selected
@@ -23,13 +26,27 @@ system diagram.
 - At least one CLI agent (Claude Code, Antigravity CLI, Codex, OpenCode, Aider, etc.)
 - Optional: `gh` for GitHub PR/issue/review sync
 
+| Platform | Status |
+|---|---|
+| Linux | CI-tested on Python 3.11, 3.12, and 3.13 |
+| macOS | CI-tested on Python 3.12 |
+| Windows | Use WSL; native Windows is not supported |
+
 ## Install
 
-Alpha builds may require pre-release resolution:
+Release candidates need pre-release resolution:
 
 ```bash
 pip install --pre agent-kanban-pm
 kanban init
+```
+
+For an isolated CLI installation:
+
+```bash
+pipx install --pip-args="--pre" agent-kanban-pm
+# Or run without installing:
+uvx --prerelease allow --from agent-kanban-pm kanban --help
 ```
 
 From source:
@@ -58,6 +75,8 @@ kanban roles list                                 # show role assignments
 kanban roles assign worker opencode --mode headless # assign a role
 kanban agents discover                            # find local CLIs
 kanban sheet                                      # compact status
+kanban audit                                      # what agents ran, and how
+kanban audit --auto --commands                    # only unsupervised runs
 kanban handoff status --workspace .               # inspect worktree state
 ```
 
@@ -159,6 +178,27 @@ worktree, and risky actions are expected to be recorded in `STATUS.md`.
 Critical review and approval records can still be created through the
 REST/MCP surfaces when an agent or human needs an explicit audit gate.
 
+## Auditing what agents did
+
+Every agent start is written to an append-only activity log with the resolved
+command line, the workspace and branch, and the autonomy the session ran under.
+When an agent does something surprising, that record is what tells you what
+actually executed.
+
+```bash
+kanban audit                        # recent activity, oldest first
+kanban audit --task 42              # one task's trail
+kanban audit --auto                 # only sessions that ran with approvals off
+kanban audit --commands             # only entries that recorded a command
+kanban audit --since 24 --json      # last 24h, machine readable
+```
+
+`kanban audit` reads the database directly, so it still works when the server
+is not running. The same data is available over HTTP at `GET /agents/activity`
+(filters: `agent_id`, `project_id`, `task_id`, `session_id`, `activity_type`,
+`has_command`, `limit`), which requires the Kanban token like every other API
+route.
+
 ## UI & token security
 
 The server binds to loopback and authenticates every non-page request with a
@@ -222,12 +262,22 @@ release. Each phase is releasable on its own.
   HttpOnly cookie + CSRF header, Host-header validation, token file is
   `0600`, supervised-by-default autonomy with explicit `auto` opt-in,
   WebSocket token verification.
-- [ ] **Phase 3 — Runtime correctness**: async subprocess work, service
-  layer, Alembic, MCP identity freshness.
-- [ ] **Phase 4 — Product surface & docs**: README landing page, community
-  scaffolding, mkdocs site.
-- [ ] **Phase 5 — Release & distribution**: PyPI trusted publishing, version
-  tags, alternative install paths.
+- [ ] **Phase 3 — Runtime correctness**: async subprocess work, atomic launch
+  admission, MCP identity freshness, endpoint discovery, and shutdown cleanup
+  are complete; the service-layer and Alembic refactors remain.
+- [ ] **Phase 4 — Product surface & docs**: support matrix and community
+  scaffolding are complete; landing-page visuals and the mkdocs site remain.
+- [ ] **Phase 5 — Release & distribution**: tag publishing and post-publish
+  smoke automation are ready; PyPI/GitHub environment setup, merge, and the
+  first version tag remain maintainer actions.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the supported threat model and private vulnerability reporting.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Release maintainers should also follow [RELEASING.md](RELEASING.md).
 
 ## License
 

@@ -8,6 +8,7 @@ starts the already-assigned local adapter so the assignment is not inert.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import json
 import os
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import select, and_, desc
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from agent_kanban_pm.db import async_session_maker
@@ -436,6 +438,7 @@ async def _scheduling_blocker(
 
 class AssignmentLauncher:
     def __init__(self, api_base: str = ""):
+        self._admission_lock: Optional[asyncio.Lock] = None
         if api_base:
             self.api_base = api_base
         else:
@@ -443,8 +446,8 @@ class AssignmentLauncher:
             self.api_base = get_api_base()
 
     def reset(self):
-        """Reset for test isolation. AssignmentLauncher is stateless."""
-        pass
+        """Reset process-local admission state for test isolation."""
+        self._admission_lock = None
 
     async def handle_event(self, payload: dict) -> None:
         data = payload.get("data") or {}
@@ -455,6 +458,15 @@ class AssignmentLauncher:
         await self.launch_for_assignment(int(task_id), int(entity_id), assigned_role=data.get("role"))
 
     async def launch_for_assignment(self, task_id: int, entity_id: int, assigned_role: Optional[str] = None) -> Optional[int]:
+        # The supported topology has one server process. Serializing admission
+        # makes scheduling checks and session reservation atomic in that
+        # process; database indexes provide a final cross-process guard.
+        if self._admission_lock is None:
+            self._admission_lock = asyncio.Lock()
+        async with self._admission_lock:
+            return await self._launch_for_assignment(task_id, entity_id, assigned_role)
+
+    async def _launch_for_assignment(self, task_id: int, entity_id: int, assigned_role: Optional[str] = None) -> Optional[int]:
         if not _tmux_available():
             logger.warning("Cannot auto-start assigned agent: no process runner available")
             return None
@@ -532,10 +544,18 @@ class AssignmentLauncher:
                 logger.info(message)
                 return None
 
+            # End the read transaction before filesystem and Git work. A fetch
+            # can take seconds; it must neither freeze the event loop nor keep
+            # a SQLite transaction open.
+            await db.commit()
+
             git_bin = shutil.which("git")
-            base_ref = _detect_base_ref(project.path, git_bin) if git_bin else None
+            base_ref = await asyncio.to_thread(
+                _detect_base_ref, project.path, git_bin
+            ) if git_bin else None
             branch_name = _task_branch_name(task, agent)
-            workspace_path = _create_git_worktree(
+            workspace_path = await asyncio.to_thread(
+                _create_git_worktree,
                 project.path,
                 _git_worktree_path(project, task, agent),
                 branch_name=branch_name,
@@ -559,10 +579,15 @@ class AssignmentLauncher:
                 workspace_path = project.path
                 isolated_workspace = False
             else:
-                _, sync_message = _sync_worktree_with_base(workspace_path, base_ref)
+                _, sync_message = await asyncio.to_thread(
+                    _sync_worktree_with_base, workspace_path, base_ref
+                )
 
-            alias_results = ensure_instruction_aliases(workspace_path)
-            status_path = initialize_status_file(
+            alias_results = await asyncio.to_thread(
+                ensure_instruction_aliases, workspace_path
+            )
+            status_path = await asyncio.to_thread(
+                initialize_status_file,
                 workspace_path,
                 task_id=task.id,
                 project_id=project.id,
@@ -591,7 +616,11 @@ class AssignmentLauncher:
             )
             existing_sessions = existing_result.scalars().all()
             session_name = _tmux_session_name(agent.name, task.id)
-            if existing_sessions and _tmux_has_session(session_name):
+            runner_is_active = (
+                await asyncio.to_thread(_tmux_has_session, session_name)
+                if existing_sessions else False
+            )
+            if existing_sessions and runner_is_active:
                 existing_session = existing_sessions[0]
                 now = datetime.now(UTC)
                 for stale_session in existing_sessions[1:]:
@@ -623,7 +652,9 @@ class AssignmentLauncher:
             prompt = _build_prompt(
                 task, project, agent, workspace_path, checkpoint, isolated_workspace, autonomy
             )
-            args = _build_agent_command(adapter, workspace_path, prompt, autonomy)
+            args = await asyncio.to_thread(
+                _build_agent_command, adapter, workspace_path, prompt, autonomy
+            )
             command_text = shell_command(args)
 
             db_session = AgentSession(
@@ -631,13 +662,32 @@ class AssignmentLauncher:
                 project_id=project.id,
                 task_id=task.id,
                 workspace_path=workspace_path,
-                status=AgentSessionStatus.ACTIVE,
+                status=AgentSessionStatus.STARTING,
                 command=command_text,
                 model=adapter.models[0].id if adapter.models else None,
                 mode="headless",
             )
             db.add(db_session)
-            await db.flush()
+            try:
+                await db.flush()
+            except IntegrityError:
+                await db.rollback()
+                existing = await db.scalar(
+                    select(AgentSession).filter(
+                        AgentSession.agent_id == agent.id,
+                        AgentSession.task_id == task.id,
+                        AgentSession.ended_at.is_(None),
+                    )
+                )
+                if existing:
+                    logger.info(
+                        "Assignment admission reused concurrent session %s for task %s and agent %s",
+                        existing.id,
+                        task.id,
+                        agent.id,
+                    )
+                    return existing.id
+                raise
 
             now = datetime.now(UTC)
             older_leases = await db.execute(
@@ -650,6 +700,7 @@ class AssignmentLauncher:
             for lease in older_leases.scalars().all():
                 lease.status = LeaseStatus.RELEASED
                 lease.released_at = now
+            await db.flush()
 
             db.add(TaskLease(
                 task_id=task.id,
@@ -715,15 +766,42 @@ class AssignmentLauncher:
         env["KANBAN_AGENT_NAME"] = agent.name
         env["KANBAN_AGENT_ROLE"] = matching_role_name
         env["KANBAN_API_BASE"] = self.api_base
-        if _tmux_has_session(session_name):
-            kill_session(session_name)
-        start_session(
-            session_name=session_name,
-            cwd=workspace_path,
-            args=args,
-            env=env,
-            kill_existing=False,
-        )
+        if await asyncio.to_thread(_tmux_has_session, session_name):
+            await asyncio.to_thread(kill_session, session_name)
+        try:
+            await asyncio.to_thread(
+                start_session,
+                session_name=session_name,
+                cwd=workspace_path,
+                args=args,
+                env=env,
+                kill_existing=False,
+            )
+        except Exception:
+            async with async_session_maker() as db:
+                failed = await db.get(AgentSession, session_id)
+                if failed and failed.ended_at is None:
+                    failed.status = AgentSessionStatus.ERROR
+                    failed.ended_at = datetime.now(UTC)
+                    failed.last_seen_at = failed.ended_at
+                    leases = await db.execute(
+                        select(TaskLease).filter(
+                            TaskLease.session_id == session_id,
+                            TaskLease.status == LeaseStatus.ACTIVE,
+                        )
+                    )
+                    for lease in leases.scalars().all():
+                        lease.status = LeaseStatus.RELEASED
+                        lease.released_at = failed.ended_at
+                    await db.commit()
+            raise
+
+        async with async_session_maker() as db:
+            started = await db.get(AgentSession, session_id)
+            if started and started.ended_at is None:
+                started.status = AgentSessionStatus.ACTIVE
+                started.last_seen_at = datetime.now(UTC)
+                await db.commit()
         logger.info("Auto-started %s for task #%s in session %s", agent.name, task_id, session_name)
         return session_id
 

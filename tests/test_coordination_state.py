@@ -39,12 +39,24 @@ def test_coordination_state_and_terminal_feed():
             "project_id": project["id"]
         }, headers=owner_headers).json()
 
-        session = client.post(f"/agents/{agent['id']}/sessions", json={
+        session_payload = {
             "project_id": project["id"],
             "task_id": task["id"],
             "command": "codex --worktree /tmp/coordination-project",
             "mode": "auto"
-        }, headers=agent_headers).json()
+        }
+        session = client.post(
+            f"/agents/{agent['id']}/sessions",
+            json=session_payload,
+            headers=agent_headers,
+        ).json()
+
+        duplicate_session = client.post(
+            f"/agents/{agent['id']}/sessions",
+            json=session_payload,
+            headers=agent_headers,
+        )
+        assert duplicate_session.status_code == 409
 
         lease_response = client.post(f"/agents/tasks/{task['id']}/lease", json={
             "task_id": task["id"],

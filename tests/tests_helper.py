@@ -218,16 +218,30 @@ def cleanup_now() -> None:
         return
     try:
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Already inside an event loop (e.g. pytest-asyncio session).
-                # Spawn a one-shot task and wait for it.
-                future = asyncio.run_coroutine_threadsafe(_delete_tracked_async(), loop)
-                future.result(timeout=10)
-                return
+            asyncio.get_running_loop()
         except RuntimeError:
-            pass
-        asyncio.run(_delete_tracked_async())
+            asyncio.run(_delete_tracked_async())
+        else:
+            # A synchronous cleanup function cannot block the thread that owns
+            # an already-running loop. Use a short-lived helper thread with its
+            # own loop and wait for it to finish.
+            import threading
+
+            failure = []
+
+            def _run_cleanup():
+                try:
+                    asyncio.run(_delete_tracked_async())
+                except Exception as exc:  # pragma: no cover - propagated below
+                    failure.append(exc)
+
+            thread = threading.Thread(target=_run_cleanup, name="kanban-test-cleanup")
+            thread.start()
+            thread.join(timeout=10)
+            if thread.is_alive():
+                raise TimeoutError("tests_helper cleanup timed out")
+            if failure:
+                raise failure[0]
     except Exception as exc:  # pragma: no cover — best-effort cleanup
         logger.warning("tests_helper cleanup failed: %s", exc)
     finally:

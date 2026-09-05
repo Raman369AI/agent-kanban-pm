@@ -23,6 +23,7 @@ from typing import Any, Optional, Sequence
 from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 
 from agent_kanban_pm.db import async_session_maker
 from agent_kanban_pm.models import (
@@ -36,7 +37,7 @@ from agent_kanban_pm.models import (
 )
 from agent_kanban_pm.events import event_bus, EventType
 from agent_kanban_pm.runtime.task_transitions import apply_task_transition_fields, validate_task_transition
-from agent_kanban_pm.auth import is_owner_or_manager
+from agent_kanban_pm.auth import ROLE_LEVELS, get_effective_role, is_owner_or_manager
 from agent_kanban_pm.runtime.default_stages import DEFAULT_STAGES
 
 logging.basicConfig(
@@ -47,6 +48,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 try:
+    import mcp.types as mcp_types
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
     from mcp.types import (
@@ -54,8 +56,14 @@ try:
         TextContent,
     )
     MCP_AVAILABLE = True
+    # mcp 1.x registers handlers with @server.list_tools() / @server.call_tool();
+    # 2.x dropped those decorators for explicit add_request_handler() calls.
+    # Everything else this module uses (Server.run, stdio_server, the types) is
+    # the same on both, so one flag covers the difference.
+    MCP_LEGACY_DECORATORS = hasattr(Server, "list_tools")
 except ImportError as e:
     MCP_AVAILABLE = False
+    MCP_LEGACY_DECORATORS = False
     logger.error(f"MCP library not available: {e}")
     logger.error("Install with: pip install mcp")
 
@@ -87,10 +95,12 @@ class KanbanMCPServer:
         self._caller_role = os.environ.get("KANBAN_AGENT_ROLE", "worker")
 
     async def _authenticate(self) -> Entity:
-        """Authenticate the caller by looking up Entity.name."""
-        if self.caller_entity:
-            return self.caller_entity
+        """Authenticate the caller against current database state.
 
+        MCP processes are intentionally long-lived, while an entity can be
+        disabled or have its role changed at any time. Re-read the row for
+        every tool call so those changes take effect immediately.
+        """
         async with async_session_maker() as db:
             result = await db.execute(
                 select(Entity).filter(Entity.name == self._caller_name, Entity.is_active == True)
@@ -105,7 +115,6 @@ class KanbanMCPServer:
 
     def _require_role(self, min_role: Role):
         """Check if the authenticated caller has at least the required role."""
-        from auth import ROLE_LEVELS, get_effective_role
         entity = self.caller_entity
         if not entity:
             raise PermissionError("Not authenticated")
@@ -124,7 +133,6 @@ class KanbanMCPServer:
     def setup_handlers(self):
         """Setup MCP handlers"""
 
-        @self.server.list_tools()
         async def list_tools() -> list[Tool]:
             """List available MCP tools for agents"""
             return [
@@ -641,7 +649,6 @@ class KanbanMCPServer:
                 )
             ]
 
-        @self.server.call_tool()
         async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             """Handle tool calls from agents"""
             try:
@@ -659,6 +666,36 @@ class KanbanMCPServer:
             except Exception as e:
                 logger.error(f"Error in tool {name}: {e}")
                 return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+
+        self._register_tool_handlers(list_tools, call_tool)
+
+    def _register_tool_handlers(self, list_tools, call_tool) -> None:
+        """Attach the tool handlers to whichever mcp generation is installed.
+
+        1.x wraps them with @server.list_tools() / @server.call_tool(), which
+        adapt the return values themselves. 2.x removed those decorators: the
+        handlers are registered by method name, take a request context plus
+        parsed params, and must return the Result models rather than bare
+        lists.
+        """
+        if MCP_LEGACY_DECORATORS:
+            self.server.list_tools()(list_tools)
+            self.server.call_tool()(call_tool)
+            return
+
+        async def on_list_tools(_ctx, _params):
+            return mcp_types.ListToolsResult(tools=list(await list_tools()))
+
+        async def on_call_tool(_ctx, params):
+            content = await call_tool(params.name, params.arguments or {})
+            return mcp_types.CallToolResult(content=list(content))
+
+        self.server.add_request_handler(
+            "tools/list", mcp_types.PaginatedRequestParams, on_list_tools
+        )
+        self.server.add_request_handler(
+            "tools/call", mcp_types.CallToolRequestParams, on_call_tool
+        )
 
     # ========================================================================
     # HELPERS
@@ -1250,10 +1287,25 @@ class KanbanMCPServer:
             if not workspace_path:
                 return {"error": "workspace_path is required when the project has no path"}
 
+            task_id = args.get("task_id")
+            if task_id is not None:
+                existing = await db.scalar(
+                    select(AgentSession).filter(
+                        AgentSession.agent_id == agent_id,
+                        AgentSession.task_id == task_id,
+                        AgentSession.ended_at.is_(None),
+                    )
+                )
+                if existing:
+                    return {
+                        "error": "An active session already exists for this assignment",
+                        "session_id": existing.id,
+                    }
+
             session = AgentSession(
                 agent_id=agent_id,
                 project_id=project_id,
-                task_id=args.get("task_id"),
+                task_id=task_id,
                 workspace_path=workspace_path,
                 command=args.get("command"),
                 model=args.get("model"),
@@ -1261,7 +1313,24 @@ class KanbanMCPServer:
                 status=AgentSessionStatus.ACTIVE,
             )
             db.add(session)
-            await db.commit()
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                if task_id is not None:
+                    existing = await db.scalar(
+                        select(AgentSession).filter(
+                            AgentSession.agent_id == agent_id,
+                            AgentSession.task_id == task_id,
+                            AgentSession.ended_at.is_(None),
+                        )
+                    )
+                    if existing:
+                        return {
+                            "error": "An active session was created concurrently for this assignment",
+                            "session_id": existing.id,
+                        }
+                raise
             await db.refresh(session)
 
             await event_bus.publish(
@@ -1469,6 +1538,7 @@ class KanbanMCPServer:
             for existing in existing_result.scalars().all():
                 existing.status = LeaseStatus.RELEASED
                 existing.released_at = now
+            await db.flush()
 
             lease = TaskLease(
                 task_id=task_id,

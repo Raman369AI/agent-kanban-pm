@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table, Enum as SQLEnum, text
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table, Enum as SQLEnum, Index, text
 from sqlalchemy.orm import relationship, declarative_base
 import enum
 
@@ -235,6 +235,16 @@ class AgentHeartbeat(Base):
 class AgentSession(Base):
     """A durable CLI-agent run scoped to a project workspace."""
     __tablename__ = "agent_sessions"
+    __table_args__ = (
+        Index(
+            "uq_agent_sessions_open_assignment",
+            "agent_id",
+            "task_id",
+            unique=True,
+            sqlite_where=text("ended_at IS NULL"),
+            postgresql_where=text("ended_at IS NULL"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True)
     agent_id = Column(Integer, ForeignKey('entities.id', ondelete='CASCADE'), nullable=False, index=True)
@@ -291,6 +301,16 @@ class OrchestrationDecision(Base):
 class TaskLease(Base):
     """Active work claim for a task/session, separate from assignment."""
     __tablename__ = "task_leases"
+    __table_args__ = (
+        Index(
+            "uq_task_leases_active_assignment",
+            "task_id",
+            "agent_id",
+            unique=True,
+            sqlite_where=text("status = 'ACTIVE'"),
+            postgresql_where=text("status = 'ACTIVE'"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True)
     task_id = Column(Integer, ForeignKey('tasks.id', ondelete='CASCADE'), nullable=False, index=True)

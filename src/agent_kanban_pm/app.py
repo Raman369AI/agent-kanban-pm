@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy import select
-from agent_kanban_pm.db import init_db, async_session_maker
+from agent_kanban_pm.db import init_db, async_session_maker, engine
 from agent_kanban_pm.models import Entity, EntityType, Role
 from agent_kanban_pm.routers import auth, entities, projects, tasks, stages, websockets, ui, agent_activity
 from agent_kanban_pm.adapters import register_adapters
@@ -38,8 +38,12 @@ async def _ensure_local_owner():
         except Exception:
             return ""
 
-    name = os.getenv("KANBAN_USER_NAME") or _git_config("user.name") or getpass.getuser() or "Local User"
-    email = os.getenv("KANBAN_USER_EMAIL") or _git_config("user.email") or None
+    git_name, git_email = await asyncio.gather(
+        asyncio.to_thread(_git_config, "user.name"),
+        asyncio.to_thread(_git_config, "user.email"),
+    )
+    name = os.getenv("KANBAN_USER_NAME") or git_name or getpass.getuser() or "Local User"
+    email = os.getenv("KANBAN_USER_EMAIL") or git_email or None
 
     async with async_session_maker() as db:
         existing = await db.execute(
@@ -253,9 +257,11 @@ async def _orphaned_session_sweeper(staleness_seconds: int = 300, interval_secon
                         tmux_name = f"{get_tmux_prefix()}-task-{session.task_id}" if session.task_id else None
                         if tmux_name:
                             try:
-                                check = subprocess.run(
+                                check = await asyncio.to_thread(
+                                    subprocess.run,
                                     ["tmux", "has-session", "-t", tmux_name],
-                                    capture_output=True, timeout=5,
+                                    capture_output=True,
+                                    timeout=5,
                                 )
                                 if check.returncode == 0:
                                     continue  # tmux session still alive, skip
@@ -313,6 +319,7 @@ async def lifespan(app: FastAPI):
             pass
     event_bus.unsubscribe(EventType.TASK_ASSIGNED.value, assignment_launcher.handle_event)
     await event_bus.stop_async()
+    await engine.dispose()
 
 app = FastAPI(
     title="Agent Kanban Project Management API",

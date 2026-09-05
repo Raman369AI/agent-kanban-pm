@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, and_
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from datetime import UTC, datetime, timedelta
+import asyncio
 import logging
 import json
 import subprocess
@@ -341,17 +343,27 @@ async def sync_github_contributions(
     if not project.path:
         raise HTTPException(status_code=422, detail="Project has no workspace path")
 
-    repos = _discover_github_repos(project.path)
+    # End the request's read transaction before running git or gh. Networked
+    # gh calls can take up to 30 seconds and must not block the event loop.
+    await db.commit()
+    repos = await asyncio.to_thread(_discover_github_repos, project.path)
     if not repos:
         raise HTTPException(status_code=422, detail="No GitHub remotes found for project workspace")
 
-    local_author = (
-        _git_config_value(project.path, "user.name")
-        or _git_config_value(project.path, "user.email")
+    local_name, local_email, gh_present = await asyncio.gather(
+        asyncio.to_thread(_git_config_value, project.path, "user.name"),
+        asyncio.to_thread(_git_config_value, project.path, "user.email"),
+        asyncio.to_thread(_gh_available),
     )
-    gh_present = _gh_available()
-    gh_authenticated = gh_present and _gh_authenticated(project.path)
-    github_author = author or (_github_current_user(project.path) if gh_authenticated else None)
+    local_author = local_name or local_email
+    gh_authenticated = (
+        await asyncio.to_thread(_gh_authenticated, project.path)
+        if gh_present else False
+    )
+    github_author = author or (
+        await asyncio.to_thread(_github_current_user, project.path)
+        if gh_authenticated else None
+    )
     commit_author = local_author or github_author
     if not commit_author and not github_author:
         raise HTTPException(
@@ -367,6 +379,8 @@ async def sync_github_contributions(
         errors.append("gh CLI is installed but not authenticated; PR/issue/review sync skipped and local git commits were synced instead")
     if gh_authenticated and not github_author:
         errors.append("Could not determine current GitHub user from gh; PR/issue/review sync skipped")
+
+    pending_contributions: list[tuple[ContributionType, str, dict]] = []
 
     async def _upsert(contribution_type: ContributionType, external_id: str, item: dict):
         nonlocal seen, synced
@@ -401,15 +415,18 @@ async def sync_github_contributions(
         if commit_author:
             # Local git is the baseline path and follows the same identity/config
             # users rely on for ordinary git operations.
-            for entry in _git_local_commits(project.path, commit_author, limit=50):
+            local_commits = await asyncio.to_thread(
+                _git_local_commits, project.path, commit_author, 50
+            )
+            for entry in local_commits:
                 sha = entry.get("sha") or ""
                 if not sha:
                     continue
-                await _upsert(
+                pending_contributions.append((
                     ContributionType.COMMIT,
                     f"{repo}@{sha}",
                     entry,
-                )
+                ))
 
         if gh_authenticated and github_author:
             for contribution_type, command in (
@@ -431,17 +448,18 @@ async def sync_github_contributions(
                 ]),
             ):
                 try:
-                    output = _run_project_command(command, project.path)
+                    output = await asyncio.to_thread(_run_project_command, command, project.path)
                     items = json.loads(output or "[]")
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as exc:
                     errors.append(f"{repo} {contribution_type.value}: {exc}")
                     continue
                 for item in items:
-                    await _upsert(contribution_type, f"{repo}#{item['number']}", item)
+                    pending_contributions.append((contribution_type, f"{repo}#{item['number']}", item))
 
             # Reviews authored by the user across the repo's PRs.
             try:
-                output = _run_project_command(
+                output = await asyncio.to_thread(
+                    _run_project_command,
                     [
                         "gh", "search", "prs",
                         "--repo", repo,
@@ -457,7 +475,7 @@ async def sync_github_contributions(
                 review_prs = []
             for pr in review_prs:
                 external_id = f"{repo}#{pr['number']}/review:{github_author}"
-                await _upsert(
+                pending_contributions.append((
                     ContributionType.REVIEW,
                     external_id,
                     {
@@ -467,11 +485,12 @@ async def sync_github_contributions(
                         "createdAt": pr.get("createdAt"),
                         "updatedAt": pr.get("updatedAt"),
                     },
-                )
+                ))
 
             # Commits authored by the user across the repo (gh search).
             try:
-                output = _run_project_command(
+                output = await asyncio.to_thread(
+                    _run_project_command,
                     [
                         "gh", "search", "commits",
                         "--repo", repo,
@@ -493,7 +512,7 @@ async def sync_github_contributions(
                 message = commit_meta.get("message", "")
                 first_line = message.splitlines()[0] if message else sha[:7]
                 committed = (commit_meta.get("author") or {}).get("date")
-                await _upsert(
+                pending_contributions.append((
                     ContributionType.COMMIT,
                     f"{repo}@{sha}",
                     {
@@ -503,9 +522,12 @@ async def sync_github_contributions(
                         "createdAt": committed,
                         "updatedAt": committed,
                     },
-                )
+                ))
         elif not gh_present:
             errors.append(f"{repo}: gh CLI not installed; PR/issue/review sync skipped")
+
+    for contribution_type, external_id, item in pending_contributions:
+        await _upsert(contribution_type, external_id, item)
 
     await db.commit()
 
@@ -764,6 +786,7 @@ async def claim_task_lease(
     for existing in existing_result.scalars().all():
         existing.status = LeaseStatus.RELEASED
         existing.released_at = now
+    await db.flush()
 
     db_lease = TaskLease(
         task_id=task_id,
@@ -841,10 +864,16 @@ async def get_activity_feed(
     project_id: Optional[int] = None,
     session_id: Optional[int] = None,
     task_id: Optional[int] = None,
+    activity_type: Optional[ActivityType] = None,
+    has_command: bool = False,
     limit: int = 50,
     db: AsyncSession = Depends(get_db)
 ):
-    """Get recent agent activity feed, optionally filtered."""
+    """Get recent agent activity feed, optionally filtered.
+
+    `activity_type` and `has_command` narrow the feed to an audit view: what
+    the agents actually executed, rather than the full narration.
+    """
     query = select(AgentActivity).order_by(desc(AgentActivity.created_at))
 
     if agent_id:
@@ -855,6 +884,10 @@ async def get_activity_feed(
         query = query.filter(AgentActivity.session_id == session_id)
     if task_id:
         query = query.filter(AgentActivity.task_id == task_id)
+    if activity_type:
+        query = query.filter(AgentActivity.activity_type == activity_type)
+    if has_command:
+        query = query.filter(AgentActivity.command.isnot(None))
 
     result = await db.execute(query.limit(limit))
     return result.scalars().all()
@@ -911,6 +944,20 @@ async def start_agent_session(
     if not workspace_path:
         raise HTTPException(status_code=422, detail="workspace_path is required when project has no path")
 
+    if session.task_id is not None:
+        existing = await db.scalar(
+            select(AgentSession).filter(
+                AgentSession.agent_id == agent_id,
+                AgentSession.task_id == session.task_id,
+                AgentSession.ended_at.is_(None),
+            )
+        )
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"An active session already exists for this assignment: {existing.id}",
+            )
+
     db_session = AgentSession(
         agent_id=agent_id,
         project_id=session.project_id,
@@ -922,7 +969,24 @@ async def start_agent_session(
         status=AgentSessionStatus.ACTIVE,
     )
     db.add(db_session)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        if session.task_id is not None:
+            existing = await db.scalar(
+                select(AgentSession).filter(
+                    AgentSession.agent_id == agent_id,
+                    AgentSession.task_id == session.task_id,
+                    AgentSession.ended_at.is_(None),
+                )
+            )
+            if existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"An active session was created concurrently for this assignment: {existing.id}",
+                )
+        raise
     await db.refresh(db_session)
 
     await event_bus.publish(

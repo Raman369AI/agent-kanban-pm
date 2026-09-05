@@ -17,11 +17,14 @@ import sys
 
 import httpx
 
-API_BASE = "http://localhost:8000"
+from agent_kanban_pm.runtime.instance import get_api_base, get_auth_token
+
+API_BASE = get_api_base()
+AUTH_HEADERS = {"X-Kanban-Token": get_auth_token()}
 
 
 def list_projects():
-    resp = httpx.get(f"{API_BASE}/projects", timeout=10)
+    resp = httpx.get(f"{API_BASE}/projects", headers=AUTH_HEADERS, timeout=10)
     resp.raise_for_status()
     projects = resp.json()
     print(f"{'ID':>3} | {'Name':<25} | Path")
@@ -47,6 +50,7 @@ def get_or_create_project(path: str):
     resp = httpx.post(
         f"{API_BASE}/projects",
         json={"name": name, "description": f"Project opened from {abs_path}", "path": abs_path},
+        headers=AUTH_HEADERS,
         timeout=10,
     )
     resp.raise_for_status()

@@ -152,10 +152,10 @@ def cmd_init(args):
     print("before file writes, shell commands, git, and network actions, and")
     print("those prompts land in the Kanban approval queue for a human.")
     print()
-    print("AUTO mode launches every CLI with its bypass flags (e.g.")
-    print("--permission-mode bypassPermissions, --approval-mode yolo) so agents")
-    print("NEVER pause to ask. Worktrees still isolate git branches, but an")
-    print("agent can then run arbitrary commands without confirmation.")
+    print("AUTO mode launches every CLI with its bypass flags (e.g. claude")
+    print("--permission-mode bypassPermissions, agy --dangerously-skip-permissions)")
+    print("so agents NEVER pause to ask. Worktrees still isolate git branches,")
+    print("but an agent can then run arbitrary commands without confirmation.")
     auto_choice = input("\nEnable AUTO mode for all roles? [y/N]: ").strip().lower()
     global_autonomy = AUTONOMY_AUTO if auto_choice in ("y", "yes") else AUTONOMY_SUPERVISED
     for ra in role_configs.values():
@@ -471,6 +471,116 @@ def cmd_roles_assign(args):
     )
 
 
+def cmd_audit(args):
+    """Print the agent audit trail: what ran, where, and under which autonomy.
+
+    Reads the database directly rather than the HTTP API so the trail is still
+    reachable when the server is down — which is exactly when someone is trying
+    to work out what an agent did.
+    """
+    import asyncio
+    import json as _json
+    from datetime import datetime, timedelta, UTC
+
+    from sqlalchemy import select, desc
+    from agent_kanban_pm.db import async_session_maker
+    from agent_kanban_pm.models import AgentActivity, Entity, ActivityType
+
+    async def _run():
+        from agent_kanban_pm import db
+        db.engine.echo = False
+
+        query = select(AgentActivity).order_by(desc(AgentActivity.created_at))
+        if args.project:
+            query = query.filter(AgentActivity.project_id == args.project)
+        if args.task:
+            query = query.filter(AgentActivity.task_id == args.task)
+        if args.session:
+            query = query.filter(AgentActivity.session_id == args.session)
+        if args.commands:
+            query = query.filter(AgentActivity.command.isnot(None))
+        if args.since:
+            cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=args.since)
+            query = query.filter(AgentActivity.created_at >= cutoff)
+
+        async with async_session_maker() as session:
+            rows = (await session.execute(query.limit(args.limit))).scalars().all()
+            agent_names = {
+                entity.id: entity.name
+                for entity in (await session.execute(select(Entity))).scalars().all()
+            }
+
+        def _autonomy(row) -> str:
+            if not row.payload_json:
+                return ""
+            try:
+                return _json.loads(row.payload_json).get("autonomy", "") or ""
+            except (ValueError, TypeError):
+                return ""
+
+        if args.agent:
+            wanted = args.agent.lower()
+            rows = [r for r in rows if agent_names.get(r.agent_id, "").lower() == wanted]
+        if args.auto:
+            rows = [r for r in rows if _autonomy(r) == AUTONOMY_AUTO]
+
+        if args.json:
+            print(_json.dumps([
+                {
+                    "id": r.id,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "agent": agent_names.get(r.agent_id, str(r.agent_id)),
+                    "activity_type": r.activity_type.value if r.activity_type else None,
+                    "source": r.source,
+                    "project_id": r.project_id,
+                    "task_id": r.task_id,
+                    "session_id": r.session_id,
+                    "autonomy": _autonomy(r) or None,
+                    "workspace_path": r.workspace_path,
+                    "command": r.command,
+                    "message": r.message,
+                }
+                for r in rows
+            ], indent=2))
+            return
+
+        if not rows:
+            print("No matching activity recorded.")
+            return
+
+        # Newest-first is right for a query; oldest-first reads better as a trail.
+        rows = list(reversed(rows))
+        print(f"{len(rows)} entries (oldest first)\n")
+        for r in rows:
+            when = r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "unknown"
+            agent = agent_names.get(r.agent_id, f"entity:{r.agent_id}")
+            kind = r.activity_type.value if r.activity_type else "?"
+            autonomy = _autonomy(r)
+            marker = "  [AUTO]" if autonomy == AUTONOMY_AUTO else ""
+            scope = " ".join(
+                part for part in (
+                    f"project:{r.project_id}" if r.project_id else "",
+                    f"task:{r.task_id}" if r.task_id else "",
+                    f"session:{r.session_id}" if r.session_id else "",
+                ) if part
+            )
+            print(f"{when}  {agent:<14} {kind:<12}{marker}")
+            if scope:
+                print(f"    {scope}")
+            print(f"    {r.message}")
+            if r.workspace_path:
+                print(f"    workspace: {r.workspace_path}")
+            if r.command:
+                print(f"    command:   {r.command}")
+            print()
+
+        auto_count = sum(1 for r in rows if _autonomy(r) == AUTONOMY_AUTO)
+        if auto_count:
+            print(f"{auto_count} of these ran with approval prompts disabled (autonomy: auto).")
+
+    asyncio.run(_run())
+
+
 def cmd_sheet(args):
     """Print a clean local sheet of projects and agents."""
     import asyncio
@@ -775,6 +885,20 @@ def main():
     handoff_template.add_argument("--instructions", action="store_true", help="Print full handoff instructions")
     handoff_template.add_argument("--ensure-aliases", action="store_true", help="Create CLAUDE.md/GEMINI.md/CODEX.md symlinks to AGENTS.md")
     handoff_template.set_defaults(func=cmd_handoff_template)
+
+    audit_parser = subparsers.add_parser(
+        "audit", help="Show the agent audit trail: what ran, where, under which autonomy"
+    )
+    audit_parser.add_argument("--project", type=int, help="Only this project id")
+    audit_parser.add_argument("--task", type=int, help="Only this task id")
+    audit_parser.add_argument("--session", type=int, help="Only this session id")
+    audit_parser.add_argument("--agent", help="Only this agent name")
+    audit_parser.add_argument("--since", type=float, metavar="HOURS", help="Only the last N hours")
+    audit_parser.add_argument("--commands", action="store_true", help="Only entries that recorded a command line")
+    audit_parser.add_argument("--auto", action="store_true", help="Only entries that ran with approvals disabled")
+    audit_parser.add_argument("--limit", type=int, default=50, help="Maximum entries (default 50)")
+    audit_parser.add_argument("--json", action="store_true", help="Emit JSON instead of text")
+    audit_parser.set_defaults(func=cmd_audit)
 
     sheet_parser = subparsers.add_parser("sheet", help="Print a clean sheet of projects, agents, and role assignments")
     sheet_parser.add_argument("--all", action="store_true", help="Include test/demo database rows")

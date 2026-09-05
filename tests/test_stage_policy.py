@@ -281,7 +281,7 @@ class TestArchitectureCleanup:
     def test_assignment_launcher_supports_non_git_workspace_fallback(self):
         from agent_kanban_pm.runtime.assignment_launcher import AssignmentLauncher
         import inspect
-        source = inspect.getsource(AssignmentLauncher.launch_for_assignment)
+        source = inspect.getsource(AssignmentLauncher._launch_for_assignment)
         assert "workspace_path = project.path" in source
         assert "project workspace" in source
 
@@ -290,5 +290,5 @@ class TestArchitectureCleanup:
         import inspect
         source = inspect.getsource(AssignmentLauncher.handle_event)
         assert "assigned_role=data.get(\"role\")" in source
-        source = inspect.getsource(AssignmentLauncher.launch_for_assignment)
+        source = inspect.getsource(AssignmentLauncher._launch_for_assignment)
         assert "env[\"KANBAN_AGENT_ROLE\"] = matching_role_name" in source
