@@ -58,6 +58,7 @@ Release candidate for local, single-user development.
 - **WebSocket / connection-manager logging** — `print(...)` replaced with `logger.warning(...)`.
 
 ### Fixed
+- **macOS async database dependency** — SQLAlchemy now installs its `asyncio` extra explicitly so the required `greenlet` package is present on macOS ARM as well as Linux.
 - **MCP authorization in installed packages** — Role-protected MCP tools now import authorization helpers from the installed package namespace, and caller identity/role/active state is refreshed for every tool call.
 - **Atomic, non-blocking assignment launch** — Git/worktree operations run off the asyncio event loop after the read transaction ends. Launch admission is serialized in the supported single-server topology and reinforced by partial unique indexes for open sessions and active task-agent leases.
 - **Runtime endpoint and shutdown cleanup** — The folder registration helper uses the detected instance URL and token; background tmux checks no longer block the event loop; application shutdown disposes the async database engine.
