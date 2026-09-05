@@ -23,6 +23,7 @@ from typing import Any, Optional, Sequence
 from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 
 from agent_kanban_pm.db import async_session_maker
 from agent_kanban_pm.models import (
@@ -36,7 +37,7 @@ from agent_kanban_pm.models import (
 )
 from agent_kanban_pm.events import event_bus, EventType
 from agent_kanban_pm.runtime.task_transitions import apply_task_transition_fields, validate_task_transition
-from agent_kanban_pm.auth import is_owner_or_manager
+from agent_kanban_pm.auth import ROLE_LEVELS, get_effective_role, is_owner_or_manager
 from agent_kanban_pm.runtime.default_stages import DEFAULT_STAGES
 
 logging.basicConfig(
@@ -94,10 +95,12 @@ class KanbanMCPServer:
         self._caller_role = os.environ.get("KANBAN_AGENT_ROLE", "worker")
 
     async def _authenticate(self) -> Entity:
-        """Authenticate the caller by looking up Entity.name."""
-        if self.caller_entity:
-            return self.caller_entity
+        """Authenticate the caller against current database state.
 
+        MCP processes are intentionally long-lived, while an entity can be
+        disabled or have its role changed at any time. Re-read the row for
+        every tool call so those changes take effect immediately.
+        """
         async with async_session_maker() as db:
             result = await db.execute(
                 select(Entity).filter(Entity.name == self._caller_name, Entity.is_active == True)
@@ -112,7 +115,6 @@ class KanbanMCPServer:
 
     def _require_role(self, min_role: Role):
         """Check if the authenticated caller has at least the required role."""
-        from auth import ROLE_LEVELS, get_effective_role
         entity = self.caller_entity
         if not entity:
             raise PermissionError("Not authenticated")
@@ -1285,10 +1287,25 @@ class KanbanMCPServer:
             if not workspace_path:
                 return {"error": "workspace_path is required when the project has no path"}
 
+            task_id = args.get("task_id")
+            if task_id is not None:
+                existing = await db.scalar(
+                    select(AgentSession).filter(
+                        AgentSession.agent_id == agent_id,
+                        AgentSession.task_id == task_id,
+                        AgentSession.ended_at.is_(None),
+                    )
+                )
+                if existing:
+                    return {
+                        "error": "An active session already exists for this assignment",
+                        "session_id": existing.id,
+                    }
+
             session = AgentSession(
                 agent_id=agent_id,
                 project_id=project_id,
-                task_id=args.get("task_id"),
+                task_id=task_id,
                 workspace_path=workspace_path,
                 command=args.get("command"),
                 model=args.get("model"),
@@ -1296,7 +1313,24 @@ class KanbanMCPServer:
                 status=AgentSessionStatus.ACTIVE,
             )
             db.add(session)
-            await db.commit()
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                if task_id is not None:
+                    existing = await db.scalar(
+                        select(AgentSession).filter(
+                            AgentSession.agent_id == agent_id,
+                            AgentSession.task_id == task_id,
+                            AgentSession.ended_at.is_(None),
+                        )
+                    )
+                    if existing:
+                        return {
+                            "error": "An active session was created concurrently for this assignment",
+                            "session_id": existing.id,
+                        }
+                raise
             await db.refresh(session)
 
             await event_bus.publish(
@@ -1504,6 +1538,7 @@ class KanbanMCPServer:
             for existing in existing_result.scalars().all():
                 existing.status = LeaseStatus.RELEASED
                 existing.released_at = now
+            await db.flush()
 
             lease = TaskLease(
                 task_id=task_id,

@@ -7,6 +7,7 @@ the underlying logic is git-correctness-dependent.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import shutil
 import subprocess
@@ -328,9 +329,34 @@ def test_build_agent_command_auto_appends_bypass_flags():
 
 
 def test_launch_for_assignment_wires_branch_and_sync():
-    source = inspect.getsource(AssignmentLauncher.launch_for_assignment)
+    source = inspect.getsource(AssignmentLauncher._launch_for_assignment)
     assert "_detect_base_ref" in source
+    assert "asyncio.to_thread" in source
     assert "_task_branch_name" in source
     assert "_sync_worktree_with_base" in source
     assert "branch_name=branch_name" in source
     assert "base_ref=base_ref" in source
+
+
+@pytest.mark.asyncio
+async def test_launch_admission_is_serialized(monkeypatch):
+    launcher = AssignmentLauncher()
+    running = 0
+    peak = 0
+
+    async def fake_launch(task_id, entity_id, assigned_role=None):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        return task_id
+
+    monkeypatch.setattr(launcher, "_launch_for_assignment", fake_launch)
+    results = await asyncio.gather(
+        launcher.launch_for_assignment(1, 10),
+        launcher.launch_for_assignment(2, 20),
+    )
+
+    assert results == [1, 2]
+    assert peak == 1

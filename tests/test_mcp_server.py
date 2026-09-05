@@ -62,3 +62,48 @@ async def test_get_tasks_assigned_to_me_uses_authenticated_caller():
     tasks = await server._handle_get_tasks({"project_id": project_id, "assigned_to_me": True})
 
     assert [task["title"] for task in tasks] == ["Assigned task"]
+
+
+@pytest.mark.asyncio
+async def test_authentication_refreshes_role_and_active_state_on_every_call():
+    await init_db()
+
+    async with async_session_maker() as db:
+        agent = Entity(
+            name="MCP Fresh Identity Agent",
+            entity_type=EntityType.AGENT,
+            role=Role.WORKER,
+            is_active=True,
+        )
+        db.add(agent)
+        await db.commit()
+
+    server = KanbanMCPServer.__new__(KanbanMCPServer)
+    server._caller_name = "MCP Fresh Identity Agent"
+    server.caller_entity = None
+
+    caller = await server._authenticate()
+    assert caller.role == Role.WORKER
+    server._require_role(Role.WORKER)
+
+    async with async_session_maker() as db:
+        stored = await db.scalar(
+            select(Entity).filter(Entity.name == server._caller_name)
+        )
+        stored.role = Role.VIEWER
+        await db.commit()
+
+    caller = await server._authenticate()
+    assert caller.role == Role.VIEWER
+    with pytest.raises(PermissionError):
+        server._require_role(Role.WORKER)
+
+    async with async_session_maker() as db:
+        stored = await db.scalar(
+            select(Entity).filter(Entity.name == server._caller_name)
+        )
+        stored.is_active = False
+        await db.commit()
+
+    with pytest.raises(RuntimeError, match="not found"):
+        await server._authenticate()

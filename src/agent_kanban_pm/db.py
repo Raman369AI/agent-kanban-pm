@@ -203,6 +203,49 @@ async def _migrate_db_schema():
             ))
             await _record_migration(8, "projects_is_demo_flag")
 
+        # --- Migration v9: Atomic assignment admission guards ---
+        if not await _migration_applied(9):
+            # Keep the newest row if a pre-v9 database already contains
+            # duplicates, then enforce one open session/active lease for each
+            # task-agent assignment. Separate review agents can still run in
+            # parallel on the same task.
+            await conn.execute(text("""
+                UPDATE agent_sessions
+                SET status = 'ERROR',
+                    ended_at = COALESCE(last_seen_at, CURRENT_TIMESTAMP)
+                WHERE task_id IS NOT NULL
+                  AND ended_at IS NULL
+                  AND id NOT IN (
+                      SELECT MAX(id)
+                      FROM agent_sessions
+                      WHERE task_id IS NOT NULL AND ended_at IS NULL
+                      GROUP BY agent_id, task_id
+                  )
+            """))
+            await conn.execute(text("""
+                UPDATE task_leases
+                SET status = 'RELEASED',
+                    released_at = COALESCE(released_at, CURRENT_TIMESTAMP)
+                WHERE status = 'ACTIVE'
+                  AND id NOT IN (
+                      SELECT MAX(id)
+                      FROM task_leases
+                      WHERE status = 'ACTIVE'
+                      GROUP BY task_id, agent_id
+                  )
+            """))
+            await conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_sessions_open_assignment
+                ON agent_sessions (agent_id, task_id)
+                WHERE ended_at IS NULL
+            """))
+            await conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_task_leases_active_assignment
+                ON task_leases (task_id, agent_id)
+                WHERE status = 'ACTIVE'
+            """))
+            await _record_migration(9, "atomic_assignment_admission")
+
     # Backfill default roles
     async with async_session_maker() as session:
         from agent_kanban_pm.models import Entity

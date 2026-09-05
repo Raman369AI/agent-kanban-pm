@@ -114,10 +114,16 @@ class EventBus:
             logger.info("Event bus worker stop requested")
 
     async def stop_async(self):
-        """Stop and await the background event processing worker."""
+        """Drain queued events, then stop and await the background worker."""
         task = self._worker_task
+        queue = self._queue
         if not task:
             return
+        if queue is not None:
+            try:
+                await asyncio.wait_for(queue.join(), timeout=10)
+            except asyncio.TimeoutError:
+                logger.warning("Timed out draining the event queue during shutdown")
         task.cancel()
         try:
             await task
@@ -190,12 +196,16 @@ class EventBus:
         while True:
             try:
                 event_payload = await self._queue.get()
-                await self._handle_event(event_payload)
-                self._queue.task_done()
             except asyncio.CancelledError:
                 break
+            try:
+                await self._handle_event(event_payload)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Error in event bus worker loop: {e}")
+            finally:
+                self._queue.task_done()
 
     async def _handle_event(self, event_payload: dict):
         """Dispatch an event to all channels in parallel."""

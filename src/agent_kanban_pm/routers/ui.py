@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import UTC, datetime
 from pathlib import Path
+import asyncio
 import logging
 import re
 
@@ -725,8 +726,10 @@ async def ui_open_workspace(
             )
         opener = ["xdg-open", str(requested)]
 
+    await db.commit()
     try:
-        subprocess.Popen(
+        await asyncio.to_thread(
+            subprocess.Popen,
             opener,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

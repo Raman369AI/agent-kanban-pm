@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.4.0rc1] — 2026-08-30
+## [Unreleased]
+
+## [0.4.0rc1] — 2026-09-05
 
 Release candidate for local, single-user development.
 
@@ -19,8 +21,6 @@ Release candidate for local, single-user development.
 ### Changed
 - **Version is `0.4.0rc1`, classifier `Development Status :: 4 - Beta`** — previously `0.3.0a1` / Alpha.
 - **`kanban init` autonomy prompt** no longer cites the retired Gemini CLI's `--approval-mode yolo`; it names `claude` and `agy`, matching the flags the launcher appends.
-
-## [Unreleased]
 
 ### Security
 - **Closed the `/ui` auth bypass** — All `/ui/*` mutations (task create/edit/delete/move, project create/edit/delete, role assign, open-workspace) and every `/ui/api/*` JSON endpoint now require the Kanban token. Only HTML page GETs remain exempt so a browser can load the UI and receive the auth cookie.
@@ -58,6 +58,9 @@ Release candidate for local, single-user development.
 - **WebSocket / connection-manager logging** — `print(...)` replaced with `logger.warning(...)`.
 
 ### Fixed
+- **MCP authorization in installed packages** — Role-protected MCP tools now import authorization helpers from the installed package namespace, and caller identity/role/active state is refreshed for every tool call.
+- **Atomic, non-blocking assignment launch** — Git/worktree operations run off the asyncio event loop after the read transaction ends. Launch admission is serialized in the supported single-server topology and reinforced by partial unique indexes for open sessions and active task-agent leases.
+- **Runtime endpoint and shutdown cleanup** — The folder registration helper uses the detected instance URL and token; background tmux checks no longer block the event loop; application shutdown disposes the async database engine.
 - **Tmux collaboration not crossing Review/Done** — Worker tmux sessions previously only marked the `AgentSession` done and logged a handoff, leaving cards stuck in In Progress. Session completion now updates the board stage/status and publishes task movement/update events.
 - **Connection status enum comparisons** — Event delivery paths now compare `AgentConnection.status` with `ConnectionStatus.ONLINE` instead of raw string values, keeping MCP pending-event persistence and adapter dispatch on the same enum contract.
 - **Pydantic / Starlette deprecations** — Response schemas now use `ConfigDict(from_attributes=True)`, and UI templates use the current `TemplateResponse(request, name, context)` call order.

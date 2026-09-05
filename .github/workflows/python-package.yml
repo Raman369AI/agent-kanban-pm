@@ -36,6 +36,28 @@ jobs:
     - name: Test with pytest
       run: pytest -v --timeout=60 --timeout-method=thread
 
+  test-macos:
+    name: Test (macOS, Python 3.12)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install package
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e ".[dev]"
+
+    - name: Run fatal lint checks
+      run: flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
+
+    - name: Run tests
+      run: pytest -q --timeout=60 --timeout-method=thread
+
   locked:
     name: Locked install (uv.lock)
     runs-on: ubuntu-latest
@@ -64,7 +86,7 @@ jobs:
 
   build-and-smoke:
     name: Build wheel + smoke test
-    needs: [test, locked]
+    needs: [test, test-macos, locked]
     runs-on: ubuntu-latest
 
     steps:

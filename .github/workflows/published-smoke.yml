@@ -1,0 +1,41 @@
+name: Published package smoke
+
+on:
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install latest published version
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install --pre --upgrade agent-kanban-pm
+
+    - name: Verify CLI and server boot
+      env:
+        DATABASE_URL: sqlite+aiosqlite:////tmp/kanban-published-smoke.db
+        HOME: /tmp/kanban-published-smoke-home
+      run: |
+        kanban --help
+        python - <<'PYCODE'
+        from fastapi.testclient import TestClient
+        from agent_kanban_pm.app import app
+
+        with TestClient(app, base_url="http://localhost:8000") as client:
+            assert client.get("/health").status_code == 200
+            page = client.get("/")
+            assert page.status_code == 200
+            assert "kanban-token=" in page.headers.get("set-cookie", "").lower()
+        print("published package server smoke OK")
+        PYCODE

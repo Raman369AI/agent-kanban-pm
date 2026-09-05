@@ -26,6 +26,12 @@ system diagram.
 - At least one CLI agent (Claude Code, Antigravity CLI, Codex, OpenCode, Aider, etc.)
 - Optional: `gh` for GitHub PR/issue/review sync
 
+| Platform | Status |
+|---|---|
+| Linux | CI-tested on Python 3.11, 3.12, and 3.13 |
+| macOS | CI-tested on Python 3.12 |
+| Windows | Use WSL; native Windows is not supported |
+
 ## Install
 
 Release candidates need pre-release resolution:
@@ -33,6 +39,14 @@ Release candidates need pre-release resolution:
 ```bash
 pip install --pre agent-kanban-pm
 kanban init
+```
+
+For an isolated CLI installation:
+
+```bash
+pipx install --pip-args="--pre" agent-kanban-pm
+# Or run without installing:
+uvx --prerelease allow --from agent-kanban-pm kanban --help
 ```
 
 From source:
@@ -248,12 +262,22 @@ release. Each phase is releasable on its own.
   HttpOnly cookie + CSRF header, Host-header validation, token file is
   `0600`, supervised-by-default autonomy with explicit `auto` opt-in,
   WebSocket token verification.
-- [ ] **Phase 3 — Runtime correctness**: async subprocess work, service
-  layer, Alembic, MCP identity freshness.
-- [ ] **Phase 4 — Product surface & docs**: README landing page, community
-  scaffolding, mkdocs site.
-- [ ] **Phase 5 — Release & distribution**: PyPI trusted publishing, version
-  tags, alternative install paths.
+- [ ] **Phase 3 — Runtime correctness**: async subprocess work, atomic launch
+  admission, MCP identity freshness, endpoint discovery, and shutdown cleanup
+  are complete; the service-layer and Alembic refactors remain.
+- [ ] **Phase 4 — Product surface & docs**: support matrix and community
+  scaffolding are complete; landing-page visuals and the mkdocs site remain.
+- [ ] **Phase 5 — Release & distribution**: tag publishing and post-publish
+  smoke automation are ready; PyPI/GitHub environment setup, merge, and the
+  first version tag remain maintainer actions.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the supported threat model and private vulnerability reporting.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Release maintainers should also follow [RELEASING.md](RELEASING.md).
 
 ## License
 

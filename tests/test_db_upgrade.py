@@ -245,7 +245,7 @@ def test_upgrade_records_the_migration_chain(legacy_db):
     assert "INIT_OK" in result.stdout, f"upgrade failed:\n{result.stderr}"
 
     versions = {row[0] for row in _rows(legacy_db, "SELECT version FROM schema_migrations")}
-    assert versions >= set(range(1, 9)), f"migration chain incomplete: {sorted(versions)}"
+    assert versions >= set(range(1, 10)), f"migration chain incomplete: {sorted(versions)}"
 
 
 def test_upgrade_is_idempotent(legacy_db):
@@ -277,7 +277,28 @@ def test_fresh_database_also_records_the_chain(tmp_path):
     assert "INIT_OK" in result.stdout, f"fresh init failed:\n{result.stderr}"
 
     versions = {row[0] for row in _rows(fresh, "SELECT version FROM schema_migrations")}
-    assert versions >= set(range(1, 9)), (
+    assert versions >= set(range(1, 10)), (
         "a fresh database skipped migration bookkeeping, so the next release's "
         f"migrations would run against it unpredictably: {sorted(versions)}"
     )
+
+
+def test_assignment_admission_indexes_are_unique_and_partial(tmp_path):
+    fresh = tmp_path / "admission-indexes.db"
+    result = _run_init_db(fresh)
+    assert "INIT_OK" in result.stdout, f"fresh init failed:\n{result.stderr}"
+
+    definitions = {
+        name: sql
+        for name, sql in _rows(
+            fresh,
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type = 'index' AND name LIKE 'uq_%_assignment'",
+        )
+    }
+    session_sql = definitions["uq_agent_sessions_open_assignment"].upper()
+    lease_sql = definitions["uq_task_leases_active_assignment"].upper()
+    assert "UNIQUE INDEX" in session_sql
+    assert "WHERE ENDED_AT IS NULL" in session_sql
+    assert "UNIQUE INDEX" in lease_sql
+    assert "WHERE STATUS = 'ACTIVE'" in lease_sql

@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and verify distributions
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Verify tag matches package version
+      env:
+        RELEASE_TAG: ${{ github.ref_name }}
+      run: |
+        python - <<'PYCODE'
+        import os
+        import re
+        from pathlib import Path
+
+        text = Path("src/agent_kanban_pm/runtime/_version.py").read_text()
+        version = re.search(r'__version__ = "([^"]+)"', text).group(1)
+        expected = f"v{version}"
+        if os.environ["RELEASE_TAG"] != expected:
+            raise SystemExit(
+                f"tag {os.environ['RELEASE_TAG']!r} does not match {expected!r}"
+            )
+        PYCODE
+
+    - name: Install package and release tools
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e ".[dev]"
+
+    - name: Run release tests
+      run: |
+        pytest -q --timeout=60 --timeout-method=thread
+        flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
+
+    - name: Build
+      run: python -m build
+
+    - name: Check distribution metadata
+      run: python -m twine check dist/*
+
+    - name: Upload distributions
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+        if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/agent-kanban-pm
+    permissions:
+      id-token: write
+    steps:
+    - name: Download distributions
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Publish distributions
+      # v1.14.2, pinned to the immutable release commit.
+      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+
+  smoke:
+    name: Smoke-test published package
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install pipx and uv
+      run: python -m pip install --upgrade pipx uv
+
+    - name: Wait for PyPI and run both isolated install paths
+      env:
+        RELEASE_TAG: ${{ github.ref_name }}
+      run: |
+        version="${RELEASE_TAG#v}"
+        for attempt in {1..12}; do
+          if python -m pip index versions --pre agent-kanban-pm | grep -F "$version"; then
+            break
+          fi
+          if [ "$attempt" -eq 12 ]; then
+            echo "agent-kanban-pm $version did not become visible on PyPI" >&2
+            exit 1
+          fi
+          sleep 10
+        done
+        pipx run --spec "agent-kanban-pm==$version" kanban --help
+        uvx --from "agent-kanban-pm==$version" kanban --help
+
+  github-release:
+    name: Create GitHub Release
+    needs: smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Download distributions
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Create release with artifacts
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release create "${{ github.ref_name }}" dist/* --verify-tag --generate-notes

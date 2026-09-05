@@ -82,3 +82,6 @@ version = {attr = "agent_kanban_pm.runtime._version.__version__"}
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = [
+  "error::pytest.PytestUnhandledThreadExceptionWarning",
+]
