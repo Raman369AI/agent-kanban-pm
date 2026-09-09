@@ -1,10 +1,12 @@
 name: codex
 display_name: "Codex (OpenAI)"
-version: "1.0"
+version: "1.1"
 
+# `codex --mcp` is rejected: `mcp` is a subcommand, and MCP servers are
+# registered with `codex mcp` / ~/.codex/config.toml rather than a launch flag.
 invoke:
   command: codex
-  mcp_flag: "--mcp"
+  mcp_flag: ""
   info_flag: "--version"
   model_flag: "--model"
 
@@ -14,7 +16,7 @@ models:
   - id: codex-default
     context_window: 128000
 
-protocol: mcp
+protocol: stdio
 
 auth:
   type: none
@@ -29,6 +31,11 @@ chat_designer:
   stdin: false
   output_format: "stdout"
   timeout_seconds: 180
+
+# Role sessions carry no prompt, so codex starts in its interactive mode.
+role_command:
+  args: []
+  auto_args: ["--dangerously-bypass-approvals-and-sandbox"]
 
 task_command:
   args: ["-C", "{workspace}", "{prompt}"]

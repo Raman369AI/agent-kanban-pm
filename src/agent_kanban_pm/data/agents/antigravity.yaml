@@ -35,6 +35,11 @@ chat_designer:
   # with zero bytes). The chat designer must therefore run it on a PTY.
   requires_tty: true
 
+# Role sessions run interactively; only the autonomy flags carry over.
+role_command:
+  args: []
+  auto_args: ["--dangerously-skip-permissions"]
+
 task_command:
   # --print runs one prompt non-interactively; --add-dir scopes the workspace.
   args: ["--print", "--add-dir", "{workspace}", "{prompt}"]

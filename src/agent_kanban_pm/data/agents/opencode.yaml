@@ -1,6 +1,6 @@
 name: opencode
 display_name: "OpenCode"
-version: "1.1"
+version: "1.2"
 
 # Flags verified against `opencode --help` / `opencode run --help` (v1.18.22).
 invoke:
@@ -32,6 +32,12 @@ chat_designer:
   stdin: false
   output_format: "stdout"
   timeout_seconds: 300
+
+# A persistent role has no message to give `run`, which refuses to start
+# without one, so role sessions launch the interactive TUI instead.
+role_command:
+  args: []
+  auto_args: []
 
 task_command:
   # `run` takes the message positionally; --dir scopes it to the worktree.

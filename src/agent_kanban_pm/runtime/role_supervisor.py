@@ -164,12 +164,27 @@ def build_command_for_role(
     if model and adapter.invoke.model_flag:
         args.extend([adapter.invoke.model_flag, model])
 
-    # Include task_command.args for persistent (non-task) role sessions.
+    is_auto = getattr(assignment, "autonomy", "supervised") == "auto"
+
+    # An adapter that declares role_command has said exactly how it starts as a
+    # persistent service, so take it verbatim; task_command describes a one-shot
+    # task run and does not survive having its prompt removed.
+    if adapter.role_command is not None:
+        role_args = list(adapter.role_command.args)
+        if is_auto:
+            role_args.extend(adapter.role_command.auto_args)
+        for arg in role_args:
+            if arg not in args:
+                args.append(arg)
+        return args
+
+    # Otherwise fall back to filtering task_command, which works for adapters
+    # whose task args are plain flags.
     # Bypass/yolo flags live in task_command.auto_args and are added only when
     # this role's assignment explicitly opts into autonomy: auto.
     if adapter.task_command:
         extra_args = list(adapter.task_command.args)
-        if getattr(assignment, "autonomy", "supervised") == "auto":
+        if is_auto:
             extra_args.extend(adapter.task_command.auto_args)
         def _is_task_placeholder(value: str) -> bool:
             return "{prompt}" in value or "{workspace}" in value

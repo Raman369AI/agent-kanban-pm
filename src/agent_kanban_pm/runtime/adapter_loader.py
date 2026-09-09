@@ -96,6 +96,21 @@ class TaskCommandSpec(BaseModel):
     prompt_file: Optional[str] = None
 
 
+class RoleCommandSpec(BaseModel):
+    """Invocation for a persistent role session.
+
+    A role session is a long-running service with no task attached, so it
+    cannot reuse `task_command`: those args describe a one-shot run and are
+    built around a prompt. For a CLI whose non-interactive mode is a
+    subcommand that requires a message (`opencode run <message>`), dropping
+    the prompt leaves a command the CLI rejects. An adapter that needs a
+    different shape declares it here; `args` defaults to empty, which starts
+    the CLI in its normal interactive mode.
+    """
+    args: List[str] = Field(default_factory=list)
+    auto_args: List[str] = Field(default_factory=list)
+
+
 class PromptPatternSpec(BaseModel):
     """A single prompt detection rule defined in adapter YAML."""
     regex: str
@@ -118,6 +133,11 @@ class AdapterSpec(BaseModel):
     reporting: ReportingSpec = Field(default_factory=ReportingSpec)
     chat_designer: ChatDesignerSpec = Field(default_factory=ChatDesignerSpec)
     task_command: TaskCommandSpec = Field(default_factory=TaskCommandSpec)
+    role_command: Optional[RoleCommandSpec] = Field(
+        default=None,
+        description="How this adapter starts as a persistent role session; "
+                    "falls back to filtering task_command when unset",
+    )
     prompt_patterns: List[PromptPatternSpec] = Field(default_factory=list)
     owns: List[str] = Field(default_factory=list, description="File/directory patterns this agent owns for handoff routing")
     review_only: bool = Field(default=False, description="If true, agent only reviews — does not own files")
@@ -148,13 +168,42 @@ def ensure_user_adapters_dir() -> Path:
     return USER_ADAPTERS_DIR
 
 
+def _adapter_version(path: Path) -> Optional[str]:
+    """Read just the `version` field, tolerating an unparseable file."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        version = data.get("version")
+        return str(version) if version is not None else None
+    except Exception:
+        return None
+
+
+def _version_tuple(version: Optional[str]) -> tuple:
+    """Compare versions numerically; unparseable ones sort oldest."""
+    if not version:
+        return ()
+    parts = []
+    for chunk in str(version).split("."):
+        try:
+            parts.append(int(chunk))
+        except ValueError:
+            return ()
+    return tuple(parts)
+
+
 def copy_bundled_adapters():
-    """Copy bundled adapter YAMLs to user dir if user dir has no YAMLs."""
+    """Install bundled adapter YAMLs, refreshing ones an upgrade has superseded.
+
+    This used to skip everything when the user directory held any YAML at all,
+    so a directory seeded once was never touched again: every adapter fix
+    shipped afterwards — corrected CLI flags included — silently failed to
+    reach existing installs. Each adapter is now compared by its `version`
+    field, and a newer bundled adapter replaces the stale copy. A local file
+    whose version is equal or newer is left alone, so hand-edited adapters
+    survive as long as their version is bumped.
+    """
     ensure_user_adapters_dir()
-    existing_yamls = list(USER_ADAPTERS_DIR.glob("*.yaml"))
-    if existing_yamls:
-        logger.info(f"User adapters dir already has {len(existing_yamls)} adapters, skipping copy")
-        return
 
     if not BUNDLED_ADAPTERS_DIR.exists():
         logger.warning(f"Bundled adapters dir not found: {BUNDLED_ADAPTERS_DIR}")
@@ -162,8 +211,23 @@ def copy_bundled_adapters():
 
     for src in BUNDLED_ADAPTERS_DIR.glob("*.yaml"):
         dst = USER_ADAPTERS_DIR / src.name
-        shutil.copy2(src, dst)
-        logger.info(f"Copied bundled adapter: {src.name}")
+        if not dst.exists():
+            shutil.copy2(src, dst)
+            logger.info(f"Copied bundled adapter: {src.name}")
+            continue
+
+        bundled_version = _adapter_version(src)
+        local_version = _adapter_version(dst)
+        if _version_tuple(bundled_version) > _version_tuple(local_version):
+            backup = dst.with_suffix(f".yaml.bak-{local_version or 'unknown'}")
+            try:
+                shutil.copy2(dst, backup)
+            except OSError:
+                logger.warning(f"Could not back up {dst.name} before refreshing it")
+            shutil.copy2(src, dst)
+            logger.info(
+                f"Refreshed adapter {src.name}: {local_version} -> {bundled_version}"
+            )
 
 
 def load_adapter(path: Path) -> Optional[AdapterSpec]:

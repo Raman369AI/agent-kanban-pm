@@ -30,6 +30,11 @@ chat_designer:
   output_format: "stdout"
   timeout_seconds: 180
 
+# Role sessions run interactively; only the autonomy flags carry over.
+role_command:
+  args: []
+  auto_args: ["--permission-mode", "bypassPermissions"]
+
 task_command:
   args: ["--print", "--add-dir", "{workspace}", "{prompt}"]
   auto_args: ["--permission-mode", "bypassPermissions"]

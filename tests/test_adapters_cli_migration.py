@@ -194,3 +194,72 @@ def test_no_bundled_adapter_hides_a_bypass_flag_in_its_supervised_args():
                 f"{adapter.name} carries {marker!r} in supervised args; it belongs "
                 f"in auto_args"
             )
+
+
+# ---------------------------------------------------------------------------
+# Persistent role sessions
+# ---------------------------------------------------------------------------
+
+
+def test_codex_declares_no_mcp_launch_flag():
+    """`codex --mcp` is rejected: mcp is a subcommand, not a launch flag."""
+    assert _adapter("codex").invoke.mcp_flag == ""
+
+
+def test_adapters_with_subcommand_task_args_declare_a_role_command():
+    """A role session has no prompt, so a subcommand that demands one cannot
+    be reused for it. Such adapters must say how they start as a service."""
+    for adapter in bundled_adapters():
+        args = adapter.task_command.args
+        if not args:
+            continue
+        first = args[0]
+        # A leading flag is fine, and a leading placeholder is just the prompt.
+        if first.startswith("-") or "{" in first:
+            continue
+        assert adapter.role_command is not None, (
+            f"{adapter.name} starts its task command with the subcommand "
+            f"{args[0]!r}; it needs a role_command for persistent sessions"
+        )
+
+
+def test_role_command_is_used_verbatim_for_persistent_sessions(monkeypatch):
+    from agent_kanban_pm.runtime.role_supervisor import build_command_for_role
+    from agent_kanban_pm.runtime.preferences import RoleAssignment
+
+    monkeypatch.setattr("shutil.which", lambda command: f"/usr/bin/{command}")
+    adapter = _adapter("opencode")
+    command = build_command_for_role(
+        adapter,
+        RoleAssignment(agent="opencode", mode="headless"),
+        "worker",
+        "http://localhost:8000",
+    )
+
+    # The bare `run` subcommand must not survive into a role session.
+    assert "run" not in command
+    assert command[0].endswith("opencode")
+
+
+def test_role_command_adds_autonomy_flags_only_when_auto(monkeypatch):
+    from agent_kanban_pm.runtime.role_supervisor import build_command_for_role
+    from agent_kanban_pm.runtime.preferences import RoleAssignment
+
+    monkeypatch.setattr("shutil.which", lambda command: f"/usr/bin/{command}")
+    adapter = _adapter("claude")
+
+    supervised = build_command_for_role(
+        adapter,
+        RoleAssignment(agent="claude", mode="headless", autonomy="supervised"),
+        "orchestrator",
+        "http://localhost:8000",
+    )
+    assert "--permission-mode" not in supervised
+
+    auto = build_command_for_role(
+        adapter,
+        RoleAssignment(agent="claude", mode="headless", autonomy="auto"),
+        "orchestrator",
+        "http://localhost:8000",
+    )
+    assert auto[auto.index("--permission-mode") + 1] == "bypassPermissions"
