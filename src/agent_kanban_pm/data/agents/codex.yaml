@@ -1,6 +1,6 @@
 name: codex
 display_name: "Codex (OpenAI)"
-version: "1.1"
+version: "1.2"
 
 # `codex --mcp` is rejected: `mcp` is a subcommand, and MCP servers are
 # registered with `codex mcp` / ~/.codex/config.toml rather than a launch flag.
@@ -39,7 +39,9 @@ role_command:
 
 task_command:
   args: ["-C", "{workspace}", "{prompt}"]
-  auto_args: ["--full-auto"]
+  # `codex --full-auto` is rejected by current codex; the bypass flag is
+  # --dangerously-bypass-approvals-and-sandbox.
+  auto_args: ["--dangerously-bypass-approvals-and-sandbox"]
 
 review_only: true
 owns: []

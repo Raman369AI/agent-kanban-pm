@@ -1,6 +1,6 @@
 name: claude
 display_name: "Claude (Anthropic)"
-version: "1.1"
+version: "1.2"
 
 invoke:
   command: claude
@@ -36,7 +36,11 @@ role_command:
   auto_args: ["--permission-mode", "bypassPermissions"]
 
 task_command:
-  args: ["--print", "--add-dir", "{workspace}", "{prompt}"]
+  # --add-dir is variadic (<directories...>), so it keeps consuming arguments
+  # until the next flag: with ["--print", "--add-dir", "{workspace}",
+  # "{prompt}"] it swallowed the prompt as a second directory and claude ran
+  # with no instruction. --print terminates it, and the prompt stays positional.
+  args: ["--add-dir", "{workspace}", "--print", "{prompt}"]
   auto_args: ["--permission-mode", "bypassPermissions"]
 
 # Handoff profile (P1-2)

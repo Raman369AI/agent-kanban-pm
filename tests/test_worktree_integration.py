@@ -74,11 +74,13 @@ def test_claude_adapter_uses_bypass_permissions():
     assert "--permission-mode" not in _adapter_args("claude")
 
 
-def test_codex_adapter_uses_full_auto():
+def test_codex_adapter_uses_the_bypass_flag_codex_accepts():
+    """codex removed --full-auto; it now errors with "unexpected argument"."""
     auto_args = _adapter_auto_args("codex")
-    assert "--full-auto" in auto_args
+    assert "--dangerously-bypass-approvals-and-sandbox" in auto_args
+    assert "--full-auto" not in auto_args
     assert "--ask-for-approval" not in auto_args
-    assert "--full-auto" not in _adapter_args("codex")
+    assert "--dangerously-bypass-approvals-and-sandbox" not in _adapter_args("codex")
 
 
 def test_aider_adapter_uses_yes_always():

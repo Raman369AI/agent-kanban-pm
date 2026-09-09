@@ -1,6 +1,6 @@
 name: antigravity
 display_name: "Antigravity CLI (Google)"
-version: "1.2"
+version: "1.3"
 
 # Google's replacement for the retired Gemini CLI, which this project no
 # longer ships an adapter for. Flags below are taken from
@@ -41,8 +41,11 @@ role_command:
   auto_args: ["--dangerously-skip-permissions"]
 
 task_command:
-  # --print runs one prompt non-interactively; --add-dir scopes the workspace.
-  args: ["--print", "--add-dir", "{workspace}", "{prompt}"]
+  # --print takes the prompt as its value (--prompt is an alias for it), so it
+  # must not be followed by another flag: `--print --add-dir <dir> <prompt>`
+  # makes agy read "--add-dir" as the prompt and silently drop the real one.
+  # The prompt is attached with `=` and --add-dir moved ahead of it.
+  args: ["--add-dir", "{workspace}", "--print={prompt}"]
   auto_args: ["--dangerously-skip-permissions"]
 
 owns: ['*']

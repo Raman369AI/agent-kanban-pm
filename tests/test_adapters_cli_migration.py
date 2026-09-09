@@ -105,9 +105,8 @@ def test_antigravity_uses_the_flags_agy_actually_accepts():
     assert agy.invoke.mcp_flag is None
 
     args = agy.task_command.args
-    assert "--print" in args, "non-interactive runs need --print"
+    assert "--print={prompt}" in args, "non-interactive runs need --print"
     assert "-i" not in args, "-i is agy's *interactive* flag"
-    assert "{prompt}" in args
     assert "--add-dir" in args and "{workspace}" in args
 
 
@@ -127,8 +126,9 @@ def test_antigravity_supervised_run_omits_the_bypass_flag(tmp_path, cli_stubs):
     agy = _adapter("antigravity")
     cmd = _build_agent_command(agy, str(tmp_path), "do the thing", AUTONOMY_SUPERVISED)
     assert "--dangerously-skip-permissions" not in cmd
-    assert "--print" in cmd
-    assert "do the thing" in cmd
+    assert "--print=do the thing" in cmd
+    # The prompt must never arrive as a bare argument: agy would ignore it.
+    assert "do the thing" not in cmd
 
 
 def test_antigravity_auto_run_appends_the_bypass_flag(tmp_path, cli_stubs):
@@ -263,3 +263,58 @@ def test_role_command_adds_autonomy_flags_only_when_auto(monkeypatch):
         "http://localhost:8000",
     )
     assert auto[auto.index("--permission-mode") + 1] == "bypassPermissions"
+
+
+def test_antigravity_attaches_the_prompt_to_print():
+    """`agy --print` consumes the next token as its prompt.
+
+    With ["--print", "--add-dir", "{workspace}", "{prompt}"] the CLI read
+    "--add-dir" as the prompt and ignored the real one, so every antigravity
+    task ran the wrong instruction.
+    """
+    args = _adapter("antigravity").task_command.args
+
+    assert "--print" not in args, "a bare --print swallows the following flag"
+    print_args = [a for a in args if a.startswith("--print")]
+    assert print_args == ["--print={prompt}"]
+    # --add-dir must be fully applied before the prompt-bearing flag.
+    assert args.index("--add-dir") < args.index("--print={prompt}")
+
+
+def test_no_bundled_adapter_leaves_a_bare_print_before_another_flag():
+    """A value-taking --print must never be followed by a flag.
+
+    `--print --add-dir <dir>` makes the CLI treat "--add-dir" as the prompt.
+    """
+    for adapter in bundled_adapters():
+        args = adapter.task_command.args
+        for index, arg in enumerate(args[:-1]):
+            if arg == "--print":
+                assert not args[index + 1].startswith("-"), (
+                    f"{adapter.name}: --print is followed by {args[index + 1]!r}, "
+                    "which it would consume as the prompt"
+                )
+
+
+def test_claude_terminates_its_variadic_add_dir_before_the_prompt():
+    """`--add-dir <directories...>` consumes arguments until the next flag.
+
+    With ["--print", "--add-dir", "{workspace}", "{prompt}"] the prompt was
+    taken as a second directory and claude ran with no instruction at all.
+    """
+    args = _adapter("claude").task_command.args
+
+    add_dir = args.index("--add-dir")
+    prompt = args.index("{prompt}")
+    between = args[add_dir + 1:prompt]
+    assert any(a.startswith("-") for a in between), (
+        "a flag must terminate --add-dir before the positional prompt"
+    )
+    assert args[-1] == "{prompt}"
+
+
+def test_codex_auto_args_use_a_flag_codex_still_accepts():
+    """`codex --full-auto` is rejected by current codex."""
+    auto = _adapter("codex").task_command.auto_args
+    assert "--full-auto" not in auto
+    assert auto == ["--dangerously-bypass-approvals-and-sandbox"]
