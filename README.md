@@ -293,16 +293,19 @@ release. Each phase is releasable on its own.
   HttpOnly cookie + CSRF header, Host-header validation, token file is
   `0600`, supervised-by-default autonomy with explicit `auto` opt-in,
   WebSocket token verification.
-- [ ] **Phase 3 — Runtime correctness**: async subprocess work, atomic launch
-  admission, MCP identity freshness, endpoint discovery, shutdown cleanup, and
-  the shared task-mutation service are complete. Project/session/approval
-  services, MCP tool modularization, launcher decomposition, and Alembic remain.
-- [ ] **Phase 4 — Product surface & docs**: support matrix, community
-  scaffolding, and browser workflow coverage are complete. Landing-page
-  visuals, the mkdocs site, coverage reporting, and frontend extraction remain.
-- [ ] **Phase 5 — Release & distribution**: `v0.4.0rc2` is published on PyPI
-  and GitHub. Keep this open until the scheduled published-package smoke is
-  green and the corrected GitHub Release job is validated by the next tag.
+- [ ] **Phase 3 — Runtime correctness**: async subprocess handling, atomic
+  launch admission, MCP identity freshness, endpoint discovery, shutdown
+  cleanup, and a shared task-mutation service have landed. Project, session,
+  and approval services, MCP tool modularization, launcher decomposition, and
+  Alembic migrations are still outstanding.
+- [ ] **Phase 4 — Product surface & docs**: the support matrix, community
+  scaffolding, and browser workflow coverage have landed. Landing-page
+  visuals, the mkdocs site, coverage reporting, and frontend extraction are
+  still outstanding.
+- [ ] **Phase 5 — Release & distribution**: `0.4.0rc2` is on PyPI and GitHub,
+  published from a git tag by a workflow that authenticates through PyPI
+  trusted publishing, with a weekly job that installs the released package to
+  catch breakage. A stable `0.4.0` is what remains.
 
 ## Security
 
