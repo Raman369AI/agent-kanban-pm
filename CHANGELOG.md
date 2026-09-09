@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Approval dropdown click handling** — The header now owns the correct stacking context, preventing board columns from intercepting clicks on visible approval requests.
 
+## [0.4.0rc4] — 2026-09-09
+
+### Fixed
+- **A board toast is no longer wiped by the echo of the action that raised it** — the board shows all toasts in one shared element, and the WebSocket broadcast of a change overwrote the confirmation of the user's own move within milliseconds, leaving `Task #N: <status>` where `Task moved to <stage>` had just been. Broadcast-driven toasts now yield briefly to a user-initiated one. This also fixes the intermittent `test_drag_and_keyboard_card_movement` failure, which was the same race observed from the test side.
+- **A toast's hide timer is cleared when the next toast appears** — previously the first toast's pending timer would hide its successor early.
+- **The scheduled published-package smoke installs stable dependencies** — `pip install --pre` is not scoped to the named package, so the job let every dependency resolve to a development release; it picked up `httpx 1.0.dev6`, which no longer exposes `AsyncClient`, and failed importing our own adapter module. The published version is now resolved first and installed as an exact pin. The release workflow's own smoke job was unaffected, as it already pins the version.
+
 ## [0.4.0rc3] — 2026-09-09
 
 ### Added
