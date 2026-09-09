@@ -84,8 +84,11 @@
 
         <div class="kanban-drop-zone-revamp" data-stage-id="{{ stage.id }}">
           {% for task in stage.tasks %}
-          <div class="kanban-task-revamp" draggable="true" data-task-id="{{ task.id }}" data-current-stage="{{ stage.id }}" data-priority="P{{ task.priority }}" id="task-card-{{ task.id }}">
-            <div class="task-compact-face" onclick="toggleCardExpansion({{ task.id }})">
+          <div class="kanban-task-revamp" draggable="true" tabindex="0" role="group"
+            aria-label="Task {{ task.title }} in {{ stage.name }}. Use left and right arrow keys to move."
+            aria-keyshortcuts="ArrowLeft ArrowRight" onkeydown="handleTaskKeydown(event, this)"
+            data-task-id="{{ task.id }}" data-current-stage="{{ stage.id }}" data-priority="P{{ task.priority }}" id="task-card-{{ task.id }}">
+            <div class="task-compact-face" role="button" aria-expanded="false" onclick="toggleCardExpansion({{ task.id }})">
               <div class="task-state-indicators" id="task-indicators-{{ task.id }}"></div>
               <div class="task-header-revamp">
                 <strong class="task-title-revamp">{{ task.title }}</strong>
@@ -184,32 +187,34 @@
   </section>
 
   <!-- Activity popup modal -->
-  <div id="activity-popup-overlay" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeActivityPopup()">
+  <div id="activity-popup-overlay" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="activity-popup-title" onclick="if(event.target===this)closeActivityPopup()">
     <div class="modal-card" style="max-width:700px;width:95%;max-height:85vh;display:flex;flex-direction:column;">
       <div class="modal-header">
         <h3 id="activity-popup-title">Activity</h3>
-        <button class="btn-icon" onclick="closeActivityPopup()">&times;</button>
+        <button class="btn-icon" aria-label="Close activity" onclick="closeActivityPopup()">&times;</button>
       </div>
       <div id="activity-popup-body" style="flex:1;overflow-y:auto;padding:1rem 1.25rem;"></div>
     </div>
   </div>
 
   <!-- Approval prompt modal -->
-  <div id="approval-popup-overlay" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeApprovalPopup()">
+  <div id="approval-popup-overlay" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="approval-popup-title" onclick="if(event.target===this)closeApprovalPopup()">
     <div class="modal-card approval-popup-card">
       <div class="modal-header">
         <div>
           <p class="approval-popup-kicker">Agent approval request</p>
           <h3 id="approval-popup-title">Approval needed</h3>
         </div>
-        <button class="btn-icon" onclick="closeApprovalPopup()">&times;</button>
+        <button class="btn-icon" aria-label="Close approval request" onclick="closeApprovalPopup()">&times;</button>
       </div>
       <div id="approval-popup-body" class="approval-popup-body">
         <p class="text-secondary">Select a pending approval.</p>
       </div>
       <div class="approval-popup-note-wrap">
         <label for="approval-popup-note">Optional note</label>
-        <input type="text" id="approval-popup-note" class="form-input" placeholder="Reason or instruction for the blocked agent">
+        <input type="text" id="approval-popup-note" class="form-input" autofocus placeholder="Reason or instruction for the blocked agent">
       </div>
       <div class="approval-popup-actions">
         <button type="button" class="btn" onclick="closeApprovalPopup()">Later</button>
@@ -335,6 +340,7 @@
     box-shadow: var(--shadow);
     position: relative;
     overflow: visible;
+    z-index: 100;
   }
   .board-header-section::before {
     content: '';
@@ -505,6 +511,8 @@
   .board-main-revamp {
     flex: 1;
     overflow: hidden;
+    position: relative;
+    z-index: 1;
   }
   .kanban-container-revamp {
     display: flex;
@@ -973,15 +981,16 @@
 </style>
 
 <!-- Toast notification -->
-<div id="toast" class="toast" style="display:none;"></div>
+<div id="toast" class="toast" style="display:none;" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Task Edit/Create Modal -->
-<div id="task-modal" class="modal-overlay" style="display:none;"
+<div id="task-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="task-modal-title"
     onclick="if(event.target===this)closeModal('task-modal')">
   <div class="modal-card">
     <div class="modal-header">
       <h3 id="task-modal-title">Edit Task</h3>
-      <button class="btn-icon" onclick="closeModal('task-modal')">&times;</button>
+      <button class="btn-icon" aria-label="Close task dialog" onclick="closeModal('task-modal')">&times;</button>
     </div>
     <div class="tab-content">
       <form id="task-form" onsubmit="return false;">
@@ -990,7 +999,7 @@
         <input type="hidden" id="task-form-mode" value="edit">
         <div class="form-group">
           <label for="task-form-title">Title</label>
-          <input type="text" id="task-form-title" class="form-input" required placeholder="Task title">
+          <input type="text" id="task-form-title" class="form-input" required autofocus placeholder="Task title">
         </div>
         <div class="form-group">
           <label for="task-form-desc">Description</label>
@@ -1030,12 +1039,13 @@
 </div>
 
 <!-- Assign Modal -->
-<div id="assign-modal" class="modal-overlay" style="display:none;"
+<div id="assign-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="assign-modal-title"
     onclick="if(event.target===this)closeModal('assign-modal')">
   <div class="modal-card modal-small">
     <div class="modal-header">
-      <h3>Assign Role to Task</h3>
-      <button class="btn-icon" onclick="closeModal('assign-modal')">&times;</button>
+      <h3 id="assign-modal-title">Assign Role to Task</h3>
+      <button class="btn-icon" aria-label="Close assignment dialog" onclick="closeModal('assign-modal')">&times;</button>
     </div>
     <input type="hidden" id="assign-task-id">
     <div id="assign-entity-list" class="entity-list">
@@ -1045,12 +1055,13 @@
 </div>
 
 <!-- Project Edit Modal -->
-<div id="project-modal" class="modal-overlay" style="display:none;"
+<div id="project-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="project-modal-title"
     onclick="if(event.target===this)closeModal('project-modal')">
   <div class="modal-card modal-small">
     <div class="modal-header">
-      <h3>Edit Project</h3>
-      <button class="btn-icon" onclick="closeModal('project-modal')">&times;</button>
+      <h3 id="project-modal-title">Edit Project</h3>
+      <button class="btn-icon" aria-label="Close project dialog" onclick="closeModal('project-modal')">&times;</button>
     </div>
     <div class="form-group">
       <label>Project Name</label>
@@ -1076,12 +1087,13 @@
 </div>
 
 <!-- Stage Policy Modal -->
-<div id="stage-policy-modal" class="modal-overlay" style="display:none;"
+<div id="stage-policy-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="stage-policy-modal-title"
     onclick="if(event.target===this)closeModal('stage-policy-modal')">
   <div class="modal-card" style="max-width:600px;">
     <div class="modal-header">
-      <h3>Stage Policy</h3>
-      <button class="btn-icon" onclick="closeModal('stage-policy-modal')">&times;</button>
+      <h3 id="stage-policy-modal-title">Stage Policy</h3>
+      <button class="btn-icon" aria-label="Close stage policy dialog" onclick="closeModal('stage-policy-modal')">&times;</button>
     </div>
     <p class="text-secondary" style="margin-bottom:1rem;">
       Configure expected roles, required outputs, and review mode for each stage.
@@ -1097,12 +1109,13 @@
 </div>
 
 <!-- Team Management Modal -->
-<div id="team-modal" class="modal-overlay" style="display:none;"
+<div id="team-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="team-modal-title"
     onclick="if(event.target===this)closeModal('team-modal')">
   <div class="modal-card modal-small">
     <div class="modal-header">
-      <h3>Role CLI Tools</h3>
-      <button class="btn-icon" onclick="closeModal('team-modal')">&times;</button>
+      <h3 id="team-modal-title">Role CLI Tools</h3>
+      <button class="btn-icon" aria-label="Close team dialog" onclick="closeModal('team-modal')">&times;</button>
     </div>
     <div id="team-list" class="entity-list" style="max-height: 300px; overflow-y: auto;"></div>
     <div class="modal-footer" style="padding-top: 1rem; border-top: 1px solid var(--border-color); margin-top: 1rem;">
@@ -1112,12 +1125,13 @@
 </div>
 
 <!-- Folder Picker Modal -->
-<div id="folder-picker-modal" class="modal-overlay" style="display:none;"
+<div id="folder-picker-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="folder-picker-modal-title"
     onclick="if(event.target===this)closeFolderPicker()">
   <div class="modal-card modal-small">
     <div class="modal-header">
-      <h3>Select Project Folder</h3>
-      <button class="btn-icon" onclick="closeFolderPicker()">&times;</button>
+      <h3 id="folder-picker-modal-title">Select Project Folder</h3>
+      <button class="btn-icon" aria-label="Close folder picker" onclick="closeFolderPicker()">&times;</button>
     </div>
     <div class="form-group mb-2">
       <label>Current Folder</label>
@@ -1243,7 +1257,11 @@
                 if (panel) {
                     panel.style.display = '';
                     var card = document.getElementById('task-card-' + taskId);
-                    if (card) card.classList.add('expanded');
+                    if (card) {
+                        card.classList.add('expanded');
+                        var face = card.querySelector('.task-compact-face');
+                        if (face) face.setAttribute('aria-expanded', 'true');
+                    }
                 }
             }
         });
@@ -1255,6 +1273,8 @@
         if (panel.style.display === 'none') {
             panel.style.display = '';
             card.classList.add('expanded');
+            var face = card.querySelector('.task-compact-face');
+            if (face) face.setAttribute('aria-expanded', 'true');
             expandedCards[taskId] = true;
             var tab = expandedCardTabs[taskId] || 'approvals';
             switchExpansionTab(taskId, tab);
@@ -1262,6 +1282,8 @@
         } else {
             panel.style.display = 'none';
             card.classList.remove('expanded');
+            var collapsedFace = card.querySelector('.task-compact-face');
+            if (collapsedFace) collapsedFace.setAttribute('aria-expanded', 'false');
             expandedCards[taskId] = false;
         }
         saveExpandedCards();
@@ -1438,17 +1460,18 @@
         if (!overlay) return;
         title.textContent = 'Activity — Task #' + taskId;
         body.innerHTML = '<p class="text-secondary">Loading…</p>';
-        overlay.style.display = 'flex';
+        openModal('activity-popup-overlay');
         try {
-            var resp = await fetch('/agents/activity?task_id=' + taskId + '&limit=200');
-            if (!resp.ok) { body.innerHTML = '<p class="text-secondary">Failed to load activity.</p>'; return; }
-            var entries = await resp.json();
+            var entries = await apiFetch(
+                '/agents/activity?task_id=' + taskId + '&limit=200',
+                {},
+                'Failed to load activity'
+            );
             body.innerHTML = renderActivityEntries(entries.reverse(), false);
         } catch(e) { body.innerHTML = '<p class="text-secondary">' + escapeHtml(e.message) + '</p>'; }
     }
     function closeActivityPopup() {
-        var overlay = document.getElementById('activity-popup-overlay');
-        if (overlay) overlay.style.display = 'none';
+        closeModal('activity-popup-overlay');
     }
 
     // --- Approval popup ---
@@ -1510,8 +1533,7 @@
         }
         currentApprovalId = approval.id || approval.approval_id;
         renderApprovalPopup(approval);
-        var overlay = document.getElementById('approval-popup-overlay');
-        if (overlay) overlay.style.display = 'flex';
+        openModal('approval-popup-overlay');
         var dd = document.getElementById('bell-dropdown');
         if (dd) dd.style.display = 'none';
     }
@@ -1524,8 +1546,7 @@
         if (approval) openApprovalPopup(approval.id);
     }
     function closeApprovalPopup() {
-        var overlay = document.getElementById('approval-popup-overlay');
-        if (overlay) overlay.style.display = 'none';
+        closeModal('approval-popup-overlay');
     }
     function resolveCurrentApproval(decision) {
         if (!currentApprovalId) return;
@@ -1623,19 +1644,18 @@
             dropZone.appendChild(div);
         }
     }
-    window.closeModal = function(id) { document.getElementById(id).style.display = 'none'; };
-    function closeFolderPicker() { document.getElementById('folder-picker-modal').style.display = 'none'; }
+
+    function closeFolderPicker() { closeModal('folder-picker-modal'); }
     function openFolderPicker(targetInputId) {
         folderPickerTarget = document.getElementById(targetInputId);
-        document.getElementById('folder-picker-modal').style.display = 'flex';
+        openModal('folder-picker-modal');
         loadFolder(folderPickerTarget.value || '');
     }
     function loadFolderFromInput() { loadFolder(document.getElementById('folder-picker-current').value); }
     function loadFolder(path) {
         var url = '/ui/api/folders' + (path ? '?path=' + encodeURIComponent(path) : '');
         document.getElementById('folder-picker-list').innerHTML = '<p class="text-secondary">Loading...</p>';
-        fetch(url)
-            .then(function(r) { if (!r.ok) throw new Error('Failed to load folders'); return r.json(); })
+        apiFetch(url, {}, 'Failed to load folders')
             .then(function(data) {
                 folderPickerCurrent = data.path;
                 folderPickerParent = data.parent;
@@ -1675,47 +1695,85 @@
             draggedTask = null;
         });
     }
+    function moveTaskCard(card, targetZone) {
+        if (!card || !targetZone || card.dataset.moving === 'true') return Promise.resolve(false);
+        var taskId = card.dataset.taskId;
+        var oldStageId = card.dataset.currentStage;
+        var newStageId = targetZone.dataset.stageId;
+        if (oldStageId === newStageId) return Promise.resolve(false);
+        var column = targetZone.closest('.kanban-column-revamp');
+        var stageName = column.dataset.stageName;
+        var newStatus = STAGE_STATUS_MAP[stageName] || 'pending';
+        var oldZone = card.parentElement;
+        var statusBadge = card.querySelector('[id^="status-task-"]');
+        var oldStatusText = statusBadge ? statusBadge.textContent : '';
+        var oldStatusClass = statusBadge ? statusBadge.className : '';
+        card.dataset.moving = 'true';
+        clearPlaceholder(targetZone);
+        targetZone.appendChild(card);
+        card.dataset.currentStage = newStageId;
+        card.style.opacity = '';
+        if (statusBadge) {
+            statusBadge.textContent = newStatus;
+            statusBadge.className = 'badge badge-' + newStatus;
+        }
+        addPlaceholderIfEmpty(oldZone);
+        updateColumnCount(oldStageId, -1);
+        updateColumnCount(newStageId, 1);
+        return apiFetch('/ui/tasks/' + taskId + '/move', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
+            body: JSON.stringify({ stage_id: parseInt(newStageId), status: newStatus, summary: '' })
+        }, 'Failed to update task').then(function() {
+            card.setAttribute('aria-label', 'Task ' +
+                (card.querySelector('.task-title-revamp') || {}).textContent + ' in ' + stageName +
+                '. Use left and right arrow keys to move.');
+            showToast('Task moved to ' + stageName, 'success');
+            return true;
+        }).catch(function(err) {
+            clearPlaceholder(oldZone);
+            oldZone.appendChild(card);
+            card.dataset.currentStage = oldStageId;
+            if (statusBadge) {
+                statusBadge.textContent = oldStatusText;
+                statusBadge.className = oldStatusClass;
+            }
+            addPlaceholderIfEmpty(targetZone);
+            updateColumnCount(oldStageId, 1);
+            updateColumnCount(newStageId, -1);
+            showToast('Failed to move task: ' + err.message, 'error');
+            return false;
+        }).finally(function() {
+            delete card.dataset.moving;
+            card.focus();
+        });
+    }
+    window.handleTaskKeydown = function(event, card) {
+        if (event.target !== card) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleCardExpansion(parseInt(card.dataset.taskId));
+            return;
+        }
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        var columns = Array.from(document.querySelectorAll('.kanban-column-revamp'));
+        var currentColumn = card.closest('.kanban-column-revamp');
+        var currentIndex = columns.indexOf(currentColumn);
+        var nextIndex = currentIndex + (event.key === 'ArrowRight' ? 1 : -1);
+        if (nextIndex < 0 || nextIndex >= columns.length) {
+            showToast('Task is already at the edge of the board', 'info');
+            return;
+        }
+        moveTaskCard(card, columns[nextIndex].querySelector('.kanban-drop-zone-revamp'));
+    };
     function bindDropZone(zone) {
         zone.addEventListener('dragover', function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; this.classList.add('drag-over'); });
         zone.addEventListener('dragleave', function(e) { if (!this.contains(e.relatedTarget)) this.classList.remove('drag-over'); });
         zone.addEventListener('drop', function(e) {
             e.preventDefault();
             this.classList.remove('drag-over');
-            if (!draggedTask) return;
-            var taskId = draggedTask.dataset.taskId;
-            var oldStageId = draggedTask.dataset.currentStage;
-            var newStageId = this.dataset.stageId;
-            if (oldStageId === newStageId) return;
-            var column = this.closest('.kanban-column-revamp');
-            var stageName = column.dataset.stageName;
-            var newStatus = STAGE_STATUS_MAP[stageName] || 'pending';
-            var oldZone = draggedTask.parentElement;
-            clearPlaceholder(this);
-            this.appendChild(draggedTask);
-            draggedTask.dataset.currentStage = newStageId;
-            draggedTask.style.opacity = '';
-            var statusBadge = draggedTask.querySelector('[id^="status-task-"]');
-            if (statusBadge) { statusBadge.textContent = newStatus; statusBadge.className = 'badge badge-' + newStatus; }
-            addPlaceholderIfEmpty(oldZone);
-            updateColumnCount(oldStageId, -1);
-            updateColumnCount(newStageId, 1);
-            var movedTask = draggedTask;
-            fetch('/ui/tasks/' + taskId + '/move', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
-                body: JSON.stringify({ stage_id: parseInt(newStageId), status: newStatus, summary: '' })
-            }).then(function(response) {
-                if (!response.ok) throw new Error('Failed to update task');
-                showToast('Task moved to ' + stageName, 'success');
-            }).catch(function(err) {
-                clearPlaceholder(oldZone);
-                oldZone.appendChild(movedTask);
-                movedTask.dataset.currentStage = oldStageId;
-                addPlaceholderIfEmpty(oldZone);
-                updateColumnCount(oldStageId, 1);
-                updateColumnCount(newStageId, -1);
-                showToast('Failed to move task: ' + err.message, 'error');
-            });
+            if (draggedTask) moveTaskCard(draggedTask, this);
         });
     }
 
@@ -1730,12 +1788,11 @@
         var oldStageId = card.dataset.currentStage;
         if (oldStageId === todoStageId) return;
         btn.disabled = true;
-        fetch('/ui/tasks/' + taskId + '/move', {
+        apiFetch('/ui/tasks/' + taskId + '/move', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
             body: JSON.stringify({ stage_id: parseInt(todoStageId), status: 'pending', summary: 'Approved from backlog' })
-        }).then(function(resp) {
-            if (!resp.ok) return resp.json().then(function(e) { throw new Error(e.detail || 'Move failed'); });
+        }, 'Failed to approve task').then(function() {
             clearPlaceholder(todoZone);
             todoZone.appendChild(card);
             card.dataset.currentStage = todoStageId;
@@ -1762,8 +1819,7 @@
         document.getElementById('task-form-status').value = 'pending';
         document.getElementById('task-form-skills').value = '';
         document.getElementById('task-comments-section').style.display = 'none';
-        document.getElementById('task-modal').style.display = 'flex';
-        document.getElementById('task-form-title').focus();
+        openModal('task-modal');
     };
     window.openEditModal = function(taskEl) {
         var taskId = taskEl.dataset.taskId;
@@ -1779,10 +1835,7 @@
         var commentsList = document.getElementById('task-comments-list');
         commentsList.innerHTML = '<p class="text-secondary">Loading activity...</p>';
         document.getElementById('task-comments-section').style.display = 'block';
-        fetch('/tasks/' + taskId).then(function(r) {
-            if (!r.ok) throw new Error('Failed to load task details');
-            return r.json();
-        }).then(function(data) {
+        apiFetch('/tasks/' + taskId, {}, 'Failed to load task details').then(function(data) {
             document.getElementById('task-form-title').value = data.title || '';
             document.getElementById('task-form-desc').value = data.description || '';
             document.getElementById('task-form-status').value = data.status || 'pending';
@@ -1798,14 +1851,20 @@
                 });
             } else { html = '<p class="text-secondary">No comments yet.</p>'; }
             commentsList.innerHTML = html;
-        }).catch(function() { commentsList.innerHTML = '<p class="text-secondary">Could not load details.</p>'; });
-        document.getElementById('task-modal').style.display = 'flex';
+        }).catch(function(err) {
+            commentsList.innerHTML = '<p class="text-danger">' + escapeHtml(err.message) + '</p>';
+            showToast('Could not load task: ' + err.message, 'error');
+        });
+        openModal('task-modal');
     };
     function refreshBoardFromServer() {
         var board = document.getElementById('board-main-revamp');
         if (!board) return Promise.resolve(false);
-        return fetch(window.location.href, { headers: { 'X-Requested-With': 'fetch' } })
-            .then(function(r) { if (!r.ok) throw new Error('Refresh failed'); return r.text(); })
+        return apiFetch(
+            window.location.href,
+            { headers: { 'X-Requested-With': 'fetch' } },
+            'Refresh failed'
+        )
             .then(function(html) {
                 var doc = new DOMParser().parseFromString(html, 'text/html');
                 var freshBoard = doc.getElementById('board-main-revamp');
@@ -1825,14 +1884,12 @@
         if (mode === 'create') {
             data.project_id = PROJECT_ID;
             data.stage_id = parseInt(document.getElementById('task-form-stage-id').value);
-            fetch('/ui/tasks/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) })
-                .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
+            apiFetch('/ui/tasks/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) }, 'Failed to create task')
                 .then(function() { showToast('Task created!', 'success'); closeModal('task-modal'); return refreshBoardFromServer(); })
                 .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
         } else {
             var taskId = document.getElementById('task-form-id').value;
-            fetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) })
-                .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
+            apiFetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) }, 'Failed to update task')
                 .then(function() { showToast('Task updated!', 'success'); closeModal('task-modal'); return refreshBoardFromServer(); })
                 .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
         }
@@ -1840,8 +1897,7 @@
     window.deleteTask = function(taskId, taskEl) {
         if (!confirm('Delete this task?')) return;
         var stageId = taskEl.dataset.currentStage;
-        fetch('/ui/tasks/' + taskId, { method: 'DELETE', headers: { 'x-entity-id': CURRENT_ENTITY_ID } })
-            .then(function(r) { if (!r.ok) throw new Error('Failed'); })
+        apiFetch('/ui/tasks/' + taskId, { method: 'DELETE', headers: { 'x-entity-id': CURRENT_ENTITY_ID } }, 'Failed to delete task')
             .then(function() { var dropZone = taskEl.parentElement; taskEl.remove(); addPlaceholderIfEmpty(dropZone); updateColumnCount(stageId, -1); showToast('Task deleted', 'success'); })
             .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
     };
@@ -1850,8 +1906,8 @@
     window.openAssignModal = function(taskId) {
         document.getElementById('assign-task-id').value = taskId;
         document.getElementById('assign-entity-list').innerHTML = '<p class="text-secondary">Loading roles...</p>';
-        document.getElementById('assign-modal').style.display = 'flex';
-        fetch('/ui/api/roles').then(function(r) { return r.json(); }).then(function(data) {
+        openModal('assign-modal');
+        apiFetch('/ui/api/roles', {}, 'Failed to load roles').then(function(data) {
             var html = '';
             (data.roles || []).forEach(function(r) {
                 var disabled = r.installed ? '' : 'disabled';
@@ -1864,44 +1920,41 @@
     };
     window.assignRoleToTask = function(taskId, roleName, btn) {
         btn.disabled = true; btn.textContent = '...';
-        fetch('/ui/tasks/' + taskId + '/assign-role', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ role: roleName }) })
-            .then(function(r) { if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'Failed'); }); return r.json(); })
+        apiFetch('/ui/tasks/' + taskId + '/assign-role', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ role: roleName }) }, 'Failed to assign role')
             .then(function() { showToast('Assigned to ' + roleName, 'success'); closeModal('assign-modal'); return refreshBoardFromServer(); })
             .catch(function(err) { showToast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Assign'; });
     };
     window.assignEntity = function(taskId, entityId, btn) {
         btn.disabled = true; btn.textContent = '...';
-        fetch('/ui/tasks/' + taskId + '/assign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ entity_id: entityId, action: 'assign' }) })
-            .then(function(r) { if (!r.ok) throw new Error('Failed'); })
+        apiFetch('/ui/tasks/' + taskId + '/assign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ entity_id: entityId, action: 'assign' }) }, 'Failed to assign task')
             .then(function() { showToast('Assigned!', 'success'); closeModal('assign-modal'); return refreshBoardFromServer(); })
             .catch(function(err) { showToast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Assign'; });
     };
     window.unassignEntity = function(taskId, entityId, badge) {
-        fetch('/ui/tasks/' + taskId + '/assign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ entity_id: entityId, action: 'unassign' }) })
-            .then(function(r) { if (!r.ok) throw new Error('Failed'); })
+        apiFetch('/ui/tasks/' + taskId + '/assign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ entity_id: entityId, action: 'unassign' }) }, 'Failed to unassign task')
             .then(function() { badge.remove(); showToast('Unassigned', 'success'); })
             .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
     };
 
     // --- Project ---
-    window.editProject = function() { document.getElementById('project-modal').style.display = 'flex'; };
+    window.editProject = function() { openModal('project-modal'); };
     window.submitProjectEdit = function() {
         var name = document.getElementById('project-form-name').value.trim();
         var desc = document.getElementById('project-form-desc').value.trim();
         var path = document.getElementById('project-form-path').value.trim();
         if (!name) return;
-        fetch('/ui/projects/' + PROJECT_ID + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ name: name, description: desc, path: path }) })
-            .then(function(r) { if (!r.ok) throw new Error('Failed'); location.reload(); });
+        apiFetch('/ui/projects/' + PROJECT_ID + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ name: name, description: desc, path: path }) }, 'Failed to update project')
+            .then(function() { location.reload(); })
+            .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
     };
     window.openStagePolicyModal = function() {
-        document.getElementById('stage-policy-modal').style.display = 'flex';
+        openModal('stage-policy-modal');
         loadStagePolicies();
     };
     function loadStagePolicies() {
         var list = document.getElementById('stage-policy-list');
         list.innerHTML = '<p class="text-secondary">Loading policies...</p>';
-        fetch('/agents/projects/' + PROJECT_ID + '/stage-policies', {headers: {'x-entity-id': CURRENT_ENTITY_ID}})
-            .then(function(r) { return r.json(); })
+        apiFetch('/agents/projects/' + PROJECT_ID + '/stage-policies', {headers: {'x-entity-id': CURRENT_ENTITY_ID}}, 'Failed to load stage policies')
             .then(function(policies) {
                 if (!policies.length) { list.innerHTML = '<p class="text-secondary">No policies yet. Click "Seed Defaults" to create standard policies for this project.</p>'; return; }
                 var roleHints = ['orchestrator', 'ui', 'architecture', 'worker', 'test', 'diff_review', 'git_pr'];
@@ -1924,18 +1977,17 @@
                 }).join('');
                 list.innerHTML = html;
             })
-            .catch(function() { list.innerHTML = '<p class="text-danger">Failed to load stage policies.</p>'; });
+            .catch(function(err) { list.innerHTML = '<p class="text-danger">' + escapeHtml(err.message) + '</p>'; });
     }
     window.seedDefaultPolicies = function() {
-        fetch('/agents/projects/' + PROJECT_ID + '/stage-policies/defaults', {method: 'POST', headers: {'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID}})
-            .then(function(r) { return r.json(); })
+        apiFetch('/agents/projects/' + PROJECT_ID + '/stage-policies/defaults', {method: 'POST', headers: {'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID}}, 'Failed to seed policies')
             .then(function() { showToast('Default stage policies seeded', 'success'); loadStagePolicies(); })
-            .catch(function() { showToast('Failed to seed policies', 'error'); });
+            .catch(function(err) { showToast('Failed to seed policies: ' + err.message, 'error'); });
     };
     window.openTeamModal = function() {
-        document.getElementById('team-modal').style.display = 'flex';
+        openModal('team-modal');
         document.getElementById('team-list').innerHTML = '<p class="text-secondary">Loading roles...</p>';
-        fetch('/ui/api/roles').then(function(r) { return r.json(); }).then(function(data) { renderRoleCliPanel(data); }).catch(function() { document.getElementById('team-list').innerHTML = '<p class="text-danger">Failed to load roles.</p>'; });
+        apiFetch('/ui/api/roles', {}, 'Failed to load roles').then(function(data) { renderRoleCliPanel(data); }).catch(function(err) { document.getElementById('team-list').innerHTML = '<p class="text-danger">' + escapeHtml(err.message) + '</p>'; });
     };
     function renderRoleCliPanel(data) {
         var roles = ['orchestrator', 'ui', 'architecture', 'worker', 'test', 'diff_review', 'git_pr'];
@@ -1960,10 +2012,10 @@
         if (!select || !select.value) return;
         var opt = select.options[select.selectedIndex];
         var models = opt.getAttribute('data-models') || '';
-        fetch('/ui/api/roles/assign', {
+        apiFetch('/ui/api/roles/assign', {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
             body: JSON.stringify({ role: roleName, agent: select.value, command: opt.getAttribute('data-command') || select.value, model: modelInput.value || null, models: models, mode: 'headless' })
-        }).then(function(r) { if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'Failed'); }); return r.json(); })
+        }, 'Failed to update role')
             .then(function(data) { showToast('Role updated', 'success'); renderRoleCliPanel(data); })
             .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
     };
@@ -2018,12 +2070,11 @@
     async function resolveApproval(approvalId, decision) {
         var note = (document.getElementById('approval-popup-note') || {}).value || (document.getElementById('approval-note-' + approvalId) || {}).value || '';
         try {
-            var resp = await fetch('/agents/approvals/' + approvalId + '/resolve', {
+            await apiFetch('/agents/approvals/' + approvalId + '/resolve', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || '' },
                 body: JSON.stringify({ decision: decision, response_message: note || null })
-            });
-            if (!resp.ok) { var data = await resp.json().catch(function() { return {}; }); throw new Error(data.detail || 'Failed to resolve approval'); }
+            }, 'Failed to resolve approval');
             showToast('Approval ' + decision, 'success');
             closeApprovalPopup();
             currentApprovalId = null;

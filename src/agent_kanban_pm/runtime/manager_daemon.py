@@ -48,7 +48,7 @@ def get_manager_command() -> tuple:
     """Resolve the manager agent's CLI command from preferences + adapter spec."""
     prefs = load_preferences()
     if not prefs:
-        logger.error(f"No preferences found. Run: kanban init")
+        logger.error("No preferences found. Run: kanban init")
         sys.exit(1)
 
     adapters = {a.name: a for a in load_all_adapters()}
@@ -167,7 +167,7 @@ def start_manager_daemon():
     backoff = INITIAL_BACKOFF_SECONDS
     try:
         while True:
-            logger.info(f"Spawning manager subprocess...")
+            logger.info("Spawning manager subprocess...")
             try:
                 proc = subprocess.Popen(args, env=env)
                 # Update PID file with child PID

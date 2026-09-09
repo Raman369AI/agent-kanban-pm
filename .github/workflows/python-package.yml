@@ -29,9 +29,7 @@ jobs:
         python -m pip install -e ".[dev]"
 
     - name: Lint with flake8
-      run: |
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      run: flake8 src tests
 
     - name: Test with pytest
       run: pytest -v --timeout=60 --timeout-method=thread
@@ -52,11 +50,33 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install -e ".[dev]"
 
-    - name: Run fatal lint checks
-      run: flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
+    - name: Run configured lint baseline
+      run: flake8 src tests
 
     - name: Run tests
       run: pytest -q --timeout=60 --timeout-method=thread
+
+  e2e:
+    name: Browser workflows (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install package and Playwright
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e ".[e2e]"
+        python -m playwright install --with-deps chromium
+
+    - name: Run browser tests
+      run: python -m pytest tests/e2e -v
 
   locked:
     name: Locked install (uv.lock)
@@ -86,7 +106,7 @@ jobs:
 
   build-and-smoke:
     name: Build wheel + smoke test
-    needs: [test, test-macos, locked]
+    needs: [test, test-macos, e2e, locked]
     runs-on: ubuntu-latest
 
     steps:

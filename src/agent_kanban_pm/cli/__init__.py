@@ -339,8 +339,8 @@ def cmd_run(args):
                 print(f"  {role_name:16s} -> {session.agent} ({session_info})")
 
             if shutil.which("tmux"):
-                print(f"\nAttach to sessions with: tmux attach -t kanban-<role>")
-                print(f"List all sessions:      tmux list-sessions")
+                print("\nAttach to sessions with: tmux attach -t kanban-<role>")
+                print("List all sessions:      tmux list-sessions")
         else:
             print("\nNo role sessions configured. Run 'kanban init' for setup.")
 
@@ -350,9 +350,9 @@ def cmd_run(args):
         print("\nSupervisor skipped (--no-supervisor).")
 
     print(f"\n{'=' * 60}")
-    print(f"Kanban runtime is ready.")
+    print("Kanban runtime is ready.")
     print(f"  UI: http://localhost:{port}")
-    print(f"  Press Ctrl+C to stop.")
+    print("  Press Ctrl+C to stop.")
     print(f"{'=' * 60}")
 
     try:

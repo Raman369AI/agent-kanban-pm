@@ -1,0 +1,8 @@
+[flake8]
+select = E9,F541,F63,F7,F82
+max-line-length = 127
+exclude = .git,.venv,build,dist
+show-source = True
+statistics = True
+# Start with syntax, undefined-name, and malformed f-string checks. Expand the
+# baseline as legacy unused-import warnings are cleaned up.

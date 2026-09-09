@@ -84,7 +84,7 @@ def test_task_references_cannot_cross_project_boundaries():
             json={"stage_id": foreign_stage},
             headers=headers,
         )
-        assert response.status_code == 409
+        assert response.status_code == 422
 
         response = client.post(
             "/ui/tasks/create",

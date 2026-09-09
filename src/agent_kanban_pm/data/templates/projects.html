@@ -280,7 +280,7 @@
         <h2>Projects</h2>
         <p class="text-secondary">Manage your projects and track progress</p>
     </div>
-    <button class="btn btn-primary" onclick="document.getElementById('create-modal').style.display='flex'">+ New
+    <button class="btn btn-primary" onclick="openModal('create-modal')">+ New
         Project</button>
 </div>
 
@@ -342,16 +342,16 @@
 {% endif %}
 
 <!-- Create Project Modal -->
-<div id="create-modal" class="project-modal-overlay" style="display:none;"
-    onclick="if(event.target===this)this.style.display='none'">
+<div id="create-modal" class="project-modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="create-modal-title" onclick="if(event.target===this)closeModal('create-modal')">
     <div class="project-modal-card">
         <div class="project-modal-header">
             <div>
-                <h3 class="project-modal-title">Create Project</h3>
+                <h3 class="project-modal-title" id="create-modal-title">Create Project</h3>
                 <p class="project-modal-subtitle">Choose the local workspace folder for this project.</p>
             </div>
-            <button class="btn-icon"
-                onclick="document.getElementById('create-modal').style.display='none'">&times;</button>
+            <button class="btn-icon" aria-label="Close create project dialog"
+                onclick="closeModal('create-modal')">&times;</button>
         </div>
         <form action="/ui/projects/create" method="POST">
             <div class="project-form">
@@ -379,8 +379,7 @@
                 </div>
             </div>
             <div class="project-modal-actions">
-                <button type="button" class="btn"
-                    onclick="document.getElementById('create-modal').style.display='none'">Cancel</button>
+                <button type="button" class="btn" onclick="closeModal('create-modal')">Cancel</button>
                 <button type="submit" class="btn btn-primary">Create Project</button>
             </div>
         </form>
@@ -388,15 +387,15 @@
 </div>
 
 <!-- Folder Picker Modal -->
-<div id="folder-picker-modal" class="project-modal-overlay" style="display:none;"
-    onclick="if(event.target===this)closeFolderPicker()">
+<div id="folder-picker-modal" class="project-modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="projects-folder-modal-title" onclick="if(event.target===this)closeFolderPicker()">
     <div class="project-modal-card folder-modal">
         <div class="project-modal-header">
             <div>
-                <h3 class="project-modal-title">Select Folder</h3>
+                <h3 class="project-modal-title" id="projects-folder-modal-title">Select Folder</h3>
                 <p class="project-modal-subtitle">Browse local directories and choose the project workspace.</p>
             </div>
-            <button class="btn-icon" onclick="closeFolderPicker()">&times;</button>
+            <button class="btn-icon" aria-label="Close folder picker" onclick="closeFolderPicker()">&times;</button>
         </div>
         <div class="folder-picker-body">
             <div class="folder-toolbar">
@@ -416,7 +415,7 @@
 </div>
 
 <!-- Toast -->
-<div id="toast" class="toast" style="display:none;"></div>
+<div id="toast" class="toast" style="display:none;" role="status" aria-live="polite" aria-atomic="true"></div>
 {% endblock %}
 
 {% block extra_js %}
@@ -454,12 +453,11 @@
         };
         if (!data.name) { showToast('Project name is required', 'error'); return; }
 
-        fetch('/ui/projects/create', {
+        apiFetch('/ui/projects/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
             body: JSON.stringify(data)
-        })
-        .then(function (r) { if (!r.ok) throw new Error('Failed to create project'); return r.json(); })
+        }, 'Failed to create project')
         .then(function (project) {
             window.location.href = '/ui/projects/' + project.id + '/board';
         })
@@ -467,12 +465,12 @@
     }
 
     function closeFolderPicker() {
-        document.getElementById('folder-picker-modal').style.display = 'none';
+        closeModal('folder-picker-modal');
     }
 
     function openFolderPicker(targetInputId) {
         folderPickerTarget = document.getElementById(targetInputId);
-        document.getElementById('folder-picker-modal').style.display = 'flex';
+        openModal('folder-picker-modal');
         loadFolder(folderPickerTarget.value || '');
     }
 
@@ -483,8 +481,7 @@
     function loadFolder(path) {
         var url = '/ui/api/folders' + (path ? '?path=' + encodeURIComponent(path) : '');
         document.getElementById('folder-picker-list').innerHTML = '<p class="folder-empty">Loading...</p>';
-        fetch(url)
-            .then(function (r) { if (!r.ok) throw new Error('Failed to load folders'); return r.json(); })
+        apiFetch(url, {}, 'Failed to load folders')
             .then(function (data) {
                 folderPickerCurrent = data.path;
                 folderPickerParent = data.parent;
@@ -526,8 +523,11 @@
             showToast('Authentication required', 'error');
             return;
         }
-        fetch('/ui/projects/' + projectId, { method: 'DELETE', headers: { 'x-entity-id': CURRENT_ENTITY_ID } })
-            .then(function (r) { if (!r.ok) throw new Error('Failed'); })
+        apiFetch(
+            '/ui/projects/' + projectId,
+            { method: 'DELETE', headers: { 'x-entity-id': CURRENT_ENTITY_ID } },
+            'Failed to delete project'
+        )
             .then(function () {
                 var card = document.getElementById('project-card-' + projectId);
                 if (card) card.remove();
