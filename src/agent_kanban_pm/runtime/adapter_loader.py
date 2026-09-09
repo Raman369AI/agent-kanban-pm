@@ -173,7 +173,9 @@ def load_adapter(path: Path) -> Optional[AdapterSpec]:
             data = yaml.safe_load(f)
         return AdapterSpec(**data)
     except Exception as e:
-        logger.error(f"Failed to load adapter {path.name}: {e}")
+        # path may arrive as a str, and .name on one raises inside the
+        # handler, replacing the real load failure with an AttributeError.
+        logger.error(f"Failed to load adapter {getattr(path, 'name', path)}: {e}")
         return None
 
 
