@@ -310,7 +310,9 @@ def test_build_agent_command_supervised_omits_bypass_flags():
     spec = load_adapter(ADAPTER_DIR / "claude.yaml")
     cmd = _build_agent_command(spec, "/tmp/wt", "do it", autonomy="supervised")
     assert "--permission-mode" not in cmd
-    assert "--print" in cmd
+    # Supervised runs must stay interactive so the approval prompt is visible.
+    assert "--print" not in cmd
+    assert cmd[1] == "do it"
     assert "/tmp/wt" in cmd
 
 
@@ -319,7 +321,7 @@ def test_build_agent_command_auto_appends_bypass_flags():
     cmd = _build_agent_command(spec, "/tmp/wt", "do it", autonomy="auto")
     assert "--permission-mode" in cmd
     assert cmd[cmd.index("--permission-mode") + 1] == "bypassPermissions"
-    assert "--print" in cmd
+    assert "--print" not in cmd
     assert "/tmp/wt" in cmd
 
 

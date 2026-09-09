@@ -301,21 +301,22 @@ def test_no_bundled_adapter_leaves_a_bare_print_before_another_flag():
                 )
 
 
-def test_claude_terminates_its_variadic_add_dir_before_the_prompt():
-    """`--add-dir <directories...>` consumes arguments until the next flag.
+def test_claude_leads_with_the_prompt_and_runs_interactively():
+    """Two constraints meet here, both verified against the real CLI.
 
-    With ["--print", "--add-dir", "{workspace}", "{prompt}"] the prompt was
-    taken as a second directory and claude ran with no instruction at all.
+    Supervised mode needs claude to render its approval prompt in the pane,
+    so --print is out. Without it, the variadic --add-dir <directories...>
+    would consume a trailing prompt as a second directory — claude then fails
+    with "Input must be provided either through stdin or as a prompt
+    argument". Leading with the prompt satisfies both.
     """
     args = _adapter("claude").task_command.args
 
-    add_dir = args.index("--add-dir")
-    prompt = args.index("{prompt}")
-    between = args[add_dir + 1:prompt]
-    assert any(a.startswith("-") for a in between), (
-        "a flag must terminate --add-dir before the positional prompt"
+    assert not any(a == "--print" or a == "-p" for a in args), (
+        "headless print mode cannot surface an approval prompt"
     )
-    assert args[-1] == "{prompt}"
+    assert args[0] == "{prompt}", "the prompt must precede the variadic --add-dir"
+    assert args.index("{workspace}") > args.index("--add-dir")
 
 
 def test_codex_auto_args_use_a_flag_codex_still_accepts():

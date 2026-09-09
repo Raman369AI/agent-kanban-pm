@@ -1,6 +1,6 @@
 name: claude
 display_name: "Claude (Anthropic)"
-version: "1.2"
+version: "1.3"
 
 invoke:
   command: claude
@@ -36,11 +36,16 @@ role_command:
   auto_args: ["--permission-mode", "bypassPermissions"]
 
 task_command:
-  # --add-dir is variadic (<directories...>), so it keeps consuming arguments
-  # until the next flag: with ["--print", "--add-dir", "{workspace}",
-  # "{prompt}"] it swallowed the prompt as a second directory and claude ran
-  # with no instruction. --print terminates it, and the prompt stays positional.
-  args: ["--add-dir", "{workspace}", "--print", "{prompt}"]
+  # No --print: supervised runs need the CLI to render its approval prompt in
+  # the tmux pane so session_streamer can capture it: headless mode prompts
+  # for nothing and every permission-requiring tool is auto-denied.
+  #
+  # The prompt therefore leads. --add-dir is variadic (<directories...>) and
+  # consumes arguments until the next flag, so with it ahead of the prompt the
+  # prompt is taken as a second directory and claude reports "Input must be
+  # provided either through stdin or as a prompt argument". Trailing it keeps
+  # the binding unambiguous, and auto_args append after it as their own flag.
+  args: ["{prompt}", "--add-dir", "{workspace}"]
   auto_args: ["--permission-mode", "bypassPermissions"]
 
 # Handoff profile (P1-2)
