@@ -6,19 +6,20 @@ from typing import List, Optional
 import logging
 
 from agent_kanban_pm.db import get_db
-from agent_kanban_pm.models import Task, Project, Comment, Entity, TaskStatus, TaskLog
+from agent_kanban_pm.models import (
+    Task, Project, Stage, Comment, Entity, TaskStatus, TaskLog
+)
 from agent_kanban_pm.schemas import (
     TaskCreate, TaskUpdate, TaskResponse, TaskDetailResponse,
     CommentCreate, CommentResponse, TaskLogResponse
 )
 from agent_kanban_pm.auth import (
-    get_current_entity, require_worker, require_manager,
+    get_current_entity,
     is_owner_or_manager, require_project_approval_for_mutation, require_task_access
 )
 from agent_kanban_pm.events import event_bus, EventType
 from agent_kanban_pm.runtime.task_transitions import (
     apply_task_transition_fields,
-    check_predecessor as _check_predecessor,
     validate_task_transition,
 )
 
@@ -45,6 +46,38 @@ async def create_task(
 
     # Enforce approval gate: only MANAGER+ can create tasks in non-approved projects
     await require_project_approval_for_mutation(project, current_entity)
+
+    if task.stage_id is not None:
+        stage_result = await db.execute(
+            select(Stage).filter(
+                Stage.id == task.stage_id,
+                Stage.project_id == task.project_id,
+            )
+        )
+        if stage_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Stage {task.stage_id} does not exist in project "
+                    f"{task.project_id}"
+                ),
+            )
+
+    if task.parent_task_id is not None:
+        parent_result = await db.execute(
+            select(Task).filter(
+                Task.id == task.parent_task_id,
+                Task.project_id == task.project_id,
+            )
+        )
+        if parent_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Parent task {task.parent_task_id} does not exist in "
+                    f"project {task.project_id}"
+                ),
+            )
 
     task_data = task.model_dump()
     db_task = Task(**task_data)
@@ -123,7 +156,7 @@ async def get_task(
         .options(
             selectinload(Task.assignees),
             selectinload(Task.subtasks),
-            selectinload(Task.comments),
+            selectinload(Task.comments).selectinload(Comment.author),
             selectinload(Task.logs)
         )
     )
@@ -499,28 +532,45 @@ async def create_comment(
     current_entity: Optional[Entity] = Depends(get_current_entity)
 ):
     """Add a comment to a task"""
-    result = await db.execute(select(Task).filter(Task.id == comment.task_id))
-    if not result.scalar_one_or_none():
+    if not current_entity:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    result = await db.execute(
+        select(Task)
+        .filter(Task.id == comment.task_id)
+        .options(selectinload(Task.assignees))
+    )
+    task = result.scalar_one_or_none()
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    await require_task_access(task, current_entity, db, require_write=True)
+
+    project_result = await db.execute(
+        select(Project).filter(Project.id == task.project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    if project:
+        await require_project_approval_for_mutation(project, current_entity)
 
     db_comment = Comment(
         content=comment.content,
         task_id=comment.task_id,
-        author_id=_actor_id(current_entity)
+        author_id=current_entity.id
     )
     db.add(db_comment)
     await db.commit()
-    await db.refresh(db_comment)
+    await db.refresh(db_comment, ["author"])
 
-    task_res = await db.execute(select(Task).filter(Task.id == db_comment.task_id))
-    task = task_res.scalar_one_or_none()
-    if task:
-        await event_bus.publish(
-            EventType.TASK_COMMENTED.value,
-            {"task_id": task.id, "comment": db_comment.content},
-            project_id=task.project_id,
-            entity_id=_actor_id(current_entity)
-        )
+    await event_bus.publish(
+        EventType.TASK_COMMENTED.value,
+        {"task_id": task.id, "comment": db_comment.content},
+        project_id=task.project_id,
+        entity_id=current_entity.id
+    )
 
     return db_comment
 
@@ -534,6 +584,7 @@ async def get_task_comments(
     result = await db.execute(
         select(Comment)
         .filter(Comment.task_id == task_id)
+        .options(selectinload(Comment.author))
         .order_by(Comment.created_at.asc())
     )
     comments = result.scalars().all()

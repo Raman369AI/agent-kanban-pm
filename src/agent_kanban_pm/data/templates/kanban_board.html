@@ -42,7 +42,7 @@
       <summary>Advanced</summary>
       <div class="board-advanced-actions">
         {% if project.path %}
-        <button class="btn btn-secondary btn-sm" onclick="openWorkspace('{{ project.path }}')" title="Open workspace folder">Open folder</button>
+        <button class="btn btn-secondary btn-sm" data-path="{{ project.path|e }}" onclick="openWorkspace(this.dataset.path)" title="Open workspace folder">Open folder</button>
         {% endif %}
         <button class="btn btn-secondary btn-sm" onclick="openTeamModal()">Team roles</button>
         <button class="btn btn-secondary btn-sm stage-policy-btn" onclick="openStagePolicyModal()">Stage policy</button>
@@ -173,7 +173,7 @@
         {% set normalized_stage_name = stage.name|lower|replace('-', ' ')|replace('_', ' ')|trim %}
         {% if normalized_stage_name in ['backlog', 'to do'] %}
         <div class="kanban-column-footer-revamp">
-          <button class="btn-add-task" onclick="openAddTaskModal({{ stage.id }}, '{{ stage.name }}')">
+          <button class="btn-add-task" data-stage-name="{{ stage.name|e }}" onclick="openAddTaskModal({{ stage.id }}, this.dataset.stageName)">
             <span>+</span> Add Task
           </button>
         </div>
@@ -1644,10 +1644,10 @@
                 var list = document.getElementById('folder-picker-list');
                 if (!data.folders.length) { list.innerHTML = '<p class="text-secondary">No folders found here.</p>'; return; }
                 list.innerHTML = data.folders.map(function(folder) {
-                    return '<button type="button" class="entity-item" style="width:100%;text-align:left;border:0;background:transparent;cursor:pointer;" onclick="loadFolder(' + JSON.stringify(folder.path).replace(/"/g, '&quot;') + ')"><strong>' + folder.name + '</strong><div class="text-secondary"><small>' + folder.path + '</small></div></button>';
+                    return '<button type="button" class="entity-item" style="width:100%;text-align:left;border:0;background:transparent;cursor:pointer;" onclick="loadFolder(' + escapeHtml(JSON.stringify(folder.path)) + ')"><strong>' + escapeHtml(folder.name) + '</strong><div class="text-secondary"><small>' + escapeHtml(folder.path) + '</small></div></button>';
                 }).join('');
             })
-            .catch(function(err) { document.getElementById('folder-picker-list').innerHTML = '<p class="text-danger">' + err.message + '</p>'; });
+            .catch(function(err) { document.getElementById('folder-picker-list').innerHTML = '<p class="text-danger">' + escapeHtml(err.message) + '</p>'; });
     }
     function selectCurrentFolder() { if (folderPickerTarget) folderPickerTarget.value = folderPickerCurrent; closeFolderPicker(); }
     function escapeHtml(value) {
@@ -1773,25 +1773,28 @@
         document.getElementById('task-form-stage-id').value = taskEl.dataset.currentStage;
         var title = taskEl.querySelector('.task-title-revamp');
         document.getElementById('task-form-title').value = title ? title.textContent.trim() : '';
-        var desc = taskEl.querySelector('.task-description-revamp');
-        document.getElementById('task-form-desc').value = desc ? desc.textContent.trim().replace(/\.\.\.$/, '') : '';
-        var statusBadge = taskEl.querySelector('[id^="status-task-"]');
-        document.getElementById('task-form-status').value = statusBadge ? statusBadge.textContent.trim() : 'pending';
+        document.getElementById('task-form-status').value = 'pending';
         document.getElementById('task-form-priority').value = '0';
         document.getElementById('task-form-skills').value = '';
         var commentsList = document.getElementById('task-comments-list');
         commentsList.innerHTML = '<p class="text-secondary">Loading activity...</p>';
         document.getElementById('task-comments-section').style.display = 'block';
-        fetch('/tasks/' + taskId).then(function(r) { return r.json(); }).then(function(data) {
+        fetch('/tasks/' + taskId).then(function(r) {
+            if (!r.ok) throw new Error('Failed to load task details');
+            return r.json();
+        }).then(function(data) {
+            document.getElementById('task-form-title').value = data.title || '';
+            document.getElementById('task-form-desc').value = data.description || '';
+            document.getElementById('task-form-status').value = data.status || 'pending';
             if (data.priority !== undefined) document.getElementById('task-form-priority').value = data.priority;
-            if (data.required_skills) document.getElementById('task-form-skills').value = data.required_skills;
+            document.getElementById('task-form-skills').value = data.required_skills || '';
             var html = '';
             if (data.comments && data.comments.length > 0) {
                 data.comments.forEach(function(c) {
                     var author = c.author ? c.author.name : 'Unknown';
                     var date = new Date(c.created_at).toLocaleString();
                     var icon = c.author && c.author.entity_type === 'agent' ? '\u{1F916}' : '\u{1F464}';
-                    html += '<div style="margin-bottom: 0.5rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px;"><div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; justify-content: space-between;"><span>' + icon + ' <strong>' + author + '</strong></span><span>' + date + '</span></div><div style="margin-top: 0.25rem;">' + c.content + '</div></div>';
+                    html += '<div style="margin-bottom: 0.5rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 4px;"><div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; justify-content: space-between;"><span>' + icon + ' <strong>' + escapeHtml(author) + '</strong></span><span>' + escapeHtml(date) + '</span></div><div style="margin-top: 0.25rem;">' + escapeHtml(c.content) + '</div></div>';
                 });
             } else { html = '<p class="text-secondary">No comments yet.</p>'; }
             commentsList.innerHTML = html;

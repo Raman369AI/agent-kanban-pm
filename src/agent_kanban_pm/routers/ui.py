@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
-from typing import List, Optional
+from typing import Optional
 from datetime import UTC, datetime
 from pathlib import Path
 import asyncio
+from pydantic import ValidationError
 import logging
 import re
 
@@ -16,11 +17,12 @@ from agent_kanban_pm.models import (
     Project, Task, Entity, Stage, Comment, EntityType, TaskStatus, ApprovalStatus,
     TaskLog, ProjectWorkspace, Role, OrchestrationDecision, DecisionType
 )
-from agent_kanban_pm.schemas import ProjectResponse, ChatPlanRequest
+from agent_kanban_pm.schemas import ProjectResponse, ChatPlanRequest, TaskCreate, TaskUpdate
 from agent_kanban_pm.auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
 from agent_kanban_pm.events import event_bus, EventType
 from agent_kanban_pm.runtime.task_transitions import (
     apply_task_transition_fields,
+    coerce_task_status,
     validate_task_transition,
 )
 from agent_kanban_pm.runtime.default_stages import DEFAULT_STAGES
@@ -36,6 +38,7 @@ templates = Jinja2Templates(directory=str(templates_dir()))
 # Every page embeds the per-instance CSRF token as a meta tag; the fetch
 # wrapper in base.html forwards it as X-CSRF-Token on mutations. Derived from
 # the auth token, so no per-session storage is needed.
+templates.env.globals["current_year"] = lambda: datetime.now(UTC).year
 templates.env.globals["kanban_csrf_token"] = get_csrf_token
 
 router = APIRouter(include_in_schema=False)
@@ -158,7 +161,7 @@ async def _notify_stage_policy_for_todo(
         return None
 
     try:
-        from agent_kanban_pm.runtime.stage_policy import get_stage_policy_for_stage, policy_roles, normalize_stage_key
+        from agent_kanban_pm.runtime.stage_policy import get_stage_policy_for_stage, policy_roles
     except ImportError:
         return None
 
@@ -397,7 +400,9 @@ async def ui_move_task(
 
     body = await request.json()
     new_stage_id = body.get("stage_id")
-    new_status = body.get("status", "pending")
+    if new_stage_id is None:
+        raise HTTPException(status_code=422, detail="stage_id is required")
+    new_status = body.get("status")
     move_summary = (body.get("summary") or "").strip() or "Manual move"
 
     result = await db.execute(
@@ -410,7 +415,23 @@ async def ui_move_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    try:
+        new_status = coerce_task_status(new_status) or task.status
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid task status: {exc}")
+
     await require_task_access(task, current_entity, db, require_write=True)
+    stage_result = await db.execute(
+        select(Stage).filter(
+            Stage.id == new_stage_id,
+            Stage.project_id == task.project_id,
+        )
+    )
+    if stage_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Stage {new_stage_id} does not exist in project {task.project_id}",
+        )
 
     transition_warning = await validate_task_transition(
         db,
@@ -753,21 +774,48 @@ async def ui_create_task(
 
     body = await request.json()
 
-    result = await db.execute(select(Project).filter(Project.id == body["project_id"]))
+    try:
+        task_data = TaskCreate.model_validate(body)
+        task_status = coerce_task_status(
+            body.get("status", TaskStatus.PENDING)
+        )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid task: {exc}")
+
+    result = await db.execute(
+        select(Project).filter(Project.id == task_data.project_id)
+    )
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     await require_project_approval_for_mutation(project, current_entity)
 
+    if task_data.stage_id is None:
+        raise HTTPException(status_code=422, detail="stage_id is required")
+    stage_result = await db.execute(
+        select(Stage).filter(
+            Stage.id == task_data.stage_id,
+            Stage.project_id == project.id,
+        )
+    )
+    if stage_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Stage {task_data.stage_id} does not exist in project "
+                f"{project.id}"
+            ),
+        )
+
     task = Task(
-        title=body["title"],
-        description=body.get("description", ""),
-        project_id=body["project_id"],
-        stage_id=body["stage_id"],
-        priority=body.get("priority", 0),
-        required_skills=body.get("required_skills", ""),
-        status=body.get("status", "pending"),
+        title=task_data.title,
+        description=task_data.description or "",
+        project_id=task_data.project_id,
+        stage_id=task_data.stage_id,
+        priority=task_data.priority,
+        required_skills=task_data.required_skills or "",
+        status=task_status,
         created_by=current_entity.id
     )
     db.add(task)
@@ -978,6 +1026,11 @@ async def ui_edit_task(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
     body = await request.json()
+    try:
+        task_update = TaskUpdate.model_validate(body)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid task update: {exc}")
+    update_data = task_update.model_dump(exclude_unset=True)
 
     result = await db.execute(
         select(Task).filter(Task.id == task_id).options(selectinload(Task.assignees))
@@ -988,7 +1041,7 @@ async def ui_edit_task(
 
     await require_task_access(task, current_entity, db, require_write=True)
 
-    new_status = body.get("status")
+    new_status = task_update.status
     transition_warning = await validate_task_transition(
         db,
         task,
@@ -1000,13 +1053,13 @@ async def ui_edit_task(
         raise HTTPException(status_code=409, detail=transition_warning)
 
     for field in ["title", "description", "priority", "required_skills"]:
-        if field in body:
-            setattr(task, field, body[field])
+        if field in update_data:
+            setattr(task, field, update_data[field])
 
     await apply_task_transition_fields(
         db,
         task,
-        status=new_status if "status" in body else None,
+        status=new_status if "status" in update_data else None,
     )
     task.version += 1
     await db.commit()

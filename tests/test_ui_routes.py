@@ -75,7 +75,7 @@ def test_ui_routes_and_board_render():
         stage_names = re.findall(r'data-stage-name="([^"]+)"', body)
         add_task_stages = {
             name.lower().replace(" ", "").replace("-", "").replace("_", "")
-            for _, name in re.findall(r"openAddTaskModal\((\d+),\s*'([^']+)'\)", body)
+            for name in re.findall(r'class="btn-add-task" data-stage-name="([^"]+)"', body)
         }
         assert "backlog" in add_task_stages
         assert "todo" in add_task_stages

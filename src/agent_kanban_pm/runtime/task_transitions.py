@@ -61,6 +61,20 @@ async def validate_task_transition(
 ) -> Optional[str]:
     """Return a transition warning/error string, or None when allowed."""
     status = coerce_task_status(new_status)
+
+    if new_stage_id is not None and new_stage_id != task.stage_id:
+        stage_result = await db.execute(
+            select(Stage).filter(
+                Stage.id == new_stage_id,
+                Stage.project_id == task.project_id,
+            )
+        )
+        if stage_result.scalar_one_or_none() is None:
+            return (
+                f"Stage {new_stage_id} does not exist in project "
+                f"{task.project_id}"
+            )
+
     if status == TaskStatus.IN_PROGRESS and task.status != TaskStatus.IN_PROGRESS:
         predecessor_error = await check_predecessor(task, db)
         if predecessor_error:
@@ -108,9 +122,19 @@ async def apply_task_transition_fields(
     completed_now = False
 
     if stage_id is not None:
+        stage_result = await db.execute(
+            select(Stage).filter(
+                Stage.id == stage_id,
+                Stage.project_id == task.project_id,
+            )
+        )
+        stage = stage_result.scalar_one_or_none()
+        if stage is None:
+            raise ValueError(
+                f"Stage {stage_id} does not exist in project {task.project_id}"
+            )
         task.stage_id = stage_id
-        stage_result = await db.execute(select(Stage).filter(Stage.id == stage_id))
-        task.stage = stage_result.scalar_one_or_none()
+        task.stage = stage
 
     coerced_status = coerce_task_status(status)
     if coerced_status is not None:
@@ -119,6 +143,10 @@ async def apply_task_transition_fields(
     if task.status == TaskStatus.COMPLETED and task.completed_at is None:
         task.completed_at = datetime.now(UTC)
         completed_now = old_status != TaskStatus.COMPLETED
+    elif coerced_status is not None and task.status != TaskStatus.COMPLETED:
+        # Reopened work is no longer complete. Clear the old timestamp so
+        # reporting agrees with the visible task state.
+        task.completed_at = None
 
     task.updated_at = datetime.now(UTC)
     return TaskTransitionState(

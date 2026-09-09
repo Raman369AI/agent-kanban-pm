@@ -39,6 +39,7 @@
     {% block extra_css %}{% endblock %}
 </head>
 
+<body>
 <!-- Layout Wrapper -->
 <div class="layout-wrapper">
     <!-- Sidebar Navigation -->
@@ -131,7 +132,7 @@
 
         <footer class="footer">
             <div class="container-fluid">
-                <p>&copy; 2025 Agent PM &middot; Hybrid Agentic Project Management</p>
+                <p>&copy; {{ current_year() }} Agent PM &middot; Hybrid Agentic Project Management</p>
             </div>
         </footer>
     </div>

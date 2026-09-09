@@ -32,7 +32,7 @@ class EntityResponse(EntityBase):
 
 # Project Schemas
 class ProjectBase(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = None
     path: Optional[str] = None
 
@@ -42,7 +42,7 @@ class ProjectCreate(ProjectBase):
 
 
 class ProjectUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     description: Optional[str] = None
     path: Optional[str] = None
     approval_status: Optional[ApprovalStatus] = None
@@ -62,7 +62,7 @@ class ProjectResponse(ProjectBase):
 
 # Stage Schemas
 class StageBase(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = None
     order: int
 
@@ -87,7 +87,7 @@ class StageResponse(StageBase):
 
 # Task Schemas
 class TaskBase(BaseModel):
-    title: str
+    title: str = Field(min_length=1, max_length=255)
     description: Optional[str] = None
     required_skills: Optional[str] = None
     priority: int = 0
@@ -101,7 +101,7 @@ class TaskCreate(TaskBase):
 
 
 class TaskUpdate(BaseModel):
-    title: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
     description: Optional[str] = None
     status: Optional[TaskStatus] = None
     stage_id: Optional[int] = None
@@ -135,7 +135,7 @@ class TaskResponse(TaskBase):
 
 # Comment Schemas
 class CommentBase(BaseModel):
-    content: str
+    content: str = Field(min_length=1)
 
 
 class CommentCreate(CommentBase):
@@ -146,6 +146,7 @@ class CommentResponse(CommentBase):
     id: int
     task_id: int
     author_id: int
+    author: Optional[EntityResponse] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

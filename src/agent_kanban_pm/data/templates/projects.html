@@ -323,7 +323,7 @@
             <span style="margin-right: 0.4rem;">&#128260;</span> Git
         </a>
         {% if project.path %}
-        <button class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.25rem; font-size: 0.85rem;" onclick="openProjectFolder('{{ project.path|replace("'", "\\'") }}')">
+        <button class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.25rem; font-size: 0.85rem;" data-path="{{ project.path|e }}" onclick="openProjectFolder(this.dataset.path)">
             <span style="margin-right: 0.4rem;">📂</span> Open Folder
         </button>
         {% endif %}
@@ -427,6 +427,11 @@
     var folderPickerParent = null;
     var folderPickerHome = '';
 
+    function escapeHtml(value) {
+        var div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+    }
     function showToast(message, type) {
         var toast = document.getElementById('toast');
         toast.textContent = message;
@@ -491,16 +496,16 @@
                     return;
                 }
                 list.innerHTML = data.folders.map(function (folder) {
-                    return '<button type="button" class="folder-row" onclick="loadFolder(' + JSON.stringify(folder.path).replace(/"/g, '&quot;') + ')">'
+                    return '<button type="button" class="folder-row" onclick="loadFolder(' + escapeHtml(JSON.stringify(folder.path)) + ')">'
                         + '<span class="folder-icon">/</span>'
-                        + '<span><span class="folder-name">' + folder.name + '</span>'
-                        + '<span class="folder-path">' + folder.path + '</span></span>'
+                        + '<span><span class="folder-name">' + escapeHtml(folder.name) + '</span>'
+                        + '<span class="folder-path">' + escapeHtml(folder.path) + '</span></span>'
                         + '<span class="folder-open">›</span>'
                         + '</button>';
                 }).join('');
             })
             .catch(function (err) {
-                document.getElementById('folder-picker-list').innerHTML = '<p class="folder-empty">' + err.message + '</p>';
+                document.getElementById('folder-picker-list').innerHTML = '<p class="folder-empty">' + escapeHtml(err.message) + '</p>';
             });
     }
 

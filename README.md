@@ -2,7 +2,7 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
-Status: release candidate (`0.4.0rc1`) for local, single-user development.
+Status: release candidate (`0.4.0rc2`) for local, single-user development.
 The local runtime, board UI, per-task agent sessions, and MCP surface work and
 are covered by tests, including a database upgrade path. It is a single-operator
 tool by design: one shared token guards the local server, so do not expose it to

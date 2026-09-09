@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0rc2] — 2026-09-08
+
+Data-integrity and authorization fixes on top of `0.4.0rc1`.
+
+### Fixed
+- **Tasks can no longer reference stages or parents from another project** — `POST /tasks`, the task-update path and the `/ui` move endpoint now verify that a supplied `stage_id` or `parent_task_id` belongs to the task's own project, returning 422 instead of silently writing a cross-project reference.
+- **`completed_at` is cleared when work is reopened** — moving a task out of `COMPLETED` left the old completion timestamp in place, so reporting disagreed with the visible task state.
+- **`/ui` move requires an explicit `stage_id`** and validates the supplied status, rather than defaulting a missing status to `pending`.
+- **Comment authors are eager-loaded** on task detail and comment listing, and `CommentResponse` now exposes `author`.
+
+### Security
+- **`POST /comments` enforces authentication, task access and the project approval gate** — it previously accepted a comment from an unauthenticated caller and attributed it to a null actor.
+
+### Changed
+- **String fields are length-validated** — project/stage names and task titles are bounded to 1–255 characters and comment content must be non-empty, instead of accepting empty or unbounded strings.
+
 ## [0.4.0rc1] — 2026-09-05
 
 Release candidate for local, single-user development.
