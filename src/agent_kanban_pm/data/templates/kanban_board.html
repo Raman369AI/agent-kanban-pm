@@ -1603,12 +1603,23 @@
         }
     }
     // --- Utilities ---
-    function showToast(message, type) {
+    var toastTimer = null;
+    var toastHoldUntil = 0;
+    // Toasts share one element. A toast raised by the user's own action is the
+    // only confirmation that their click did anything, so it holds the slot
+    // briefly against the WebSocket echo of that same change, which otherwise
+    // overwrites it within milliseconds. Pass background:true for broadcasts.
+    function showToast(message, type, options) {
+        var opts = options || {};
+        var now = Date.now();
+        if (opts.background && now < toastHoldUntil) return;
         var toast = document.getElementById('toast');
         toast.textContent = message;
         toast.className = 'toast toast-' + (type || 'info');
         toast.style.display = 'block';
-        setTimeout(function() { toast.style.display = 'none'; }, 3000);
+        if (!opts.background) { toastHoldUntil = now + 1500; }
+        if (toastTimer) { clearTimeout(toastTimer); }
+        toastTimer = setTimeout(function() { toast.style.display = 'none'; }, 3000);
     }
     function timeAgo(dateStr) {
         var then = new Date(dateStr), now = new Date(), seconds = Math.floor((now - then) / 1000);
@@ -2144,14 +2155,14 @@
             if (msg.event_type === 'task_updated' || msg.event_type === 'task_moved') {
                 var data = msg.data;
                 var statusLabel = data.status ? data.status.replace('_', ' ') : 'Updated';
-                showToast('Task #' + data.task_id + ': ' + statusLabel, 'info');
+                showToast('Task #' + data.task_id + ': ' + statusLabel, 'info', {background: true});
                 var badge = document.getElementById('status-task-' + data.task_id);
                 if (badge && data.status) { badge.className = 'badge badge-' + data.status; badge.textContent = statusLabel; }
                 if (msg.event_type === 'task_moved' || data.status === 'completed') { setTimeout(refreshBoardFromServer, 500); }
             } else if (msg.event_type === 'task_commented') {
-                showToast('\u{1F4AC} Task #' + msg.data.task_id + ': ' + msg.data.comment.substring(0, 30) + '...', 'info');
+                showToast('\u{1F4AC} Task #' + msg.data.task_id + ': ' + msg.data.comment.substring(0, 30) + '...', 'info', {background: true});
             } else if (msg.event_type === 'task_assigned') {
-                showToast('\u{1F464} Task #' + msg.data.task_id + ' assigned', 'info');
+                showToast('\u{1F464} Task #' + msg.data.task_id + ' assigned', 'info', {background: true});
                 setTimeout(refreshBoardFromServer, 500);
             } else if (msg.event_type === 'agent_status_updated') {
                 var data = msg.data;
