@@ -20,7 +20,19 @@ jobs:
     - name: Install latest published version
       run: |
         python -m pip install --upgrade pip
-        python -m pip install --pre --upgrade agent-kanban-pm
+        # --pre is not scoped to the named package: it lets pip take
+        # development releases of every dependency too, and once resolved
+        # httpx to 1.0.dev6, whose API no longer exposes AsyncClient. Resolve
+        # our own pre-release explicitly, then install that exact pin so the
+        # dependencies still come from stable releases.
+        version="$(python -m pip index versions --pre agent-kanban-pm \
+          | sed -n 's/^agent-kanban-pm (\(.*\))$/\1/p')"
+        if [ -z "$version" ]; then
+          echo "could not determine a published version of agent-kanban-pm" >&2
+          exit 1
+        fi
+        echo "installing agent-kanban-pm==$version"
+        python -m pip install "agent-kanban-pm==$version"
 
     - name: Verify CLI and server boot
       env:
