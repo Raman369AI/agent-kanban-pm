@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **The Gemini CLI adapter** — Google shut Gemini CLI down for consumer accounts on 2026-06-18. The adapter had been kept loadable-but-hidden for Gemini Code Assist Standard/Enterprise licence holders; it is now gone, along with the `GEMINI.md` instruction alias, which existed only for that CLI. Reassign any role still naming it: `kanban roles assign <role> antigravity`.
+
+### Fixed
+- **Persistent role sessions no longer reuse a task invocation** — `build_command_for_role` took the adapter's `task_command` and stripped the prompt out of it. That works when the task args are plain flags, but opencode's are `["run", "--dir", "{workspace}", "{prompt}"]`, which reduces to a bare `opencode run` — and `run` refuses to start without a message. Adapters now declare `role_command` to say how they start as a long-running service; adapters without one keep the previous behaviour.
+- **A flag is dropped together with the task placeholder it introduces** — the same stripping left `claude … --add-dir` with nothing to consume, and the CLI exited with `option '--add-dir <directories...>' argument missing` before the role started. Every claude-backed role was affected.
+- **`codex` no longer launches with a flag it rejects** — the adapter declared `mcp_flag: "--mcp"`, but `mcp` is a codex subcommand, not a launch flag, so codex exited with `unexpected argument '--mcp' found`. MCP servers are registered through `codex mcp` or `~/.codex/config.toml`.
+- **Bundled adapter fixes now reach existing installs** — `copy_bundled_adapters` returned early whenever the user directory held any YAML, so a directory seeded once was frozen forever and no adapter correction shipped afterwards ever arrived. Adapters are now compared by their `version` field, the replaced file is backed up alongside it, and a local copy at an equal or newer version is left alone.
+- **An adapter load failure reports its own cause** — the handler formatted `path.name`, raising `AttributeError` when the caller passed a str and hiding the underlying error.
+
+
 ### Added
 - **Shared task mutation service** — REST, browser UI, and MCP task creation/movement now share project-reference validation and lifecycle bookkeeping through `agent_kanban_pm/services/tasks.py`.
 - **Browser workflow regression suite** — Playwright exercises drag-and-drop, keyboard card movement, task editing, detailed API error toasts, modal focus, and approval resolution in Chromium CI.
