@@ -1,4 +1,104 @@
 // Main UI JavaScript
+// Shared response handling keeps server validation/authorization messages visible.
+window.apiErrorMessage = function(data, fallback) {
+    if (data && typeof data.detail === 'string') return data.detail;
+    if (data && Array.isArray(data.detail)) {
+        return data.detail.map(function(item) {
+            return item.msg || String(item);
+        }).join('; ');
+    }
+    if (data && typeof data.error === 'string') return data.error;
+    if (typeof data === 'string' && data.trim()) return data.trim();
+    return fallback || 'Request failed';
+};
+
+window.apiFetch = async function(input, init, fallback) {
+    var response = await window.fetch(input, init);
+    var text = await response.text();
+    var data = null;
+    if (text) {
+        try {
+            data = JSON.parse(text);
+        } catch (error) {
+            data = text;
+        }
+    }
+    if (!response.ok) {
+        throw new Error(window.apiErrorMessage(data, fallback || response.statusText));
+    }
+    return data;
+};
+
+var modalReturnFocus = {};
+function modalFocusable(modal) {
+    return Array.from(modal.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), ' +
+        'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(function(el) { return el.offsetParent !== null; });
+}
+
+window.openModal = function(id) {
+    var modal = document.getElementById(id);
+    if (!modal) return;
+    if (modal.style.display === 'none' || !modal.style.display) {
+        modalReturnFocus[id] = document.activeElement;
+    }
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    window.setTimeout(function() {
+        var focusable = modalFocusable(modal);
+        var preferred = modal.querySelector('[autofocus]');
+        if (preferred && preferred.offsetParent !== null) preferred.focus();
+        else if (focusable.length) focusable[0].focus();
+        else {
+            modal.setAttribute('tabindex', '-1');
+            modal.focus();
+        }
+    }, 0);
+};
+
+window.closeModal = function(id) {
+    var modal = document.getElementById(id);
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    var returnTo = modalReturnFocus[id];
+    delete modalReturnFocus[id];
+    if (returnTo && document.contains(returnTo) && typeof returnTo.focus === 'function') {
+        returnTo.focus();
+    }
+};
+
+document.addEventListener('keydown', function(event) {
+    var visible = Array.from(document.querySelectorAll('.modal-overlay, .project-modal-overlay'))
+        .filter(function(modal) {
+            return modal.style.display !== 'none' && window.getComputedStyle(modal).display !== 'none';
+        });
+    var modal = visible[visible.length - 1];
+    if (!modal) return;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        window.closeModal(modal.id);
+        return;
+    }
+    if (event.key !== 'Tab') return;
+    var focusable = modalFocusable(modal);
+    if (!focusable.length) {
+        event.preventDefault();
+        modal.focus();
+        return;
+    }
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+});
+
 document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 

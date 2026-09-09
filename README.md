@@ -68,6 +68,17 @@ kanban run --no-supervisor    # server + UI only
 - UI: `http://localhost:8000/ui/projects`
 - API docs: `http://localhost:8000/docs`
 
+## Board controls
+
+Cards can be moved with drag-and-drop or entirely from the keyboard. Press
+`Tab` until a card is focused, then use `Left Arrow` or `Right Arrow` to
+move it to the adjacent stage. Task and approval dialogs keep focus inside the
+dialog, close with `Escape`, and return focus to the control that opened them.
+
+Server validation and authorization details are shown in the UI toast instead
+of being replaced by a generic “Failed” message. A rejected move is rolled back
+to its original column.
+
 ## CLI
 
 ```bash
@@ -237,11 +248,31 @@ standard roles are `orchestrator`, `ui`, `architecture`, `worker`, `test`,
 
 ## Development
 
+Install the regular development tools and run the fast checks:
+
 ```bash
-pytest                       # run tests
-python -m build              # build package
-twine check dist/*           # verify artifacts
+pip install -e ".[dev]"
+flake8 src tests
+pytest
+python -m build
+twine check dist/*
 ```
+
+Browser regressions are an optional extra. They start an isolated local server
+and cover drag-and-drop, keyboard movement, task editing, detailed error toasts,
+dialog focus, and approval resolution in Chromium:
+
+```bash
+pip install -e ".[dev,e2e]"
+python -m playwright install chromium
+pytest tests/e2e
+```
+
+Task creation and lifecycle updates shared by REST, browser UI, and MCP belong
+in `agent_kanban_pm/services/tasks.py`. Routers should retain only transport
+concerns such as authentication, response formatting, commits, and event
+publication. This keeps stage/parent validation and transition rules consistent
+across every interface.
 
 Package data is served from `agent_kanban_pm/data/`; the historical root-level
 `agents/`, `mcp_configs/`, `static/`, and `templates/` folders are not part of
@@ -263,13 +294,15 @@ release. Each phase is releasable on its own.
   `0600`, supervised-by-default autonomy with explicit `auto` opt-in,
   WebSocket token verification.
 - [ ] **Phase 3 — Runtime correctness**: async subprocess work, atomic launch
-  admission, MCP identity freshness, endpoint discovery, and shutdown cleanup
-  are complete; the service-layer and Alembic refactors remain.
-- [ ] **Phase 4 — Product surface & docs**: support matrix and community
-  scaffolding are complete; landing-page visuals and the mkdocs site remain.
-- [ ] **Phase 5 — Release & distribution**: tag publishing and post-publish
-  smoke automation are ready; PyPI/GitHub environment setup, merge, and the
-  first version tag remain maintainer actions.
+  admission, MCP identity freshness, endpoint discovery, shutdown cleanup, and
+  the shared task-mutation service are complete. Project/session/approval
+  services, MCP tool modularization, launcher decomposition, and Alembic remain.
+- [ ] **Phase 4 — Product surface & docs**: support matrix, community
+  scaffolding, and browser workflow coverage are complete. Landing-page
+  visuals, the mkdocs site, coverage reporting, and frontend extraction remain.
+- [ ] **Phase 5 — Release & distribution**: `v0.4.0rc2` is published on PyPI
+  and GitHub. Keep this open until the scheduled published-package smoke is
+  green and the corrected GitHub Release job is validated by the next tag.
 
 ## Security
 

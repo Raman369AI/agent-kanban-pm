@@ -93,7 +93,7 @@ def run_test():
     print(f"   Project created: id={project_id}, status={project['approval_status']}")
 
     status, body = fetch(f"{base}/projects/{project_id}/approve", "POST", {}, {"x-entity-id": str(human_id)})
-    print(f"   ✅ Project approved")
+    print("   ✅ Project approved")
 
     # Step 3: Verify board page has CURRENT_ENTITY_ID
     print("\n3. Verify board template has CURRENT_ENTITY_ID...")
@@ -141,7 +141,7 @@ def run_test():
         }
     )
     if status == 401:
-        print(f"   ✅ Correctly rejected with 401")
+        print("   ✅ Correctly rejected with 401")
     else:
         print(f"   ❌ Expected 401, got {status}: {body}")
         all_ok = False
@@ -180,7 +180,7 @@ def run_test():
         {"name": "Hacker Project", "description": "Should fail"}
     )
     if status == 401:
-        print(f"   ✅ Correctly rejected with 401")
+        print("   ✅ Correctly rejected with 401")
     else:
         print(f"   ❌ Expected 401, got {status}: {body}")
         all_ok = False

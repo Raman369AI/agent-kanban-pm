@@ -111,13 +111,12 @@ implementation record.
    similar sync tmux calls. Wrap all subprocess work in `asyncio.to_thread`
    (or `asyncio.create_subprocess_exec`) and do git setup *before* opening the
    DB transaction, persisting results afterwards.
-2. **Extract a service layer.** REST routers and the 2,000-line
-   `KanbanMCPServer` are two parallel implementations of the same business
-   logic (move task, assign, approve, comment, sessions...). Create
-   `agent_kanban_pm/services/` (tasks, projects, sessions, approvals) used by
-   both routers and MCP handlers. Split `KanbanMCPServer.list_tools()`'s
-   ~500-line inline schema list into per-tool modules. Break
-   `launch_for_assignment()` (~270 lines) into: resolve → gate → prepare
+2. **Extract a service layer (partially completed).** Task creation and
+   lifecycle mutation now live in `agent_kanban_pm/services/tasks.py` and are
+   shared by REST, UI, and MCP adapters. Cross-project stage/parent validation
+   and transition bookkeeping therefore use one implementation. Still needed:
+   project, session, and approval services; per-tool MCP schema modules; and
+   decomposition of `launch_for_assignment()` into resolve → gate → prepare
    worktree → persist session → spawn.
 3. **Adopt Alembic.** The homegrown `schema_migrations` table in `database.py`
    works but reimplements Alembic poorly and mixes `create_all()` with manual
@@ -141,7 +140,7 @@ implementation record.
    lease for an assignment. Conflicts are handled without spawning a duplicate
    worker.
 
-## Phase 4 — Product surface & docs
+## Phase 4 — Product surface & docs (partially completed)
 
 1. **README as a landing page (partially completed):** the install quickstart
    and support matrix work; a demo GIF/screenshot of the board and a terminal
@@ -151,38 +150,41 @@ implementation record.
 3. **Docs site** (mkdocs-material): concepts (roles, stages, handoff,
    STATUS.md contract), adapter YAML reference, preferences.yaml reference,
    MCP tool reference (generate from tool schemas), troubleshooting.
-4. **Rename test files** from `test_phase1/2/6.py` to behavior-named modules;
-   add coverage reporting to CI.
+4. **Browser workflow coverage (partially completed).** Playwright now covers
+   card drag-and-drop, keyboard movement, task editing, detailed error toasts,
+   dialog focus, and approval resolution in Chromium CI. Still rename
+   `test_phase1/2/6.py` to behavior-named modules and add coverage reporting.
 5. **Frontend debt (optional, later):** `kanban_board.html` is a 2,164-line
    template with inline JS. Short-term: extract the JS into
    `static/js/board.js` modules. Long-term: consider htmx or a small Vite
    bundle — do not block release on this.
 
-## Phase 5 — Release & distribution
+## Phase 5 — Release & distribution (mostly completed)
 
-1. **PyPI publishing (automation complete; account setup pending).** The tag-triggered `release.yml` workflow builds and checks artifacts, publishes through PyPI Trusted Publishing, verifies `pipx` and `uvx`, and creates the GitHub Release. Configure the `pypi` GitHub environment and pending PyPI publisher before pushing the first tag.
-2. **Versioning discipline (automation ready):** the changelog now has a dated
-   `0.4.0rc1` section and the workflow rejects a tag that differs from the
-   package version. A maintainer must push `v0.4.0rc1`; GitHub Release notes
-   and artifacts are then generated automatically.
+1. **PyPI publishing (completed through `0.4.0rc2`).** Trusted Publishing is
+   configured and `v0.4.0rc2` is available from PyPI. The tag workflow builds
+   and checks artifacts, publishes them, and verifies isolated `pipx` and
+   `uvx` installs.
+2. **Versioning discipline (completed through `0.4.0rc2`).** Tags are checked
+   against the package version and both `v0.4.0rc1` and `v0.4.0rc2` exist.
+   The `v0.4.0rc2` GitHub pre-release is available with artifacts.
 3. **Alternative install paths (verified):** `uvx` and `pipx` are exercised
    by the release workflow; an optional Dockerfile (server-only mode, no tmux)
    remains future work.
-4. **Post-release checks (completed):** a scheduled CI job installs from PyPI
-   and boots the server so distribution rot is caught automatically.
+4. **Post-release checks (configured, validation pending):** scheduled CI
+   installs the pre-release from PyPI and boots the server. Its latest run is
+   red and must be rerun successfully. The last tag workflow also failed at the
+   final GitHub Release command because that job lacked git context; `GH_REPO`
+   is now supplied on `main`, and the next tag must validate the correction.
 
 ---
 
 ## Suggested sequencing
 
-| Order | Work | Size |
-|-------|------|------|
-| 1 | Phase 0 (completed: stabilize, CI installs package) | Done |
-| 2 | Phase 1 (src layout, `mcp` dep, data home) | 2–3 days, one big PR |
-| 3 | Phase 5.1 (claim PyPI name, publish first alpha) | hours |
-| 4 | Phase 2 (auth/CSRF/token/permissions defaults) | 2 days |
-| 5 | Phase 3 (async fixes, service layer, Alembic) | 1–2 weeks, incremental |
-| 6 | Phase 4 (docs/community) | parallel, ongoing |
-
-Publishing an alpha immediately after Phase 1 is deliberate: "available" is
-the goal, and early installers will surface packaging bugs faster than CI.
+| Order | Work | Status |
+|-------|------|--------|
+| 1 | Phases 0–2: stabilization, packaging, security | Done |
+| 2 | Phase 5: publish the first release candidates | Done through `0.4.0rc2` |
+| 3 | Phase 3: remaining services, MCP split, launcher split, Alembic | In progress |
+| 4 | Phase 4: landing visuals, docs site, coverage, frontend extraction | In progress |
+| 5 | Phase 5: green scheduled smoke and validate next tagged release | Pending |

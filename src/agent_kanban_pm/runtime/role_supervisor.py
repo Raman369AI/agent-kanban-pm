@@ -481,7 +481,7 @@ class RoleSupervisor:
         return None
 
     def _fetch_approval(self, approval_id: int, entity_id: int) -> Optional[dict]:
-        result = self._api_request("GET", f"/agents/approvals?limit=200", entity_id=entity_id)
+        result = self._api_request("GET", "/agents/approvals?limit=200", entity_id=entity_id)
         if isinstance(result, list):
             for item in result:
                 if item.get("id") == approval_id:

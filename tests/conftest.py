@@ -21,6 +21,12 @@ _TEST_DB_PATH = Path(_TEST_DB_DIR.name) / "kanban.db"
 os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_TEST_DB_PATH}")
 os.environ["KANBAN_TESTING"] = "1"
 
+
+# Playwright installs browsers under the developer/runner cache. Preserve that
+# location before this test suite redirects HOME, otherwise the plugin looks in
+# the throwaway home and reports that an already-installed browser is missing.
+_ORIGINAL_HOME = Path(os.environ.get("HOME", str(Path.home())))
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(_ORIGINAL_HOME / ".cache" / "ms-playwright"))
 # Redirect HOME to a throwaway directory so adapter sync neither reads the
 # developer's real ~/.kanban/preferences.yaml nor pollutes ~/.kanban/agents
 # with copied bundled YAMLs. PREFERENCES_PATH and USER_ADAPTERS_DIR capture

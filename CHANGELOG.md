@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Shared task mutation service** — REST, browser UI, and MCP task creation/movement now share project-reference validation and lifecycle bookkeeping through `agent_kanban_pm/services/tasks.py`.
+- **Browser workflow regression suite** — Playwright exercises drag-and-drop, keyboard card movement, task editing, detailed API error toasts, modal focus, and approval resolution in Chromium CI.
+- **Configured Flake8 baseline** — CI and local development use the checked-in `.flake8` correctness baseline.
+
+### Changed
+- **Keyboard and dialog accessibility** — Board cards move between adjacent stages with Left/Right arrows; dialogs trap focus, close with Escape, expose dialog semantics, and restore focus to their opener.
+- **Detailed browser errors** — UI mutations display validation and authorization details returned by the API instead of generic failure messages.
+
+### Fixed
+- **Approval dropdown click handling** — The header now owns the correct stacking context, preventing board columns from intercepting clicks on visible approval requests.
+
 ## [0.4.0rc2] — 2026-09-08
 
 Data-integrity and authorization fixes on top of `0.4.0rc1`.

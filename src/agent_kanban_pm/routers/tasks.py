@@ -7,7 +7,7 @@ import logging
 
 from agent_kanban_pm.db import get_db
 from agent_kanban_pm.models import (
-    Task, Project, Stage, Comment, Entity, TaskStatus, TaskLog
+    Task, Project, Comment, Entity, TaskStatus, TaskLog
 )
 from agent_kanban_pm.schemas import (
     TaskCreate, TaskUpdate, TaskResponse, TaskDetailResponse,
@@ -18,9 +18,11 @@ from agent_kanban_pm.auth import (
     is_owner_or_manager, require_project_approval_for_mutation, require_task_access
 )
 from agent_kanban_pm.events import event_bus, EventType
-from agent_kanban_pm.runtime.task_transitions import (
-    apply_task_transition_fields,
-    validate_task_transition,
+from agent_kanban_pm.services.tasks import (
+    TaskReferenceError,
+    TaskTransitionError,
+    create_task_record,
+    update_task_record,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,42 +49,14 @@ async def create_task(
     # Enforce approval gate: only MANAGER+ can create tasks in non-approved projects
     await require_project_approval_for_mutation(project, current_entity)
 
-    if task.stage_id is not None:
-        stage_result = await db.execute(
-            select(Stage).filter(
-                Stage.id == task.stage_id,
-                Stage.project_id == task.project_id,
-            )
+    try:
+        db_task = await create_task_record(
+            db,
+            **task.model_dump(),
+            created_by=current_entity.id,
         )
-        if stage_result.scalar_one_or_none() is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"Stage {task.stage_id} does not exist in project "
-                    f"{task.project_id}"
-                ),
-            )
-
-    if task.parent_task_id is not None:
-        parent_result = await db.execute(
-            select(Task).filter(
-                Task.id == task.parent_task_id,
-                Task.project_id == task.project_id,
-            )
-        )
-        if parent_result.scalar_one_or_none() is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"Parent task {task.parent_task_id} does not exist in "
-                    f"project {task.project_id}"
-                ),
-            )
-
-    task_data = task.model_dump()
-    db_task = Task(**task_data)
-    db_task.created_by = current_entity.id
-    db.add(db_task)
+    except TaskReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     await db.commit()
     await db.refresh(db_task, ["assignees"])
 
@@ -203,32 +177,31 @@ async def update_task(
     if project:
         await require_project_approval_for_mutation(project, current_entity)
 
-    transition_warning = await validate_task_transition(
-        db,
-        task,
-        current_entity,
-        new_stage_id=task_update.stage_id,
-        new_status=task_update.status,
-    )
-    if transition_warning:
-        raise HTTPException(status_code=409, detail=transition_warning)
-
     update_data = task_update.model_dump(exclude_unset=True)
-    # Don't allow version/created_by to be set via update
     update_data.pop("version", None)
-    update_data.pop("created_by", None)
 
-    for field, value in update_data.items():
-        if field not in {"stage_id", "status"}:
-            setattr(task, field, value)
-
-    transition_state = await apply_task_transition_fields(
-        db,
-        task,
-        stage_id=task_update.stage_id if "stage_id" in update_data else None,
-        status=task_update.status if "status" in update_data else None,
-    )
-    task.version += 1
+    try:
+        mutation = await update_task_record(
+            db,
+            task,
+            current_entity,
+            changes=update_data,
+            stage_id=(
+                task_update.stage_id
+                if "stage_id" in update_data
+                else None
+            ),
+            status=(
+                task_update.status
+                if "status" in update_data
+                else None
+            ),
+        )
+    except TaskReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except TaskTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    transition_state = mutation.transition
     await db.commit()
     await db.refresh(task)
 

@@ -36,7 +36,12 @@ from agent_kanban_pm.models import (
     AgentApproval, AgentApprovalStatus, ApprovalType
 )
 from agent_kanban_pm.events import event_bus, EventType
-from agent_kanban_pm.runtime.task_transitions import apply_task_transition_fields, validate_task_transition
+from agent_kanban_pm.services.tasks import (
+    TaskReferenceError,
+    TaskTransitionError,
+    create_task_record,
+    update_task_record,
+)
 from agent_kanban_pm.auth import ROLE_LEVELS, get_effective_role, is_owner_or_manager
 from agent_kanban_pm.runtime.default_stages import DEFAULT_STAGES
 
@@ -823,17 +828,20 @@ class KanbanMCPServer:
             stage_id = stages[1].id if len(stages) > 1 else (stages[0].id if stages else None)
 
             creator_id = self.caller_entity.id
-            task = Task(
-                title=args["title"],
-                description=args.get("description", ""),
-                status=TaskStatus.PENDING,
-                project_id=args["project_id"],
-                stage_id=stage_id,
-                required_skills=args.get("required_skills", ""),
-                priority=args.get("priority", 0),
-                created_by=creator_id
-            )
-            db.add(task)
+            try:
+                task = await create_task_record(
+                    db,
+                    title=args["title"],
+                    description=args.get("description", ""),
+                    status=TaskStatus.PENDING,
+                    project_id=args["project_id"],
+                    stage_id=stage_id,
+                    required_skills=args.get("required_skills", ""),
+                    priority=args.get("priority", 0),
+                    created_by=creator_id,
+                )
+            except TaskReferenceError as exc:
+                return {"error": str(exc)}
             await db.commit()
             await db.refresh(task)
 
@@ -980,23 +988,18 @@ class KanbanMCPServer:
             if not task:
                 return {"error": "Task not found"}
 
-            transition_warning = await validate_task_transition(
-                db,
-                task,
-                self.caller_entity,
-                new_stage_id=stage_id,
-                new_status=status,
-            )
-            if transition_warning:
-                return {"error": transition_warning, "transition_blocked": True}
-
-            transition_state = await apply_task_transition_fields(
-                db,
-                task,
-                stage_id=stage_id,
-                status=status,
-            )
-            task.version += 1
+            try:
+                mutation = await update_task_record(
+                    db,
+                    task,
+                    self.caller_entity,
+                    changes={},
+                    stage_id=stage_id,
+                    status=status,
+                )
+            except (TaskReferenceError, TaskTransitionError, ValueError) as exc:
+                return {"error": str(exc), "transition_blocked": True}
+            transition_state = mutation.transition
             await db.commit()
 
             await event_bus.publish(
