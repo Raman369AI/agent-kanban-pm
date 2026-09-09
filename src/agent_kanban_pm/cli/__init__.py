@@ -883,7 +883,7 @@ def main():
     handoff_template.add_argument("--agent", default="codex", help="Agent name for --instructions")
     handoff_template.add_argument("--workspace", default=".", help="Current agent worktree path")
     handoff_template.add_argument("--instructions", action="store_true", help="Print full handoff instructions")
-    handoff_template.add_argument("--ensure-aliases", action="store_true", help="Create CLAUDE.md/GEMINI.md/CODEX.md symlinks to AGENTS.md")
+    handoff_template.add_argument("--ensure-aliases", action="store_true", help="Create CLAUDE.md/CODEX.md symlinks to AGENTS.md")
     handoff_template.set_defaults(func=cmd_handoff_template)
 
     audit_parser = subparsers.add_parser(

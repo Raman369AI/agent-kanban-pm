@@ -79,7 +79,7 @@ class TestRolePreferences:
         prefs = Preferences(
             roles=RoleConfig(
                 orchestrator=RoleAssignment(agent="claude", mode="headless"),
-                worker=RoleAssignment(agent="gemini", mode="headless"),
+                worker=RoleAssignment(agent="opencode", mode="headless"),
                 diff_review=RoleAssignment(agent="claude", mode="headless"),
             ),
             autonomy=AutonomyConfig(),
@@ -88,7 +88,7 @@ class TestRolePreferences:
         assert "orchestrator" in assignments
         assert assignments["orchestrator"].agent == "claude"
         assert "worker" in assignments
-        assert assignments["worker"].agent == "gemini"
+        assert assignments["worker"].agent == "opencode"
         assert "diff_review" in assignments
         assert "ui" not in assignments
         assert "git_pr" not in assignments
@@ -97,7 +97,7 @@ class TestRolePreferences:
         prefs = Preferences(
             manager=ManagerConfig(agent="claude", model="claude-sonnet-4-6", mode="auto"),
             workers=[
-                WorkerConfig(agent="gemini", roles=["worker"]),
+                WorkerConfig(agent="opencode", roles=["worker"]),
                 WorkerConfig(agent="opencode", roles=["worker", "test"]),
             ],
             autonomy=AutonomyConfig(),
@@ -106,7 +106,7 @@ class TestRolePreferences:
         assert roles.orchestrator is not None
         assert roles.orchestrator.agent == "claude"
         assert roles.worker is not None
-        assert roles.worker.agent == "gemini"
+        assert roles.worker.agent == "opencode"
         assert roles.test is not None
         assert roles.test.agent == "opencode"
 
@@ -480,14 +480,14 @@ class TestAssignmentLauncher:
         prompt = "Work on task #1"
         workspace = "/tmp/project"
 
-        gemini = AdapterSpec(
-            name="gemini",
-            display_name="Gemini",
-            invoke=InvokeSpec(command="gemini"),
+        flag_pair_cli = AdapterSpec(
+            name="flag-pair-cli",
+            display_name="Flag Pair CLI",
+            invoke=InvokeSpec(command="flag-pair-cli"),
             task_command=TaskCommandSpec(args=["--approval-mode", "default", "-i", "{prompt}"]),
         )
-        assert _build_agent_command(gemini, workspace, prompt) == [
-            "/usr/bin/gemini", "--approval-mode", "default", "-i", prompt
+        assert _build_agent_command(flag_pair_cli, workspace, prompt) == [
+            "/usr/bin/flag-pair-cli", "--approval-mode", "default", "-i", prompt
         ]
 
         codex = AdapterSpec(

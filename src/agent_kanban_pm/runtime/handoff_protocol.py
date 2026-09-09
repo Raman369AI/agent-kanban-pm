@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 STATUS_FILENAME = "STATUS.md"
-INSTRUCTION_ALIAS_FILENAMES = ("CLAUDE.md", "GEMINI.md", "CODEX.md")
+INSTRUCTION_ALIAS_FILENAMES = ("CLAUDE.md", "CODEX.md")
 
 
 STATUS_TEMPLATE = """---
@@ -217,7 +217,7 @@ def read_status_file(workspace_path: str | Path) -> dict[str, Any]:
 
 
 def ensure_instruction_aliases(workspace_path: str | Path) -> dict[str, str]:
-    """Best-effort `CLAUDE.md`/`GEMINI.md`/`CODEX.md` symlinks to AGENTS.md.
+    """Best-effort `CLAUDE.md`/`CODEX.md` symlinks to AGENTS.md.
 
     Real files are left untouched. Existing symlinks are replaced so this is
     equivalent to a safe `ln -sf AGENTS.md <alias>` for managed aliases.
@@ -334,7 +334,7 @@ def build_handoff_instructions(agent_name: str, workspace_path: str | Path) -> s
     return (
         "Multi-agent handoff protocol:\n"
         "- Read AGENTS.md for instructions only; do not write mutable state there.\n"
-        "- Agent-specific instruction aliases CLAUDE.md, GEMINI.md, and CODEX.md should be symlinks to AGENTS.md.\n"
+        "- Agent-specific instruction aliases CLAUDE.md and CODEX.md should be symlinks to AGENTS.md.\n"
         f"- Agent profile: {profile.agent} -> {profile.role}.\n"
         f"- Owned paths: {owns}.\n"
         "- The handoff/reporting source of truth for this task is this worktree's STATUS.md.\n"

@@ -14,9 +14,79 @@ from agent_kanban_pm.runtime.pty_manager import pty_manager
 
 logger = logging.getLogger(__name__)
 
+# tmux rejects send-keys arguments above roughly 4-8 KiB ("command too long"),
+# so long payloads are typed into the pane in literal chunks well under that.
+TMUX_SEND_KEYS_CHUNK_SIZE = 2000
+
 
 def tmux_available() -> bool:
     return shutil.which("tmux") is not None
+
+
+def tmux_send_literal(
+    session_name: str,
+    text: str,
+    *,
+    chunk_size: int = TMUX_SEND_KEYS_CHUNK_SIZE,
+    check: bool = False,
+) -> None:
+    """Inject literal text into a tmux pane.
+
+    tmux's send-keys command buffer is limited to a few KiB, so a single
+    large argument fails with "command too long". Long payloads are
+    delivered through the tmux paste buffer instead (no size limit, and
+    the pane reads it as one paste rather than racing keystrokes);
+    send-keys chunks are only a fallback for old tmux builds.
+    """
+    if not text:
+        return
+    if _tmux_paste_text(session_name, text, check=check):
+        return
+    chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+    for chunk in chunks:
+        result = subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "-l", chunk],
+            capture_output=True,
+            timeout=10,
+        )
+        if check and result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                ["tmux", "send-keys", "-t", session_name, "-l", "<chunk>"],
+                stderr=result.stderr,
+            )
+
+
+def _tmux_paste_text(session_name: str, text: str, *, check: bool) -> bool:
+    """Load text into a tmux buffer and paste it into the pane.
+
+    Returns False (without raising when check is False) if the installed
+    tmux cannot do stdin buffering, so the caller can fall back to
+    send-keys chunks. Requires tmux >= 3.2 for `load-buffer -`.
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "load-buffer", "-"],
+            input=text.encode("utf-8"),
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, ["tmux", "load-buffer", "-"], stderr=result.stderr
+            )
+        subprocess.run(
+            ["tmux", "paste-buffer", "-t", session_name, "-d"],
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+        return True
+    except Exception as exc:
+        if check:
+            raise
+        logger.debug("tmux paste-buffer fallback to send-keys for %s: %s", session_name, exc)
+        return False
 
 
 def tmux_has_session(session_name: str) -> bool:
@@ -81,8 +151,9 @@ def start_tmux_session(
     command = shell_command(args)
     if env_prefix:
         command = f"{env_prefix} {command}"
+    tmux_send_literal(session_name, command, check=True)
     subprocess.run(
-        ["tmux", "send-keys", "-t", session_name, command, "Enter"],
+        ["tmux", "send-keys", "-t", session_name, "Enter"],
         capture_output=True,
         check=True,
         timeout=10,
@@ -163,11 +234,7 @@ def send_text(session_name: str, text: str, press_enter: bool = True) -> None:
     """Sends keystrokes / text inputs to a session's stdin."""
     if tmux_available():
         try:
-            subprocess.run(
-                ["tmux", "send-keys", "-t", session_name, "-l", text],
-                capture_output=True,
-                timeout=3,
-            )
+            tmux_send_literal(session_name, text)
             if press_enter:
                 subprocess.run(
                     ["tmux", "send-keys", "-t", session_name, "Enter"],

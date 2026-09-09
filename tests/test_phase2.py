@@ -20,7 +20,7 @@ def test_phase2():
         # Check that bundled adapters created entities
         # Note: adapters whose CLI tool is not installed are marked inactive
         names = {a["name"] for a in agents}
-        expected = {"claude", "gemini", "opencode"}  # codex not installed in this env
+        expected = {"claude", "opencode"}  # codex not installed in this env
         found = expected & names
         print(f"\nExpected adapters: {expected}")
         print(f"Found adapters: {found}")
@@ -30,8 +30,8 @@ def test_phase2():
         claude = next((a for a in agents if a["name"] == "claude"), None)
         assert claude is not None and claude["role"] == "manager", "Claude should be manager"
 
-        gemini = next((a for a in agents if a["name"] == "gemini"), None)
-        assert gemini is not None and gemini["role"] == "worker", "Gemini should be worker"
+        opencode = next((a for a in agents if a["name"] == "opencode"), None)
+        assert opencode is not None and opencode["role"] == "worker", "OpenCode should be worker"
 
         print("\n=== PHASE 2 TESTS PASSED ===")
 

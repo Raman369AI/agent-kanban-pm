@@ -8,7 +8,7 @@ IMPORTANT DESIGN NOTE:
 - MCP adapter: Events are persisted to DB for polling (MCP stdio cannot push).
 - A2A adapter: Uses the event bus to route messages between registered agents.
 
-For ephemeral CLI agents (Claude Code, Codex, OpenCode, Gemini CLI),
+For ephemeral CLI agents (Claude Code, Codex, OpenCode, Antigravity),
 only MCP (polling) is viable. WebSocket and Webhook require persistent
 listeners that CLI processes cannot maintain.
 """

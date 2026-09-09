@@ -149,18 +149,13 @@ file there without touching Python.
 | `codex` | `codex` | Supported |
 | `opencode` | `opencode` | Supported |
 | `aider` | `aider` | Supported |
-| `gemini` | `gemini` | **Retired upstream** — see below |
 | `goose`, `crush`, `continue` | — | Stubs; invocation not yet verified |
 
 ### Gemini CLI is retired
 
 Google shut Gemini CLI down for consumer accounts on 2026-06-18 and replaced
-it with **Antigravity CLI** (`agy`). The `gemini` adapter is still shipped and
-still works for anyone with a Gemini Code Assist Standard/Enterprise licence
-or a paid API key, but it is hidden from `kanban init` and `kanban agents
-discover`, and warns when assigned.
-
-To move a role across:
+it with **Antigravity CLI** (`agy`). The `gemini` adapter has been removed;
+if a role still names it, reassign that role:
 
 ```bash
 kanban roles assign worker antigravity --mode headless

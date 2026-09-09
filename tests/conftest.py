@@ -38,7 +38,7 @@ os.environ["HOME"] = _TEST_HOME_DIR.name
 # Register every bundled adapter as an Entity. Production only registers
 # *role-assigned* agents (driven by preferences.yaml), so a clean checkout with
 # no preferences registers nothing and test_integration / test_phase2 fail for
-# lack of claude/gemini/opencode entities. We deliberately do NOT seed a
+# lack of claude/opencode entities. We deliberately do NOT seed a
 # preferences.yaml here: a configured manager would make the app auto-assign
 # tasks to agents and try to spawn them in tmux during tests (which hangs on
 # CI). Registering entities without a manager keeps load_preferences() empty,
@@ -53,7 +53,7 @@ os.environ["KANBAN_REGISTER_ALL_ADAPTERS"] = "1"
 # prepended to PATH (shadowing any real CLI) and are inert no-ops; nothing in
 # the suite triggers an agent launch, so they are never actually executed.
 _TEST_BIN_DIR = tempfile.TemporaryDirectory(prefix="agent-kanban-pm-bin-")
-for _cmd in ("claude", "gemini", "opencode"):
+for _cmd in ("claude", "opencode"):
     _stub = Path(_TEST_BIN_DIR.name) / _cmd
     _stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     _stub.chmod(0o755)

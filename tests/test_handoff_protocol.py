@@ -17,18 +17,18 @@ def test_default_profiles_match_multi_agent_protocol():
     """profile_for_agent resolves from adapter YAML first, then
     falls back to DEFAULT_AGENT_PROFILES for agents without YAML."""
     claude = profile_for_agent("claude")
-    gemini = profile_for_agent("gemini")
+    opencode = profile_for_agent("opencode")
     codex = profile_for_agent("codex")
     unknown = profile_for_agent("totally-unknown-agent")
 
     # All known agents resolve to canonical names
     assert claude.agent == "claude"
-    assert gemini.agent == "gemini"
+    assert opencode.agent == "opencode"
     assert codex.agent == "codex"
 
     # All profiles have a non-empty role string
     assert claude.role
-    assert gemini.role
+    assert opencode.role
     assert codex.role
 
     # Unknown agents get a generic fallback
@@ -49,16 +49,16 @@ def test_instruction_aliases_point_to_agents_md_without_overwriting_real_files(t
     workspace = tmp_path / "task-worktree"
     workspace.mkdir()
     (workspace / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
-    (workspace / "GEMINI.md").write_text("custom gemini rules\n", encoding="utf-8")
+    (workspace / "CODEX.md").write_text("custom codex rules\n", encoding="utf-8")
 
     results = ensure_instruction_aliases(workspace)
 
     assert results["CLAUDE.md"] == "linked to AGENTS.md"
     assert (workspace / "CLAUDE.md").is_symlink()
     assert (workspace / "CLAUDE.md").readlink().as_posix() == "AGENTS.md"
-    assert results["GEMINI.md"] == "kept existing real file"
-    assert (workspace / "GEMINI.md").read_text(encoding="utf-8") == "custom gemini rules\n"
-    assert results["CODEX.md"] == "linked to AGENTS.md"
+    assert results["CODEX.md"] == "kept existing real file"
+    assert (workspace / "CODEX.md").read_text(encoding="utf-8") == "custom codex rules\n"
+    assert "GEMINI.md" not in results
 
 
 def test_initialize_status_file_writes_worktree_task_handoff(tmp_path):
@@ -69,7 +69,7 @@ def test_initialize_status_file_writes_worktree_task_handoff(tmp_path):
         workspace,
         task_id=12,
         project_id=3,
-        current_agent="gemini",
+        current_agent="opencode",
         assigned_role="ui",
         task_title="Build board",
     )
@@ -81,7 +81,7 @@ def test_initialize_status_file_writes_worktree_task_handoff(tmp_path):
     assert info["handoff_ready"] is False
     assert info["frontmatter"]["task_id"] == 12
     assert info["frontmatter"]["project_id"] == 3
-    assert info["frontmatter"]["current_agent"] == "gemini"
+    assert info["frontmatter"]["current_agent"] == "opencode"
     assert info["frontmatter"]["assigned_role"] == "ui"
 
 
@@ -91,7 +91,7 @@ def test_handoff_instructions_are_self_contained(tmp_path):
     text = build_handoff_instructions("codex", workspace)
 
     assert "Read AGENTS.md for instructions only" in text
-    assert "CLAUDE.md, GEMINI.md, and CODEX.md should be symlinks to AGENTS.md" in text
+    assert "CLAUDE.md and CODEX.md should be symlinks to AGENTS.md" in text
     # Text contains either review-only instruction or owned-paths instruction
     assert ("review-only" in text) or ("owned paths" in text)
     assert str(workspace / "STATUS.md") in text
@@ -114,6 +114,5 @@ def test_available_handoff_agents_includes_active_team_and_defaults(monkeypatch)
 
     agents = available_handoff_agents(prefs=prefs, adapters=[])
     assert "claude" in agents
-    assert "gemini" in agents
     assert "codex" in agents
     assert "custom-cli" in agents

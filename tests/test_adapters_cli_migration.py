@@ -1,10 +1,9 @@
 """Adapter regression tests for the Gemini -> Antigravity migration.
 
 Google retired Gemini CLI for consumer accounts on 2026-06-18 and replaced it
-with Antigravity CLI (`agy`). The gemini adapter stays loadable because Gemini
-Code Assist Standard/Enterprise licences keep working, but it must not be
-offered to new users, and the flags in the bundled adapters must match what the
-real CLIs actually accept.
+with Antigravity CLI (`agy`). The gemini adapter has since been removed
+outright, so nothing may reintroduce it, and the flags in the bundled adapters
+must match what the real CLIs actually accept.
 
 Flags asserted here were read from the installed binaries:
   agy --help       (v1.0.1)
@@ -59,7 +58,7 @@ def cli_stubs(tmp_path, monkeypatch):
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for command in ("agy", "opencode", "claude", "codex", "aider", "gemini"):
+    for command in ("agy", "opencode", "claude", "codex", "aider"):
         stub = bin_dir / command
         stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         stub.chmod(0o755)
@@ -72,19 +71,9 @@ def cli_stubs(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_gemini_is_marked_deprecated_and_points_at_its_replacement():
-    gemini = _adapter("gemini")
-    assert gemini.deprecated is True
-    assert gemini.replaced_by == "antigravity"
-    assert gemini.deprecation_note
-    assert "antigravity" in gemini.deprecation_note.lower()
-
-
-def test_gemini_stays_loadable_for_enterprise_licence_holders():
-    """Deprecated must mean hidden, never removed — enterprise access remains."""
-    gemini = _adapter("gemini")
-    assert gemini.invoke.command == "gemini"
-    assert gemini.task_command.args, "retired adapter still needs a usable invocation"
+def test_the_retired_gemini_adapter_is_gone():
+    """The adapter was removed outright, not merely hidden."""
+    assert not any(adapter.name == "gemini" for adapter in bundled_adapters())
 
 
 def test_antigravity_is_not_deprecated():
@@ -97,10 +86,8 @@ def test_discovery_offers_antigravity_not_the_retired_gemini_cli():
     assert "gemini" not in commands
 
 
-def test_every_other_bundled_adapter_defaults_to_not_deprecated():
+def test_every_bundled_adapter_defaults_to_not_deprecated():
     for adapter in bundled_adapters():
-        if adapter.name == "gemini":
-            continue
         assert adapter.deprecated is False, f"{adapter.name} unexpectedly deprecated"
 
 

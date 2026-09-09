@@ -4,7 +4,7 @@ MCP Server for Agent Kanban PM
 
 Provides Model Context Protocol tools for AI agents to interact with
 the Kanban board. Designed for ephemeral CLI agents (Claude Code, Codex,
-OpenCode, Gemini CLI) that connect via stdio.
+OpenCode, Antigravity) that connect via stdio.
 
 Because MCP stdio servers cannot push events, agents must poll for updates
 using the `get_pending_events` tool.

@@ -2,7 +2,8 @@ name: antigravity
 display_name: "Antigravity CLI (Google)"
 version: "1.1"
 
-# Google's replacement for the retired Gemini CLI. Flags below are taken from
+# Google's replacement for the retired Gemini CLI, which this project no
+# longer ships an adapter for. Flags below are taken from
 # `agy --help` (v1.0.1): the CLI has no --model or --mcp flag, so those stay
 # unset rather than being guessed.
 invoke:

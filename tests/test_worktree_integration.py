@@ -74,13 +74,6 @@ def test_claude_adapter_uses_bypass_permissions():
     assert "--permission-mode" not in _adapter_args("claude")
 
 
-def test_gemini_adapter_uses_yolo_approval_mode():
-    auto_args = _adapter_auto_args("gemini")
-    assert "--approval-mode" in auto_args
-    assert auto_args[auto_args.index("--approval-mode") + 1] == "yolo"
-    assert "--approval-mode" not in _adapter_args("gemini")
-
-
 def test_codex_adapter_uses_full_auto():
     auto_args = _adapter_auto_args("codex")
     assert "--full-auto" in auto_args
