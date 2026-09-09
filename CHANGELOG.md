@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0rc5] — 2026-09-09
+
 ### Removed
 - **The Gemini CLI adapter** — Google shut Gemini CLI down for consumer accounts on 2026-06-18. The adapter had been kept loadable-but-hidden for Gemini Code Assist Standard/Enterprise licence holders; it is now gone, along with the `GEMINI.md` instruction alias, which existed only for that CLI. Reassign any role still naming it: `kanban roles assign <role> antigravity`.
 
