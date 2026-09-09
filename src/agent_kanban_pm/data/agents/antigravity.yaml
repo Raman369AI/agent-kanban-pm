@@ -1,6 +1,6 @@
 name: antigravity
 display_name: "Antigravity CLI (Google)"
-version: "1.3"
+version: "1.4"
 
 # Google's replacement for the retired Gemini CLI, which this project no
 # longer ships an adapter for. Flags below are taken from
@@ -41,11 +41,14 @@ role_command:
   auto_args: ["--dangerously-skip-permissions"]
 
 task_command:
-  # --print takes the prompt as its value (--prompt is an alias for it), so it
-  # must not be followed by another flag: `--print --add-dir <dir> <prompt>`
-  # makes agy read "--add-dir" as the prompt and silently drop the real one.
-  # The prompt is attached with `=` and --add-dir moved ahead of it.
-  args: ["--add-dir", "{workspace}", "--print={prompt}"]
+  # --prompt-interactive, not --print. Supervised runs depend on the CLI
+  # rendering its approval prompt in the tmux pane: the session streamer
+  # detects it, files an AgentApproval for a human, and sends the keystroke
+  # back. --print is headless, so it renders no prompt and every tool needing
+  # permission is auto-denied — the run ends with "no output produced".
+  # The prompt is attached with `=` because these flags take it as their value
+  # and would otherwise consume the following argument.
+  args: ["--add-dir", "{workspace}", "--prompt-interactive={prompt}"]
   auto_args: ["--dangerously-skip-permissions"]
 
 owns: ['*']

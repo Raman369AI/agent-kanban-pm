@@ -105,8 +105,7 @@ def test_antigravity_uses_the_flags_agy_actually_accepts():
     assert agy.invoke.mcp_flag is None
 
     args = agy.task_command.args
-    assert "--print={prompt}" in args, "non-interactive runs need --print"
-    assert "-i" not in args, "-i is agy's *interactive* flag"
+    assert "--prompt-interactive={prompt}" in args
     assert "--add-dir" in args and "{workspace}" in args
 
 
@@ -126,7 +125,7 @@ def test_antigravity_supervised_run_omits_the_bypass_flag(tmp_path, cli_stubs):
     agy = _adapter("antigravity")
     cmd = _build_agent_command(agy, str(tmp_path), "do the thing", AUTONOMY_SUPERVISED)
     assert "--dangerously-skip-permissions" not in cmd
-    assert "--print=do the thing" in cmd
+    assert "--prompt-interactive=do the thing" in cmd
     # The prompt must never arrive as a bare argument: agy would ignore it.
     assert "do the thing" not in cmd
 
@@ -265,20 +264,21 @@ def test_role_command_adds_autonomy_flags_only_when_auto(monkeypatch):
     assert auto[auto.index("--permission-mode") + 1] == "bypassPermissions"
 
 
-def test_antigravity_attaches_the_prompt_to_print():
-    """`agy --print` consumes the next token as its prompt.
+def test_antigravity_runs_tasks_interactively_so_approvals_can_be_captured():
+    """Supervised mode reads the CLI's approval prompt out of the tmux pane.
 
-    With ["--print", "--add-dir", "{workspace}", "{prompt}"] the CLI read
-    "--add-dir" as the prompt and ignored the real one, so every antigravity
-    task ran the wrong instruction.
+    --print is headless: it renders no prompt, so the approval queue never
+    engages and every tool needing permission is auto-denied ("no output
+    produced"). The prompt is attached with `=` because the flag takes it as
+    its value and would otherwise swallow the following argument.
     """
     args = _adapter("antigravity").task_command.args
 
-    assert "--print" not in args, "a bare --print swallows the following flag"
-    print_args = [a for a in args if a.startswith("--print")]
-    assert print_args == ["--print={prompt}"]
-    # --add-dir must be fully applied before the prompt-bearing flag.
-    assert args.index("--add-dir") < args.index("--print={prompt}")
+    assert not any(a == "--print" or a.startswith("--print=") for a in args), (
+        "headless print mode cannot surface an approval prompt"
+    )
+    assert "--prompt-interactive={prompt}" in args
+    assert args.index("--add-dir") < args.index("--prompt-interactive={prompt}")
 
 
 def test_no_bundled_adapter_leaves_a_bare_print_before_another_flag():
