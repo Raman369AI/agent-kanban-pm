@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0rc6] — 2026-09-09
+
+### Fixed
+- **Supervised task sessions can actually be approved** — supervised mode captures a CLI's approval prompt from its tmux pane, files an `AgentApproval` for a human to answer through the Kanban queue, and sends the keystroke back. Three adapters launched tasks headless, where no prompt is ever rendered, so nothing was captured and every permission-requiring tool was auto-denied — antigravity ended runs with `no output produced — a tool required the "command" permission that headless mode cannot prompt for`. `antigravity` now uses `--prompt-interactive`, `opencode` the top-level `--prompt` that seeds its TUI instead of the headless `run` subcommand, and `claude` drops `--print`. `codex` already forwarded to its interactive CLI and is unchanged. Autonomy is unaffected: `auto` still appends the adapter's bypass flags.
+- **claude's prompt is no longer eaten by `--add-dir`** — `--print` had been doubling as the terminator for the variadic `--add-dir <directories...>`; without it a trailing prompt is consumed as a second directory and claude fails with `Input must be provided either through stdin or as a prompt argument`. The prompt now leads, and `auto_args` append after `--add-dir` as their own flag. Verified against the installed binary.
+- **opencode no longer passes `--dir`** — it is not a top-level flag, and it was redundant: task sessions are created with `tmux new-session -c <worktree>`, so the pane already starts in the worktree.
+
+
 ## [0.4.0rc5] — 2026-09-09
 
 ### Removed
