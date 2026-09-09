@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Approval dropdown click handling** — The header now owns the correct stacking context, preventing board columns from intercepting clicks on visible approval requests.
 
+## [0.4.0rc3] — 2026-09-09
+
+### Added
+- **Shared task-mutation service** — `agent_kanban_pm.services.tasks` centralizes reference validation and task create/update, so the REST router, the `/ui` endpoints and the MCP server enforce one set of cross-project integrity rules instead of re-implementing them per caller.
+- **Browser coverage** — Playwright end-to-end tests in `tests/e2e/test_board_workflows.py` drive the real board (task creation, moves, approval flows) behind a dedicated CI job.
+
+### Changed
+- **Board accessibility and keyboard control** — dialogs carry `role="dialog"`, `aria-modal` and `aria-labelledby`, close on Escape, and expose `aria-label`/`aria-expanded` on interactive controls; a `role="status"` region announces asynchronous results.
+- **Board error handling** — failed moves and mutations surface the server's reason instead of failing silently.
+- **README roadmap** — Phase 5 describes the shipped release pipeline rather than tracking outstanding release-validation chores.
+
 ## [0.4.0rc2] — 2026-09-08
 
 Data-integrity and authorization fixes on top of `0.4.0rc1`.
