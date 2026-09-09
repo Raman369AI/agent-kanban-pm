@@ -525,3 +525,58 @@ class TestAssignmentLauncher:
         assert build_command_for_role(adapter, assignment, "worker", "http://localhost:8000") == [
             "/usr/bin/custom-agent", "--model-name", "large"
         ]
+
+    def test_role_command_drops_the_flag_that_owns_a_task_placeholder(self, monkeypatch):
+        """A persistent role gets no workspace, so --add-dir must go with it.
+
+        Leaving the flag behind produced `claude ... --add-dir` with nothing to
+        consume, and the CLI exited with "argument missing" before the role
+        ever started.
+        """
+        from agent_kanban_pm.runtime.role_supervisor import build_command_for_role
+        from agent_kanban_pm.runtime.adapter_loader import (
+            AdapterSpec, InvokeSpec, TaskCommandSpec,
+        )
+
+        monkeypatch.setattr("shutil.which", lambda command: f"/usr/bin/{command}")
+        adapter = AdapterSpec(
+            name="claude",
+            display_name="Claude",
+            invoke=InvokeSpec(command="claude"),
+            task_command=TaskCommandSpec(
+                args=["--print", "--add-dir", "{workspace}", "{prompt}"],
+            ),
+        )
+        assignment = RoleAssignment(agent="claude", mode="headless")
+
+        command = build_command_for_role(
+            adapter, assignment, "orchestrator", "http://localhost:8000"
+        )
+
+        assert command == ["/usr/bin/claude"]
+        assert "--add-dir" not in command
+
+    def test_role_command_keeps_flags_whose_values_are_literal(self, monkeypatch):
+        """Only placeholder-valued flags are dropped, not every flag."""
+        from agent_kanban_pm.runtime.role_supervisor import build_command_for_role
+        from agent_kanban_pm.runtime.adapter_loader import (
+            AdapterSpec, InvokeSpec, TaskCommandSpec,
+        )
+
+        monkeypatch.setattr("shutil.which", lambda command: f"/usr/bin/{command}")
+        adapter = AdapterSpec(
+            name="codex",
+            display_name="Codex",
+            invoke=InvokeSpec(command="codex"),
+            task_command=TaskCommandSpec(
+                args=["--ask-for-approval", "on-request", "-C", "{workspace}", "{prompt}"],
+            ),
+        )
+        assignment = RoleAssignment(agent="codex", mode="headless")
+
+        command = build_command_for_role(
+            adapter, assignment, "worker", "http://localhost:8000"
+        )
+
+        assert command == ["/usr/bin/codex", "--ask-for-approval", "on-request"]
+        assert "-C" not in command

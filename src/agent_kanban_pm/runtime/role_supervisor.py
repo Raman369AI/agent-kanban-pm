@@ -171,15 +171,32 @@ def build_command_for_role(
         extra_args = list(adapter.task_command.args)
         if getattr(assignment, "autonomy", "supervised") == "auto":
             extra_args.extend(adapter.task_command.auto_args)
-        for arg in extra_args:
-            # Persistent roles should not receive task prompt/workspace CLI args since they run as background services
-            if "{prompt}" in arg or "{workspace}" in arg:
+        def _is_task_placeholder(value: str) -> bool:
+            return "{prompt}" in value or "{workspace}" in value
+
+        index = 0
+        while index < len(extra_args):
+            arg = extra_args[index]
+            following = extra_args[index + 1] if index + 1 < len(extra_args) else None
+            index += 1
+            # Persistent roles run as background services, so they receive no
+            # task prompt or workspace. Dropping the placeholder on its own
+            # would leave the flag that introduces it with nothing to consume:
+            # `claude ... --add-dir` exits with "argument missing" and the role
+            # never starts. Drop the flag together with its placeholder value.
+            if _is_task_placeholder(arg):
                 continue
-            clean_arg = arg
-            if clean_arg in ["--print", "-p"]:
+            if arg in ["--print", "-p"]:
                 continue
-            if clean_arg not in args:
-                args.append(clean_arg)
+            if (
+                arg.startswith("-")
+                and following is not None
+                and _is_task_placeholder(following)
+            ):
+                index += 1
+                continue
+            if arg not in args:
+                args.append(arg)
 
     return args
 
