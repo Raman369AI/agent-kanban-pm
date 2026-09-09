@@ -141,12 +141,17 @@ def test_antigravity_auto_run_appends_the_bypass_flag(tmp_path, cli_stubs):
 # ---------------------------------------------------------------------------
 
 
-def test_opencode_uses_the_run_subcommand_with_the_prompt():
+def test_opencode_seeds_the_interactive_tui_rather_than_running_headless():
+    """`opencode run` is headless and cannot surface an approval prompt.
+
+    Supervised mode captures the prompt from the tmux pane, so the task must
+    start the interactive TUI. --dir is unnecessary: the pane is already
+    created with the worktree as its working directory.
+    """
     oc = _adapter("opencode")
     args = oc.task_command.args
-    assert args[0] == "run", "opencode's non-interactive form is `opencode run`"
-    assert "{prompt}" in args, "the prompt is passed positionally to `run`"
-    assert "--dir" in args and "{workspace}" in args
+    assert args[0] != "run", "the headless subcommand cannot prompt for approval"
+    assert args == ["--prompt", "{prompt}"]
     # The previous adapter passed a filename as the message, so the agent
     # received the literal string ".kanban_task.md" instead of the task.
     assert oc.task_command.prompt_file is None
@@ -161,8 +166,8 @@ def test_opencode_supervised_run_omits_auto(tmp_path, cli_stubs):
     oc = _adapter("opencode")
     cmd = _build_agent_command(oc, str(tmp_path), "ship it", AUTONOMY_SUPERVISED)
     assert "--auto" not in cmd
-    assert cmd[1] == "run"
-    assert str(tmp_path) in cmd
+    assert cmd[1] == "--prompt"
+    assert cmd[2] == "ship it"
 
 
 def test_opencode_auto_run_appends_auto(tmp_path, cli_stubs):
