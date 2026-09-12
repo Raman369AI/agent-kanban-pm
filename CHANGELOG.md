@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0rc7] — 2026-09-11
+
+### Added
+- **Stages have a stable workflow identity** — `Stage.workflow_key` (`backlog`, `to_do`, `in_progress`, `review`, `done`) now drives launch eligibility, session handoff, stage policies, and the status a moved task takes, instead of each call site lower-casing the stage label. The key is derived from the name on creation, kept when a stage is renamed, and can be set explicitly on create. Database migration 10 adds the column and backfills existing stages from their names.
+- **The Team roles editor sets a model, session mode, and approvals per role** — every role, custom roles included, is listed with its own draft; changing an agent refreshes the model list for that CLI, and saving one row no longer resets unsaved edits in another.
+
+### Fixed
+- **Renaming a stage no longer breaks handoff** — relabelling Done as "Shipped" or In Progress as "Building" left tasks moved there with a stale status and stopped assigned sessions from launching or advancing. Moving a task into a stage now infers its status from the stage's key, and a stage with no recognised key leaves the status unchanged.
+- **The selected model reaches task sessions** — task launches ignored the role's `model` and recorded the adapter's first model on the session. The role's model is now passed through the adapter's `model_flag` for both task and role sessions and recorded accurately. Placeholder labels such as `default` and `codex-default` are no longer sent to the CLI as a literal `--model`.
+- **Saving a role keeps options the editor does not show** — the assign endpoint rebuilt the assignment from scratch, dropping `owns`, `review_only`, `prompt_flag`, `chat_stdin`, and similar settings, and reset the session mode to `headless`. It now patches the existing assignment, accepts custom role names, and rejects malformed payloads with a 422.
+- **Discovered CLIs are no longer listed twice** — a CLI whose command differed from its adapter name appeared as both an adapter and a separate discovered candidate.
+- **Board refreshes keep your place** — live updates replaced the board wholesale, dropping keyboard focus, the open card tab, and column scroll, and could land mid-drag. Refreshes are now serialised, deferred until a move settles, and restore focus and scroll.
+- **The list layout works on the board** — the grid/list toggle had no effect on the board's columns; list view now stacks them, and the toggle is hidden on pages it does not apply to and exposes its state through `aria-pressed`.
+- **The project workbench surfaces server errors** — it shadowed the shared `apiFetch` with a local copy that reported only the HTTP status text.
+
+### Changed
+- **Board scripts and styles moved out of the template** — about 1,800 lines of inline JavaScript and CSS in `kanban_board.html` now live in `static/js/board.js`, `static/js/role-settings.js`, and `static/css/board.css`, so the browser can cache them.
+
 ## [0.4.0rc6] — 2026-09-09
 
 ### Fixed

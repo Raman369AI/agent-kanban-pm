@@ -2,7 +2,7 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
-Status: release candidate (`0.4.0rc6`) for local, single-user development.
+Status: release candidate (`0.4.0rc7`) for local, single-user development.
 The local runtime, board UI, per-task agent sessions, and MCP surface work and
 are covered by tests, including a database upgrade path. It is a single-operator
 tool by design: one shared token guards the local server, so do not expose it to
@@ -75,6 +75,11 @@ Cards can be moved with drag-and-drop or entirely from the keyboard. Press
 move it to the adjacent stage. Task and approval dialogs keep focus inside the
 dialog, close with `Escape`, and return focus to the control that opened them.
 
+The layout toggle (columns or a stacked list) and the density selector are
+remembered across reloads. Live board refreshes keep the focused card, its
+expanded tab, and column scroll positions, and wait until an in-flight drag or
+move has settled.
+
 Server validation and authorization details are shown in the UI toast instead
 of being replaced by a generic “Failed” message. A rejected move is rolled back
 to its original column.
@@ -131,6 +136,13 @@ standard role handoff moving once an assigned session finishes:
 4. When review/test sessions complete, the card moves to Done.
 5. Done-stage policy roles, normally `git_pr`, may launch from Done to prepare
    PR or git contribution work.
+
+Handoff follows each stage's `workflow_key` (`backlog`, `to_do`,
+`in_progress`, `review`, `done`), not its label, so stages can be renamed
+freely: a Done column relabelled "Shipped" still completes the tasks moved into
+it. The key is derived from the name when a stage is created and is kept when it
+is renamed; pass `workflow_key` when creating a custom stage to give it workflow
+meaning. Stages with no recognised key leave a moved task's status unchanged.
 
 The handoff source of truth is each worktree's `STATUS.md`. If an agent exits
 without updating it, the card may stay where it is because the runtime cannot
@@ -241,6 +253,14 @@ Python changes. Role assignments live in `~/.kanban/preferences.yaml`; the
 standard roles are `orchestrator`, `ui`, `architecture`, `worker`, `test`,
 `diff_review`, and `git_pr`.
 
+Roles can also be edited from the board under **Advanced → Team roles**: each
+role, custom roles included, has its own agent, model, session mode, and
+approval setting, and saving one role leaves the others' unsaved edits alone.
+Options the editor does not show, such as `owns` or `prompt_flag`, are kept on
+save. The chosen model is passed to task and role sessions through the
+adapter's `model_flag`; `default` and `<adapter>-default` mean the CLI's own
+default, so no flag is sent.
+
 ## Development
 
 Install the regular development tools and run the fast checks:
@@ -255,7 +275,8 @@ twine check dist/*
 
 Browser regressions are an optional extra. They start an isolated local server
 and cover drag-and-drop, keyboard movement, task editing, detailed error toasts,
-dialog focus, and approval resolution in Chromium:
+dialog focus, approval resolution, board layout preferences, renamed stages, and
+the role editor in Chromium:
 
 ```bash
 pip install -e ".[dev,e2e]"
@@ -268,6 +289,10 @@ in `agent_kanban_pm/services/tasks.py`. Routers should retain only transport
 concerns such as authentication, response formatting, commits, and event
 publication. This keeps stage/parent validation and transition rules consistent
 across every interface.
+
+Board behaviour and styling live in `data/static/js/board.js`,
+`data/static/js/role-settings.js`, and `data/static/css/board.css`; the
+`kanban_board.html` template holds markup only.
 
 Package data is served from `agent_kanban_pm/data/`; the historical root-level
 `agents/`, `mcp_configs/`, `static/`, and `templates/` folders are not part of
@@ -294,10 +319,11 @@ release. Each phase is releasable on its own.
   and approval services, MCP tool modularization, launcher decomposition, and
   Alembic migrations are still outstanding.
 - [ ] **Phase 4 — Product surface & docs**: the support matrix, community
-  scaffolding, and browser workflow coverage have landed. Landing-page
-  visuals, the mkdocs site, coverage reporting, and frontend extraction are
-  still outstanding.
-- [ ] **Phase 5 — Release & distribution**: `0.4.0rc6` is on PyPI and GitHub,
+  scaffolding, browser workflow coverage, and extraction of the board's
+  scripts and styles have landed. Landing-page visuals, the mkdocs site,
+  coverage reporting, and extracting the remaining templates are still
+  outstanding.
+- [ ] **Phase 5 — Release & distribution**: `0.4.0rc7` is on PyPI and GitHub,
   published from a git tag by a workflow that authenticates through PyPI
   trusted publishing, with a weekly job that installs the released package to
   catch breakage. A stable `0.4.0` is what remains.
