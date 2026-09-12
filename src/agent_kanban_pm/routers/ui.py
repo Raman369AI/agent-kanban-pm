@@ -28,6 +28,7 @@ from agent_kanban_pm.services.tasks import (
     update_task_record,
 )
 from agent_kanban_pm.runtime.default_stages import DEFAULT_STAGES
+from agent_kanban_pm.runtime.stage_identity import normalize_stage_key, STAGE_STATUSES
 from agent_kanban_pm.runtime.handoff_protocol import update_status_file
 from agent_kanban_pm.runtime.instance import get_csrf_token
 from agent_kanban_pm.runtime.paths import templates_dir
@@ -89,7 +90,7 @@ async def _role_assignment_payload():
             "installed": __import__("shutil").which(adapter.invoke.command) is not None,
         })
     for cli in discovered.values():
-        if cli.command not in adapters:
+        if cli.command not in {adapter.invoke.command for adapter in adapters.values()}:
             candidates.append({
                 "agent": cli.command,
                 "display_name": cli.display_name,
@@ -99,7 +100,9 @@ async def _role_assignment_payload():
                 "installed": cli.installed,
             })
 
-    return {"roles": roles, "candidates": candidates}
+    from agent_kanban_pm.runtime.preferences import AgentRole
+    return {"roles": roles, "candidates": candidates,
+            "role_names": list(dict.fromkeys([r.value for r in AgentRole] + list(assignments)))}
 
 
 async def _ensure_role_entity(role_name: str, db: AsyncSession) -> Entity:
@@ -145,8 +148,7 @@ async def _ensure_role_entity(role_name: str, db: AsyncSession) -> Entity:
 def _stage_name_matches(stage: Optional[Stage], *names: str) -> bool:
     if not stage or not stage.name:
         return False
-    normalized = re.sub(r"[^a-z0-9]+", " ", stage.name.lower()).strip()
-    return normalized in {re.sub(r"[^a-z0-9]+", " ", n.lower()).strip() for n in names}
+    return stage.key in {normalize_stage_key(n) for n in names}
 
 
 async def _notify_stage_policy_for_todo(
@@ -319,7 +321,7 @@ async def ui_projects(
         "request": request,
         "projects": projects,
         "agents": agents,
-        "current_entity": current_entity
+        "current_entity": current_entity,
     })
 
 
@@ -349,7 +351,8 @@ async def project_kanban_board(
     return templates.TemplateResponse(request, "kanban_board.html", {
         "request": request,
         "project": project,
-        "current_entity": current_entity
+        "current_entity": current_entity,
+        "stage_statuses": STAGE_STATUSES,
     })
 
 
@@ -418,7 +421,9 @@ async def ui_move_task(
         raise HTTPException(status_code=404, detail="Task not found")
 
     try:
-        new_status = coerce_task_status(new_status) or task.status
+        target_stage = await db.get(Stage, new_stage_id)
+        inferred_status = STAGE_STATUSES.get(target_stage.key) if target_stage else None
+        new_status = coerce_task_status(new_status or inferred_status) or task.status
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid task status: {exc}")
 
@@ -580,35 +585,49 @@ async def ui_assign_cli_to_role(
     import shutil
     from agent_kanban_pm.runtime.preferences import (
         Preferences, ManagerConfig, RoleConfig, RoleAssignment,
-        AutonomyConfig, AgentRole, load_preferences, save_preferences,
+        AutonomyConfig, validate_role_name, load_preferences, save_preferences,
     )
     from agent_kanban_pm.runtime.adapter_loader import load_all_adapters
 
     body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="Expected a settings object")
     role_name = body.get("role")
     agent = body.get("agent")
     command = body.get("command")
-    if role_name not in [r.value for r in AgentRole]:
-        raise HTTPException(status_code=422, detail="Invalid role")
-    if not agent:
+    try:
+        validate_role_name(role_name)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid role") from exc
+    if not isinstance(agent, str) or not agent.strip():
         raise HTTPException(status_code=422, detail="agent is required")
+    for field in ("command", "model", "mode", "display_name", "protocol", "autonomy"):
+        if body.get(field) is not None and not isinstance(body[field], str):
+            raise HTTPException(status_code=422, detail=f"{field} must be a string")
 
     adapters = {a.name: a for a in load_all_adapters()}
     adapter = adapters.get(agent)
+    prefs = load_preferences()
+    previous = prefs.get_role_assignments().get(role_name) if prefs else None
+    same_agent = previous is not None and previous.agent == agent
     if not adapter:
-        command = command or agent
+        command = command or (previous.command if same_agent else None) or agent
         if not shutil.which(command):
             raise HTTPException(status_code=422, detail=f"CLI '{command}' was not found on PATH")
 
     models = body.get("models") or []
     if isinstance(models, str):
         models = [m.strip() for m in models.split(",") if m.strip()]
+    if not isinstance(models, list) or any(not isinstance(model, str) for model in models):
+        raise HTTPException(status_code=422, detail="models must be a list of strings")
     adapter_models = [m.id for m in adapter.models] if adapter else []
     model = body.get("model") or (models[0] if models else (adapter_models[0] if adapter_models else None))
-    if adapter and model and adapter_models and model not in adapter_models:
+    if same_agent and "model" not in body:
+        model = previous.model
+    if adapter and model and adapter_models and model not in adapter_models and not (same_agent and model == previous.model):
         raise HTTPException(status_code=422, detail=f"Model must be one of: {', '.join(adapter_models)}")
 
-    prefs = load_preferences() or Preferences(
+    prefs = prefs or Preferences(
         manager=ManagerConfig(agent=agent, model=model or "default", mode="headless"),
         roles=RoleConfig(),
         autonomy=AutonomyConfig(),
@@ -622,21 +641,23 @@ async def ui_assign_cli_to_role(
     if autonomy is None:
         # Re-assigning a role without an explicit autonomy keeps the previous
         # setting; new roles default to supervised.
-        previous = prefs.get_role_assignments().get(role_name)
         autonomy = previous.autonomy if previous else "supervised"
 
-    assignment = RoleAssignment(
+    # Patch the assignment: options not owned by this editor must survive.
+    values = previous.model_dump() if previous else {}
+    values.update(dict(
         agent=agent,
-        mode=body.get("mode") or "headless",
+        mode=body.get("mode") or (previous.mode if previous else "headless"),
         model=model,
-        models=models or adapter_models,
+        models=models if "models" in body else (previous.models if same_agent else adapter_models),
         command=None if adapter else command,
-        display_name=body.get("display_name") or (adapter.display_name if adapter else agent),
-        protocol=body.get("protocol") or (adapter.protocol if adapter else "stdio"),
-        capabilities=adapter.capabilities if adapter else [role_name],
+        display_name=body.get("display_name") or (previous.display_name if same_agent else (adapter.display_name if adapter else agent)),
+        protocol=body.get("protocol") or (previous.protocol if same_agent else (adapter.protocol if adapter else "stdio")),
+        capabilities=previous.capabilities if same_agent else (adapter.capabilities if adapter else [role_name]),
         autonomy=autonomy,
-    )
-    setattr(prefs.roles, role_name, assignment)
+    ))
+    assignment = RoleAssignment.model_validate(values)
+    prefs.set_role_assignment(role_name, assignment)
     if role_name == "orchestrator":
         prefs.manager = ManagerConfig(agent=agent, model=model or "default", mode=assignment.mode)
     save_preferences(prefs)

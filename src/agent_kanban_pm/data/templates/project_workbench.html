@@ -254,10 +254,10 @@ function showToast(msg,type='info'){
   c.appendChild(el);
   setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),400);},3500);
 }
-function apiFetch(url,opts={}){
+function workbenchFetch(url,opts={}){
   const h={'Content-Type':'application/json',...(opts.headers||{})};
   if(CURRENT_ENTITY_ID)h['X-Entity-ID']=CURRENT_ENTITY_ID;
-  return fetch(url,{...opts,headers:h}).then(r=>{if(!r.ok)throw new Error(r.statusText);return r.json();});
+  return window.apiFetch(url,{...opts,headers:h});
 }
 
 /* ── Tab switching ── */
@@ -272,8 +272,8 @@ function switchWbTab(tab){
 async function loadLive(){
   try{
     const [heartbeats, sessions]=await Promise.all([
-      apiFetch('/agents/status'),
-      apiFetch('/agents/sessions?project_id='+PROJECT_ID+'&limit=50')
+      workbenchFetch('/agents/status'),
+      workbenchFetch('/agents/sessions?project_id='+PROJECT_ID+'&limit=50')
     ]);
     renderAgentGrid(heartbeats);
     renderSessionsTable(sessions);
@@ -354,7 +354,7 @@ async function loadWbTerminal(sessionId){
   const info=document.getElementById('wb-terminal-info');
   pre.textContent='Loading session #'+sessionId+'…';
   try{
-    const data=await apiFetch('/agents/sessions/'+sessionId+'/terminal?limit=200');
+    const data=await workbenchFetch('/agents/sessions/'+sessionId+'/terminal?limit=200');
     const s=data.session;
     info.textContent='Agent '+(s.agent_name||s.agent_id)+' · Task #'+(s.task_id||'–')+' · '+esc(s.status)+' · '+(s.mode||'');
     const lines=[];
@@ -427,7 +427,7 @@ async function loadWbHandoff(sessionId, switchTab){
   const el=document.getElementById('wb-handoff-view');
   if(el)el.innerHTML='<div class="handoff-empty">Loading STATUS.md for session #'+sessionId+'…</div>';
   try{
-    const data=await apiFetch('/agents/sessions/'+sessionId+'/handoff');
+    const data=await workbenchFetch('/agents/sessions/'+sessionId+'/handoff');
     renderHandoff(data);
   }catch(e){
     if(el)el.innerHTML='<div class="handoff-empty">Failed to load STATUS.md: '+esc(e.message)+'</div>';
@@ -438,8 +438,8 @@ async function loadWbHandoff(sessionId, switchTab){
 async function loadApprovals(){
   try{
     const [pending,recent]=await Promise.all([
-      apiFetch('/agents/approvals?project_id='+PROJECT_ID+'&status_filter=pending&limit=50'),
-      apiFetch('/agents/approvals?project_id='+PROJECT_ID+'&limit=20')
+      workbenchFetch('/agents/approvals?project_id='+PROJECT_ID+'&status_filter=pending&limit=50'),
+      workbenchFetch('/agents/approvals?project_id='+PROJECT_ID+'&limit=20')
     ]);
     renderPendingApprovals(pending);
     renderResolvedApprovals(recent.filter(a=>a.status!=='pending'));
@@ -495,7 +495,7 @@ function renderResolvedApprovals(list){
 async function resolveWbApproval(id,decision){
   const note=(document.getElementById('wb-note-'+id)||{}).value||'';
   try{
-    await apiFetch('/agents/approvals/'+id+'/resolve',{method:'PATCH',body:JSON.stringify({decision,response_message:note})});
+    await workbenchFetch('/agents/approvals/'+id+'/resolve',{method:'PATCH',body:JSON.stringify({decision,response_message:note})});
     showToast('Approval '+decision,'success');
     loadApprovals();
   }catch(e){showToast('Failed: '+e.message,'error');}
@@ -505,7 +505,7 @@ async function resolveWbApproval(id,decision){
 async function loadDecisions(){
   const el=document.getElementById('wb-decisions-list');
   try{
-    const decisions=await apiFetch('/agents/projects/'+PROJECT_ID+'/decisions?limit=50');
+    const decisions=await workbenchFetch('/agents/projects/'+PROJECT_ID+'/decisions?limit=50');
     if(!decisions||!decisions.length){el.innerHTML='<p style="color:var(--text-muted);font-size:0.82rem;">No decisions recorded yet.</p>';return;}
     el.innerHTML=decisions.map(d=>`
       <div class="decision-card">

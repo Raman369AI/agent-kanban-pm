@@ -161,8 +161,8 @@ def build_command_for_role(
         args.append(adapter.invoke.mcp_flag)
 
     model = assignment.model or (adapter.models[0].id if adapter.models else None)
-    if model and adapter.invoke.model_flag:
-        args.extend([adapter.invoke.model_flag, model])
+    from agent_kanban_pm.runtime.model_selection import model_arguments
+    args.extend(model_arguments(adapter, model))
 
     is_auto = getattr(assignment, "autonomy", "supervised") == "auto"
 

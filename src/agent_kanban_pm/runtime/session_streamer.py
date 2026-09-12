@@ -252,7 +252,6 @@ def _check_completion(pane: str, workspace_path: Optional[str]) -> Optional[str]
 
 
 async def _stage_for_key(db, project_id: int, keys: set[str]) -> Optional[Stage]:
-    from agent_kanban_pm.runtime.stage_policy import normalize_stage_key
 
     result = await db.execute(
         select(Stage)
@@ -260,7 +259,7 @@ async def _stage_for_key(db, project_id: int, keys: set[str]) -> Optional[Stage]
         .order_by(Stage.order)
     )
     for stage in result.scalars().all():
-        if normalize_stage_key(stage.name) in keys:
+        if stage.key in keys:
             return stage
     return None
 
@@ -319,12 +318,11 @@ async def _assign_stage_entry_roles(db, task: Task, stage: Stage, *, skip_agent_
 
 
 async def _advance_task_after_session(db, session: AgentSession, task: Task) -> tuple[Optional[dict], list[dict]]:
-    from agent_kanban_pm.runtime.stage_policy import normalize_stage_key
 
     current_stage = None
     if task.stage_id:
         current_stage = (await db.execute(select(Stage).filter(Stage.id == task.stage_id))).scalar_one_or_none()
-    current_key = normalize_stage_key(current_stage.name) if current_stage else ""
+    current_key = current_stage.key if current_stage else ""
     assigned_role = await _assigned_role_for_session(session)
 
     target_stage = None

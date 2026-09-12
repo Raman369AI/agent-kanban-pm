@@ -69,7 +69,10 @@ def test_ui_routes_and_board_render():
         assert "board-revamp-shell" in body
         assert "kanban-column-revamp" in body
         assert 'id="approval-popup-overlay"' in body
-        assert "function openApprovalPopup" in body
+        assert '/static/js/board.js' in body
+        assert "function openApprovalPopup" in client.get('/static/js/board.js').text
+        assert client.get('/static/css/board.css').status_code == 200
+        assert client.get('/static/js/role-settings.js').status_code == 200
         assert "&#128272; Approvals" not in body
 
         stage_names = re.findall(r'data-stage-name="([^"]+)"', body)

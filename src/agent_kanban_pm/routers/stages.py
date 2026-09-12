@@ -62,6 +62,8 @@ async def update_stage(
         raise HTTPException(status_code=404, detail="Stage not found")
 
     update_data = stage_update.model_dump(exclude_unset=True)
+    # Preserve semantics before changing the label, including legacy rows.
+    stage.workflow_key = stage.key
     for field, value in update_data.items():
         setattr(stage, field, value)
 

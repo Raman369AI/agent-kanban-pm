@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table, Enum as SQLEnum, Index, text
 from sqlalchemy.orm import relationship, declarative_base
 import enum
+from agent_kanban_pm.runtime.stage_identity import default_stage_key, normalize_stage_key
 
 Base = declarative_base()
 
@@ -112,6 +113,7 @@ class Stage(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    workflow_key = Column(String(255), nullable=True, default=default_stage_key)
     description = Column(Text, nullable=True)
     order = Column(Integer, nullable=False)
     project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'))
@@ -120,6 +122,10 @@ class Stage(Base):
     # Relationships
     project = relationship("Project", back_populates="stages")
     tasks = relationship("Task", back_populates="stage")
+
+    @property
+    def key(self):
+        return self.workflow_key or normalize_stage_key(self.name)
 
 
 class Task(Base):

@@ -246,6 +246,16 @@ async def _migrate_db_schema():
             """))
             await _record_migration(9, "atomic_assignment_admission")
 
+        if not await _migration_applied(10):
+            from agent_kanban_pm.runtime.stage_identity import normalize_stage_key
+            if not await _column_exists(conn, "stages", "workflow_key"):
+                await conn.execute(text("ALTER TABLE stages ADD COLUMN workflow_key VARCHAR(255)"))
+            rows = (await conn.execute(text("SELECT id, name FROM stages WHERE workflow_key IS NULL"))).all()
+            for stage_id, name in rows:
+                await conn.execute(text("UPDATE stages SET workflow_key = :key WHERE id = :id"),
+                                   {"key": normalize_stage_key(name), "id": stage_id})
+            await _record_migration(10, "stable_stage_identity")
+
     # Backfill default roles
     async with async_session_maker() as session:
         from agent_kanban_pm.models import Entity

@@ -36,6 +36,7 @@ import pytest
 # Columns added by migrations v1-v8, keyed by table. Dropping these from a
 # freshly built schema reproduces the pre-migration shape.
 MIGRATED_COLUMNS = {
+    "stages": ["workflow_key"],
     "entities": ["role"],
     "tasks": ["created_by", "version", "sequence_order"],
     "agent_activities": [
@@ -177,6 +178,7 @@ def legacy_db(tmp_path) -> Path:
             "INSERT INTO tasks (id, title, description, project_id, status) "
             "VALUES (1, 'Legacy Task', 'Must survive the upgrade', 1, 'PENDING')"
         )
+        conn.execute('INSERT INTO stages (id, name, "order", project_id) VALUES (1, \'In Progress\', 1, 1)')
         conn.commit()
     finally:
         conn.close()
@@ -193,6 +195,7 @@ def test_legacy_fixture_really_is_missing_the_columns(legacy_db):
 def test_upgrade_adds_every_migrated_column(legacy_db):
     result = _run_init_db(legacy_db)
     assert "INIT_OK" in result.stdout, f"upgrade failed:\n{result.stderr}"
+    assert _rows(legacy_db, 'SELECT workflow_key FROM stages WHERE id = 1') == [('in_progress',)]
 
     for table, columns in MIGRATED_COLUMNS.items():
         present = _columns(legacy_db, table)

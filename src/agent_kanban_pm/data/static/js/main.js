@@ -131,6 +131,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const viewIcon = viewToggle?.querySelector('.icon');
     
     if (viewToggle) {
+        viewToggle.hidden = !document.getElementById('board-main-revamp');
+        viewToggle.setAttribute('aria-label', 'Switch board layout');
         viewToggle.addEventListener('click', function() {
             const currentView = document.documentElement.getAttribute('data-view') || 'grid';
             const newView = currentView === 'grid' ? 'list' : 'grid';
@@ -138,6 +140,7 @@ document.addEventListener('DOMContentLoaded', function() {
             document.documentElement.setAttribute('data-view', newView);
             localStorage.setItem('view', newView);
             viewIcon.textContent = newView === 'grid' ? '📊' : '📋';
+            viewToggle.setAttribute('aria-pressed', String(newView === 'list'));
             
             // Trigger view change event
             window.dispatchEvent(new CustomEvent('viewchange', { detail: { view: newView } }));
@@ -146,6 +149,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Set initial icon
         const savedView = localStorage.getItem('view') || 'grid';
         viewIcon.textContent = savedView === 'grid' ? '📊' : '📋';
+        viewToggle.setAttribute('aria-pressed', String(savedView === 'list'));
     }
 
     // Density selector

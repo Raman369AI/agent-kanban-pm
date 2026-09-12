@@ -172,6 +172,84 @@ def test_drag_and_keyboard_card_movement(page: Page, live_server: str, api: http
     expect(card).to_be_focused()
 
 
+def test_layout_preferences_and_refresh_preserve_task_context(page: Page, live_server: str, api: httpx.Client):
+    board = _prepare_board(api)
+    task_id = board['task']['id']
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    page.locator('#view-toggle').click()
+    expect(page.locator('html')).to_have_attribute('data-view', 'list')
+    assert page.locator('.kanban-container-revamp').evaluate("el => getComputedStyle(el).flexDirection") == 'column'
+    page.locator('#density-select').select_option('compact')
+    face = page.locator(f'#task-card-{task_id} .task-compact-face')
+    compact = face.evaluate('el => parseFloat(getComputedStyle(el).paddingTop)')
+    page.locator('#density-select').select_option('spacious')
+    assert face.evaluate('el => parseFloat(getComputedStyle(el).paddingTop)') > compact
+    card = page.locator(f'#task-card-{task_id}')
+    card.focus()
+    card.press('Enter')
+    card.locator('[data-tab="activity"]').click()
+    card.focus()
+    page.evaluate('() => refreshBoardFromServer()')
+    expect(card).to_be_focused()
+    expect(card.locator('[data-tab="activity"]')).to_have_class('expansion-tab active')
+    page.reload()
+    expect(page.locator('html')).to_have_attribute('data-view', 'list')
+    expect(page.locator('#density-select')).to_have_value('spacious')
+
+
+def test_renamed_stage_keyboard_move_uses_stable_status(page: Page, live_server: str, api: httpx.Client):
+    board = _prepare_board(api)
+    progress_id = board['stages']['In Progress']
+    api.patch(f'/stages/{progress_id}', json={'name': 'Building'}, headers=board['headers']).raise_for_status()
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    card = page.locator(f"#task-card-{board['task']['id']}")
+    card.focus()
+    card.press('ArrowRight')
+    expect(card).to_have_attribute('data-current-stage', str(board['stages']['To Do']))
+    expect(card).not_to_have_attribute('data-moving', 'true')
+    card.press('ArrowRight')
+    expect(page.locator(f'.kanban-column-revamp[data-stage-id="{progress_id}"]')).to_contain_text(board['task']['title'])
+    expect(card).to_have_attribute('data-status', 'in_progress')
+
+
+def test_role_editor_updates_models_and_preserves_other_drafts(page: Page, live_server: str, api: httpx.Client):
+    board = _prepare_board(api)
+    roles = [dict(role=name, agent='first', display_name='First', command='first',
+                  model='large', models=['large'], mode='interactive', autonomy='auto', installed=True)
+             for name in ['worker', 'security']]
+    data = {'roles': roles, 'role_names': ['worker', 'security'], 'candidates': [
+        dict(agent='first', display_name='First', command='first', models=['large'], installed=True),
+        dict(agent='second', display_name='Second', command='second', models=['small'], installed=True),
+    ]}
+    saved = []
+    page.route('**/ui/api/roles', lambda route: route.fulfill(json=data))
+    def save(route):
+        payload = route.request.post_data_json
+        saved.append(payload)
+        next(role for role in roles if role['role'] == payload['role']).update(payload)
+        route.fulfill(json=data)
+    page.route('**/ui/api/roles/assign', save)
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    page.locator('summary').filter(has_text='Advanced').click()
+    page.get_by_role('button', name='Team roles', exact=True).click()
+    expect(page.locator('#role-mode-worker')).to_have_value('interactive')
+    expect(page.locator('#role-autonomy-worker')).to_have_value('auto')
+    page.locator('#role-autonomy-security').select_option('supervised')
+    page.locator('#role-agent-worker').select_option('second')
+    expect(page.locator('#role-model-worker')).to_have_value('small')
+    row = page.locator('.role-settings-row').filter(has=page.locator('#role-agent-worker'))
+    row.get_by_role('button', name='Save role').click()
+    expect(row.get_by_role('status')).to_have_text('Saved')
+    assert saved[0]['model'] == 'small'
+    assert saved[0]['mode'] == 'interactive'
+    assert saved[0]['autonomy'] == 'auto'
+    expect(page.locator('#role-autonomy-security')).to_have_value('supervised')
+    page.set_viewport_size({'width': 390, 'height': 844})
+    dialog = page.locator('.role-settings-modal')
+    assert dialog.evaluate('el => el.scrollWidth <= el.clientWidth')
+    expect(row.get_by_role('button', name='Save role')).to_be_in_viewport()
+
+
 def test_edit_modal_focus_and_detailed_error_toast(
     page: Page, live_server: str, api: httpx.Client
 ):

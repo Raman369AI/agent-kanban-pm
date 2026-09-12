@@ -55,21 +55,7 @@ DEFAULT_POLICIES: Dict[str, Dict[str, Any]] = {
     },
 }
 
-_NORMALIZE = {
-    "to do": "to_do",
-    "todo": "to_do",
-    "in progress": "in_progress",
-    "in_progress": "in_progress",
-    "review": "review",
-    "done": "done",
-    "completed": "done",
-    "backlog": "backlog",
-}
-
-
-def normalize_stage_key(name: str) -> str:
-    stripped = (name or "").strip().lower()
-    return _NORMALIZE.get(stripped, stripped.replace(" ", "_"))
+from agent_kanban_pm.runtime.stage_identity import normalize_stage_key  # compatibility export
 
 
 async def seed_default_policies(db: AsyncSession, project_id: int) -> List[StagePolicy]:
@@ -87,7 +73,7 @@ async def seed_default_policies(db: AsyncSession, project_id: int) -> List[Stage
     policies: List[StagePolicy] = []
 
     for stage in stages:
-        key = normalize_stage_key(stage.name)
+        key = stage.key
         defaults = DEFAULT_POLICIES.get(key, DEFAULT_POLICIES.get("to_do", {}))
         policy = StagePolicy(
             project_id=project_id,

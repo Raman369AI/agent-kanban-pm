@@ -65,6 +65,7 @@ class StageBase(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = None
     order: int
+    workflow_key: Optional[str] = Field(default=None, min_length=1, max_length=255, pattern=r"^[a-z][a-z0-9_]*$")
 
 
 class StageCreate(StageBase):

@@ -18,6 +18,7 @@ import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
+from agent_kanban_pm.runtime.model_selection import effective_model, model_arguments
 
 from sqlalchemy import select, and_, desc
 from sqlalchemy.exc import IntegrityError
@@ -336,6 +337,7 @@ def _build_agent_command(
     workspace_path: str,
     prompt: str,
     autonomy: str = AUTONOMY_SUPERVISED,
+    model: Optional[str] = None,
 ) -> list[str]:
     cmd_path = shutil.which(adapter.invoke.command)
     if not cmd_path:
@@ -353,6 +355,7 @@ def _build_agent_command(
         arg.replace("{workspace}", workspace_path).replace("{prompt}", prompt)
         for arg in arg_templates
     ]
+    rendered_args.extend(model_arguments(adapter, model))
     return [cmd_path, *rendered_args]
 
 
@@ -503,8 +506,8 @@ class AssignmentLauncher:
                 "worker",
             )
 
-            stage_key = task.stage.name.strip().lower() if task.stage else ""
-            runnable_stages = {"to do", "todo", "in progress", "in_progress"}
+            stage_key = task.stage.key if task.stage else ""
+            runnable_stages = {"to_do", "in_progress"}
             if _role_is_review(matching_role_name):
                 runnable_stages.add("review")
             if matching_role_name == "git_pr":
@@ -649,11 +652,14 @@ class AssignmentLauncher:
             )
             checkpoint = checkpoint_result.scalar_one_or_none()
             autonomy = prefs.autonomy_for_role(matching_role_name) if prefs else AUTONOMY_SUPERVISED
+            assignment = role_assignments.get(matching_role_name)
+            model = (assignment.model if assignment else None) or (adapter.models[0].id if adapter.models else None)
+            model = effective_model(adapter, model)
             prompt = _build_prompt(
                 task, project, agent, workspace_path, checkpoint, isolated_workspace, autonomy
             )
             args = await asyncio.to_thread(
-                _build_agent_command, adapter, workspace_path, prompt, autonomy
+                _build_agent_command, adapter, workspace_path, prompt, autonomy, model
             )
             command_text = shell_command(args)
 
@@ -664,7 +670,7 @@ class AssignmentLauncher:
                 workspace_path=workspace_path,
                 status=AgentSessionStatus.STARTING,
                 command=command_text,
-                model=adapter.models[0].id if adapter.models else None,
+                model=model,
                 mode="headless",
             )
             db.add(db_session)
@@ -808,7 +814,7 @@ class AssignmentLauncher:
     async def _mark_task_started(self, db, task: Task, agent: Entity) -> Optional[dict]:
         """Record that execution has started and reflect it on the board."""
         current_stage_name = task.stage.name if task.stage else str(task.stage_id)
-        current_stage_key = current_stage_name.strip().lower() if current_stage_name else ""
+        current_stage_key = task.stage.key if task.stage else ""
         already_in_progress = (
             task.status == TaskStatus.IN_PROGRESS
             and current_stage_key in {"in progress", "in_progress"}
@@ -830,7 +836,7 @@ class AssignmentLauncher:
             in_progress_stage = next(
                 (
                     stage for stage in stages_result.scalars().all()
-                    if stage.name.strip().lower() in {"in progress", "in_progress"}
+                    if stage.key == "in_progress"
                 ),
                 None,
             )
@@ -921,7 +927,7 @@ class AssignmentLauncher:
                 task for task in result.scalars().all()
                 if task.assignees
                 and task.stage
-                and task.stage.name.strip().lower() in {"to do", "todo", "in progress", "in_progress"}
+                and task.stage.key in {"to_do", "in_progress"}
             ]
 
         resumed = 0

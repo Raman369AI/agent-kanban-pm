@@ -162,10 +162,12 @@ def test_board_editing_uses_canonical_values_and_escapes_comments():
         body = response.text
         assert "<body>" in body
         assert str(datetime.now().year) in body
-        assert "data.description || ''" in body
-        assert "data.status || 'pending'" in body
-        assert "escapeHtml(c.content)" in body
-        assert "statusBadge.textContent.trim()" not in body
+        assert '/static/js/board.js' in body
+        script = client.get('/static/js/board.js').text
+        assert "data.description || ''" in script
+        assert "data.status || 'pending'" in script
+        assert "escapeHtml(c.content)" in script
+        assert "statusBadge.textContent.trim()" not in script
 
 
 def test_ui_edit_rejects_invalid_status_instead_of_raising_server_error():
