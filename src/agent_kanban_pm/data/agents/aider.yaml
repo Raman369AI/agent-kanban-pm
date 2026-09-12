@@ -1,6 +1,6 @@
 name: aider
 display_name: "Aider"
-version: "1.0"
+version: "1.1"
 
 invoke:
   command: aider
@@ -11,8 +11,7 @@ invoke:
 capabilities: [code, refactoring, git, testing]
 
 models:
-  - id: gpt-4o
-    context_window: 128000
+  - id: default
 
 protocol: stdio
 

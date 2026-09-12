@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0rc8] — 2026-09-11
+
+### Fixed
+- **Claude and Aider follow their CLI model defaults** — bundled adapters no longer pin `claude-sonnet-4-6` or `gpt-4o` when a role leaves its model at the default. Explicit model selections still pass through to task and persistent role sessions. The Team roles editor shows the refreshed adapter catalog even when an older assignment saved a stale model list.
+
 ## [0.4.0rc7] — 2026-09-11
 
 ### Added

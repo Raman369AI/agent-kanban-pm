@@ -65,7 +65,7 @@ async def _role_assignment_payload():
         adapter = adapters.get(assignment.agent)
         command = adapter.invoke.command if adapter else (assignment.command or assignment.agent)
         adapter_models = [m.id for m in adapter.models] if adapter else []
-        models = assignment.models or adapter_models
+        models = adapter_models or assignment.models
         roles.append({
             "role": role_name,
             "agent": assignment.agent,

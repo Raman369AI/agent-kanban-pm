@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 from agent_kanban_pm.app import app
 from agent_kanban_pm.models import Entity, EntityType, Role
-from agent_kanban_pm.routers.ui import ui_assign_cli_to_role
+from agent_kanban_pm.routers.ui import _role_assignment_payload, ui_assign_cli_to_role
 from agent_kanban_pm.runtime import adapter_loader, preferences
 from agent_kanban_pm.runtime.adapter_loader import AdapterSpec, InvokeSpec, ModelSpec
 from agent_kanban_pm.runtime.assignment_launcher import _build_agent_command
@@ -88,6 +88,38 @@ def test_default_model_labels_are_not_sent_as_cli_models(role_settings, name):
     assignment = RoleAssignment(agent=name, model=name + '-default')
     assert '--model' not in _build_agent_command(adapter, '/tmp/workspace', 'task', model=assignment.model)
     assert '--model' not in build_command_for_role(adapter, assignment, 'worker', 'http://localhost')
+
+
+@pytest.mark.parametrize("name", ["claude", "aider"])
+def test_bundled_adapters_follow_cli_default_until_model_is_selected(name, monkeypatch):
+    from agent_kanban_pm.runtime.role_supervisor import build_command_for_role
+
+    adapter = adapter_loader.load_adapter(adapter_loader.BUNDLED_ADAPTERS_DIR / f"{name}.yaml")
+    assert adapter is not None
+    assert [model.id for model in adapter.models] == ["default"]
+    monkeypatch.setattr("shutil.which", lambda command: "/usr/bin/" + command)
+
+    default_assignment = RoleAssignment(agent=name, model=adapter.models[0].id)
+    assert "--model" not in _build_agent_command(adapter, "/tmp/workspace", "task", model=default_assignment.model)
+    assert "--model" not in build_command_for_role(adapter, default_assignment, "worker", "http://localhost")
+
+    selected = "my-selected-model"
+    task_command = _build_agent_command(adapter, "/tmp/workspace", "task", model=selected)
+    role_command = build_command_for_role(
+        adapter, RoleAssignment(agent=name, model=selected), "worker", "http://localhost"
+    )
+    assert task_command[task_command.index("--model") + 1] == selected
+    assert role_command[role_command.index("--model") + 1] == selected
+
+
+@pytest.mark.asyncio
+async def test_role_payload_uses_refreshed_adapter_models(role_settings):
+    prefs, _ = role_settings
+    prefs.roles.worker.models = ["stale-model"]
+    payload = await _role_assignment_payload()
+    worker = next(role for role in payload["roles"] if role["role"] == "worker")
+    assert worker["models"] == ["large"]
+    assert worker["model"] == "large"
 
 
 def test_renaming_stage_preserves_transition_semantics():

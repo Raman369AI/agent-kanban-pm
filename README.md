@@ -2,7 +2,7 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
-Status: release candidate (`0.4.0rc7`) for local, single-user development.
+Status: release candidate (`0.4.0rc8`) for local, single-user development.
 The local runtime, board UI, per-task agent sessions, and MCP surface work and
 are covered by tests, including a database upgrade path. It is a single-operator
 tool by design: one shared token guards the local server, so do not expose it to
@@ -323,7 +323,7 @@ release. Each phase is releasable on its own.
   scripts and styles have landed. Landing-page visuals, the mkdocs site,
   coverage reporting, and extracting the remaining templates are still
   outstanding.
-- [ ] **Phase 5 — Release & distribution**: `0.4.0rc7` is on PyPI and GitHub,
+- [ ] **Phase 5 — Release & distribution**: `0.4.0rc8` is on PyPI and GitHub,
   published from a git tag by a workflow that authenticates through PyPI
   trusted publishing, with a weekly job that installs the released package to
   catch breakage. A stable `0.4.0` is what remains.
