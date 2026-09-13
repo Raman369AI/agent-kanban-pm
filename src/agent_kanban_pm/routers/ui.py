@@ -31,7 +31,6 @@ from agent_kanban_pm.services.tasks import (
 )
 from agent_kanban_pm.runtime.default_stages import DEFAULT_STAGES
 from agent_kanban_pm.runtime.stage_identity import normalize_stage_key, STAGE_STATUSES
-from agent_kanban_pm.runtime.handoff_protocol import update_status_file
 from agent_kanban_pm.runtime.instance import get_csrf_token
 from agent_kanban_pm.runtime.paths import templates_dir
 
@@ -244,34 +243,6 @@ def _plan_items_from_chat(text: str) -> list[dict]:
         for index, item in enumerate(items)
     ]
 
-
-def _write_chat_plan_status(project: Project, request_text: str, created_tasks: list[Task]) -> Optional[str]:
-    if not project.path:
-        return None
-    root = Path(project.path).expanduser().resolve()
-    if not root.exists() or not root.is_dir():
-        return None
-    try:
-        path = update_status_file(root, {
-            "state": "planned",
-            "handoff_ready": True,
-            "project_id": project.id,
-            "task_id": None,
-            "current_agent": "human",
-            "assigned_role": "orchestrator",
-            "summary": f"Chat request decomposed into {len(created_tasks)} backlog card(s).",
-            "outputs": [f"task:{task.id} {task.title}" for task in created_tasks],
-            "signals_to_next": (
-                f"Original request:\n{request_text.strip()}\n\n"
-                "Created backlog cards:\n"
-                + "\n".join(f"- #{task.id}: {task.title}" for task in created_tasks)
-            ),
-            "blockers": "none",
-        })
-        return str(path)
-    except OSError as exc:
-        logger.warning("Could not write chat plan STATUS.md for %s: %s", root, exc)
-        return None
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
@@ -1091,7 +1062,7 @@ async def ui_create_chat_plan(
     db: AsyncSession = Depends(get_db),
     current_entity: Optional[Entity] = Depends(get_current_entity)
 ):
-    """Turn a chat request into backlog cards and write the plan to STATUS.md.
+    """Turn a chat request into durable backlog cards and a planning decision.
 
     Two modes:
       * Regex fallback (browser chat bar) — body = {project_id, message}.
@@ -1182,10 +1153,10 @@ async def ui_create_chat_plan(
             log_type="action",
         ))
 
-    status_path = _write_chat_plan_status(project, message, created_tasks)
     rationale = (
-        "Created backlog cards from chat request and wrote the plan "
-        f"to {status_path or 'STATUS.md was unavailable'}."
+        f"Created {len(created_tasks)} backlog cards from chat request: "
+        + ", ".join(f"#{task.id} {task.title}" for task in created_tasks)
+        + f"\n\nOriginal request:\n{message}"
     )
     if chat_req.transcript:
         rationale = f"{rationale}\n\n--- transcript ---\n{chat_req.transcript[:8000]}"
@@ -1217,7 +1188,7 @@ async def ui_create_chat_plan(
         {
             "project_id": project.id,
             "task_ids": [task.id for task in created_tasks],
-            "status_path": status_path,
+            "status_path": None,
             "from_designer": from_designer,
         },
         project_id=project.id,
@@ -1230,7 +1201,7 @@ async def ui_create_chat_plan(
             {"id": t.id, "title": t.title, "priority": t.priority}
             for t in created_tasks
         ],
-        "status_path": status_path,
+        "status_path": None,
         "from_designer": from_designer,
     }
 

@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -11,9 +12,9 @@ from agent_kanban_pm.db import async_session_maker, init_db
 from agent_kanban_pm.runtime.handoff_protocol import update_status_file
 from agent_kanban_pm.runtime.preferences import RoleAssignment
 from agent_kanban_pm.runtime.session_streamer import (
-    _check_completion,
+    _completion_for_session,
+    _stream_one_session,
     _finalize_completed_session,
-    _terminal_completion_summary,
 )
 from agent_kanban_pm.models import (
     AgentSession,
@@ -37,34 +38,6 @@ class _FakePrefs:
 
     def get_role_assignments(self):
         return self._assignments
-
-
-def test_completion_summary_detects_file_list_handoff_at_shell_prompt():
-    pane = """
-# Todos
-[x] Explore workspace file structure
-[x] Compare files against AGENTS.md documented structure
-[x] List files unrelated to existing structure
-
-Here are the files **unrelated to the existing structure** as documented in AGENTS.md:
-
-| File | Notes |
-|---|---|
-| `agent_reactor.py` | AGENTS.md: "deleted" |
-
-kronos@host:~/worktree$
-"""
-
-    # Test the legacy terminal heuristic directly
-    summary = _terminal_completion_summary(pane)
-    assert summary is not None
-    assert summary.startswith("Here are the files")
-    assert "agent_reactor.py" in summary
-
-    # Test the full two-tier check (falls back to heuristic with no workspace)
-    summary2 = _check_completion(pane, workspace_path=None)
-    assert summary2 is not None
-    assert "agent_reactor.py" in summary2
 
 
 @pytest.mark.asyncio
@@ -152,6 +125,7 @@ async def test_worker_completion_moves_task_to_review_and_assigns_review_roles(t
         session = (await db.execute(select(AgentSession).filter(AgentSession.id == session_id))).scalar_one()
 
     assert await _finalize_completed_session(session, pane="", summary="ready") is True
+    assert await _finalize_completed_session(session, pane="", summary="ready") is False
 
     async with async_session_maker() as db:
         task = (await db.execute(
@@ -231,6 +205,7 @@ async def test_review_completion_moves_task_to_done_and_assigns_git_pr(tmp_path,
             project_id=project.id,
             task_id=task.id,
             workspace_path=str(workspace),
+            assigned_role="diff_review",
             status=AgentSessionStatus.ACTIVE,
             command="review",
         )
@@ -257,3 +232,101 @@ async def test_review_completion_moves_task_to_done_and_assigns_git_pr(tmp_path,
     assert task.status == TaskStatus.COMPLETED
     assert task.completed_at is not None
     assert git_agent_id in {entity.id for entity in task.assignees}
+
+
+@pytest.mark.asyncio
+async def test_completion_import_requires_exact_run_and_survives_runner_exit(tmp_path, monkeypatch):
+    await init_db()
+    async def _publish_noop(*args, **kwargs):
+        return None
+    monkeypatch.setattr("agent_kanban_pm.runtime.session_streamer.event_bus.publish", _publish_noop)
+    monkeypatch.setattr("agent_kanban_pm.runtime.session_streamer._tmux_has_session", lambda _: False)
+    workspace = tmp_path / "scoped"
+    workspace.mkdir()
+    async with async_session_maker() as db:
+        owner = Entity(name="scoped-handoff-owner", entity_type=EntityType.HUMAN, role=Role.OWNER, is_active=True)
+        agent = Entity(name="scoped-handoff-agent", entity_type=EntityType.AGENT, role=Role.WORKER, is_active=True)
+        db.add_all([owner, agent])
+        await db.flush()
+        project = Project(name="scoped handoff project", creator_id=owner.id, approval_status=ApprovalStatus.APPROVED, path=str(workspace))
+        db.add(project)
+        await db.flush()
+        stage = Stage(project_id=project.id, name="In Progress", order=3)
+        review = Stage(project_id=project.id, name="Review", order=4)
+        db.add_all([stage, review])
+        await db.flush()
+        review_stage_id = review.id
+        task = Task(title="Scoped task", project_id=project.id, stage_id=stage.id, status=TaskStatus.IN_PROGRESS, created_by=owner.id)
+        db.add(task)
+        await db.flush()
+        session = AgentSession(agent_id=agent.id, project_id=project.id, task_id=task.id, workspace_path=str(workspace), assigned_role="worker", run_token="active-run", status=AgentSessionStatus.ACTIVE, command="worker")
+        db.add(session)
+        await db.commit()
+        session_id, task_id, project_id = session.id, task.id, project.id
+
+    from agent_kanban_pm.runtime.handoff_protocol import initialize_status_file
+    initialize_status_file(workspace, task_id=task_id, project_id=project_id, session_id=session_id, run_token="old-run", current_agent="agent", assigned_role="worker")
+    update_status_file(workspace, {"state": "done", "handoff_ready": True, "summary": "Old run"})
+    async with async_session_maker() as db:
+        session = await db.get(AgentSession, session_id)
+    assert await _completion_for_session(session) is None
+
+    initialize_status_file(workspace, task_id=task_id, project_id=project_id, session_id=session_id, run_token="active-run", current_agent="agent", assigned_role="worker")
+    update_status_file(workspace, {"state": "done", "handoff_ready": True, "summary": "Current run"})
+    assert await _completion_for_session(session) == "Current run"
+    (workspace / "STATUS.md").unlink()
+    assert await _completion_for_session(session) == "Current run"
+    await _stream_one_session(session, "scoped-handoff-agent")
+    async with async_session_maker() as db:
+        saved_session = await db.get(AgentSession, session_id)
+        saved_task = await db.get(Task, task_id)
+        assert saved_session.ended_at is not None
+        assert saved_task.stage_id == review_stage_id
+
+
+@pytest.mark.asyncio
+async def test_handoff_submission_rejects_wrong_run_and_is_idempotent(tmp_path):
+    from agent_kanban_pm.routers.agent_activity import SessionHandoffSubmit, submit_agent_session_handoff
+
+    await init_db()
+    async with async_session_maker() as db:
+        owner = Entity(name="api-handoff-owner", entity_type=EntityType.HUMAN, role=Role.OWNER, is_active=True)
+        agent = Entity(name="api-handoff-agent", entity_type=EntityType.AGENT, role=Role.WORKER, is_active=True)
+        db.add_all([owner, agent])
+        await db.flush()
+        project = Project(name="api handoff project", creator_id=owner.id, approval_status=ApprovalStatus.APPROVED, path=str(tmp_path))
+        db.add(project)
+        await db.flush()
+        progress = Stage(project_id=project.id, name="In Progress", order=3)
+        db.add(progress)
+        await db.flush()
+        task = Task(title="API handoff task", project_id=project.id, stage_id=progress.id, status=TaskStatus.IN_PROGRESS, created_by=owner.id)
+        db.add(task)
+        await db.flush()
+        session = AgentSession(agent_id=agent.id, project_id=project.id, task_id=task.id, workspace_path=str(tmp_path), assigned_role="worker", run_token="current-run", status=AgentSessionStatus.ACTIVE, command="worker")
+        db.add(session)
+        await db.commit()
+        session_id, project_id, task_id, agent_id = session.id, project.id, task.id, agent.id
+
+    async with async_session_maker() as db:
+        agent = await db.get(Entity, agent_id)
+        wrong = SessionHandoffSubmit(project_id=project_id, task_id=task_id, run_token="stale-run", state="done", summary="Ready")
+        with pytest.raises(HTTPException) as exc:
+            await submit_agent_session_handoff(session_id, wrong, db=db, current_entity=agent)
+        assert exc.value.status_code == 409
+        good = SessionHandoffSubmit(project_id=project_id, task_id=task_id, run_token="current-run", state="done", summary="Ready")
+        assert (await submit_agent_session_handoff(session_id, good, db=db, current_entity=agent))["accepted"]
+        assert (await submit_agent_session_handoff(session_id, good, db=db, current_entity=agent))["accepted"]
+        with pytest.raises(HTTPException) as exc:
+            await submit_agent_session_handoff(
+                session_id, good.model_copy(update={"summary": "Different"}),
+                db=db, current_entity=agent,
+            )
+        assert exc.value.status_code == 409
+
+    async with async_session_maker() as db:
+        session = await db.get(AgentSession, session_id)
+        task = await db.get(Task, task_id)
+        assert session.handoff_summary == "Ready"
+        assert session.handoff_received_at is not None
+        assert task.status == TaskStatus.IN_PROGRESS

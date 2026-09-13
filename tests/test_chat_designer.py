@@ -213,11 +213,15 @@ def _ensure_human_and_project(client, name: str, path: str) -> tuple[int, int]:
     return human_id, project_id
 
 
-def test_endpoint_designer_path():
-    """POST /ui/tasks/chat-plan with items[] should land cards in backlog and return them."""
+def test_endpoint_designer_path(tmp_path):
+    """Chat plans create durable cards without replacing a session handoff file."""
+    workspace = tmp_path / "chat-project"
+    workspace.mkdir()
+    status_file = workspace / "STATUS.md"
+    status_file.write_text("existing agent handoff\n", encoding="utf-8")
     with TestClient(app) as client:
         human_id, project_id = _ensure_human_and_project(
-            client, "ChatDesigner Smoke", "/tmp/chatdesigner_smoke"
+            client, "ChatDesigner Smoke", str(workspace)
         )
         headers = {"x-entity-id": str(human_id)}
 
@@ -247,6 +251,8 @@ def test_endpoint_designer_path():
         r = client.post("/ui/tasks/chat-plan", json=body, headers=headers)
         assert r.status_code == 200, f"chat-plan: {r.status_code} {r.text[:300]}"
         payload = r.json()
+        assert status_file.read_text(encoding="utf-8") == "existing agent handoff\n"
+        assert payload["status_path"] is None
         assert payload["from_designer"] is True
         assert len(payload["tasks"]) == 2
         ids = [t["id"] for t in payload["tasks"]]

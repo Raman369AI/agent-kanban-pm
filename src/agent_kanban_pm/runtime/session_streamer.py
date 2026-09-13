@@ -29,7 +29,7 @@ import subprocess
 from datetime import UTC, datetime
 from typing import Dict, Optional
 
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, update as sa_update, func
 
 from agent_kanban_pm.db import async_session_maker
 from agent_kanban_pm.events import event_bus, EventType
@@ -52,7 +52,7 @@ from agent_kanban_pm.models import (
     task_assignments,
 )
 from agent_kanban_pm.runtime.assignment_launcher import _tmux_session_name
-from agent_kanban_pm.runtime.handoff_protocol import read_status_file
+from agent_kanban_pm.runtime.handoff_protocol import read_status_file, status_matches_session
 from agent_kanban_pm.runtime.prompt_patterns import detect_prompt
 from agent_kanban_pm.runtime.process_launcher import (
     runner_available,
@@ -161,94 +161,45 @@ async def _upsert_checkpoint(session: AgentSession, pane: str, status_type: Agen
         await db.commit()
 
 
-def _pane_is_ready_for_input(pane: str) -> bool:
-    tail = pane[-1200:]
-    if "Type your message" in tail:
-        return True
-    return bool(tail.rstrip().endswith("$") or tail.rstrip().endswith("#"))
+async def _completion_for_session(session: AgentSession) -> Optional[str]:
+    """Import a verified file handoff into durable session state before acting on it."""
+    async with async_session_maker() as db:
+        row = await db.get(AgentSession, session.id)
+        if not row or row.ended_at is not None:
+            return None
+        if row.handoff_state in {"done", "completed", "review"}:
+            return row.handoff_summary or "Agent submitted a handoff"
 
-
-def _terminal_completion_summary(pane: str) -> Optional[str]:
-    """Legacy fallback: detect completion from terminal text heuristics.
-
-    DEPRECATED: Prefer STATUS.md handoff_ready as the canonical completion
-    signal. This fallback fires only when STATUS.md is absent or does not
-    indicate handoff_ready, and logs a warning so operators know to update
-    the agent's instructions.
-    """
-    lower = pane.lower()
-    markers = [
-        "i have completed",
-        "i've revamped",
-        "changes are ready for review",
-        "ready to hand off",
-        "here are the **",
-        "here are the files",
-        "here are the 28 files",
-        "now i have a complete picture",
-    ]
-    has_completed_todos = "# todos" in lower and "[ ]" not in lower and "[x]" in lower
-    if not any(marker in lower for marker in markers) and not has_completed_todos:
+    try:
+        status_data = read_status_file(session.workspace_path)
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not read handoff for session #%s: %s", session.id, exc)
         return None
-    if not _pane_is_ready_for_input(pane):
+    if not status_matches_session(status_data, session):
         return None
-    start = max(
-        pane.lower().rfind("i have completed"),
-        pane.lower().rfind("i've revamped"),
-        pane.lower().rfind("here are the **"),
-        pane.lower().rfind("here are the files"),
-        pane.lower().rfind("here are the 28 files"),
-        pane.lower().rfind("now i have a complete picture"),
-    )
-    if start < 0:
-        start = max(0, len(pane) - 3000)
-    summary = pane[start:].strip()
-    for marker in ("? for shortcuts", "\n >   Type your message", "\nkronos@"):
-        idx = summary.find(marker)
-        if idx > 0:
-            summary = summary[:idx].strip()
-    return summary[-4000:] or None
+    summary = (status_data["validated"].summary or "Agent submitted a handoff")[-4000:]
+    state = status_data["state"]
 
-
-def _check_completion(pane: str, workspace_path: Optional[str]) -> Optional[str]:
-    """Check whether the session is complete.
-
-    Two-tier detection:
-      1. Primary (structural): Read STATUS.md from the workspace. If
-         handoff_ready is true and state is done/completed/review, use the
-         frontmatter summary as the completion summary.
-      2. Fallback (heuristic): Legacy terminal text marker matching. Fires
-         only when STATUS.md is absent or has no handoff signal, and logs a
-         deprecation warning so operators can update agent instructions.
-    """
-    # --- Tier 1: STATUS.md (canonical signal) ---
-    if workspace_path:
-        try:
-            status_data = read_status_file(workspace_path)
-            if status_data.get("handoff_ready"):
-                state = (status_data.get("state") or "").lower()
-                if state in ("done", "completed", "review"):
-                    validated = status_data.get("validated")
-                    summary = (
-                        validated.summary if validated and validated.summary
-                        else status_data.get("frontmatter", {}).get("summary", "")
-                    )
-                    if not summary:
-                        summary = f"Agent marked handoff_ready=true, state={state} in STATUS.md"
-                    return summary[-4000:]
-        except Exception as exc:
-            logger.debug("Could not read STATUS.md at %s: %s", workspace_path, exc)
-
-    # --- Tier 2: Terminal text heuristic (deprecated fallback) ---
-    fallback = _terminal_completion_summary(pane)
-    if fallback:
-        logger.warning(
-            "Completion detected via terminal text heuristic (DEPRECATED). "
-            "Agents should set handoff_ready: true in STATUS.md instead. "
-            "workspace=%s",
-            workspace_path,
+    async with async_session_maker() as db:
+        result = await db.execute(
+            sa_update(AgentSession)
+            .where(
+                AgentSession.id == session.id,
+                AgentSession.ended_at.is_(None),
+                AgentSession.run_token == session.run_token,
+                AgentSession.handoff_received_at.is_(None),
+            )
+            .values(
+                handoff_state=state,
+                handoff_summary=summary,
+                handoff_received_at=datetime.now(UTC),
+            )
         )
-    return fallback
+        if result.rowcount:
+            await db.commit()
+            return summary
+        row = await db.get(AgentSession, session.id)
+        return row.handoff_summary if row and row.ended_at is None else None
 
 
 async def _stage_for_key(db, project_id: int, keys: set[str]) -> Optional[Stage]:
@@ -265,15 +216,7 @@ async def _stage_for_key(db, project_id: int, keys: set[str]) -> Optional[Stage]
 
 
 async def _assigned_role_for_session(session: AgentSession) -> str:
-    try:
-        status_data = read_status_file(session.workspace_path) if session.workspace_path else {}
-        frontmatter = status_data.get("frontmatter") or {}
-        role = frontmatter.get("assigned_role")
-        if role:
-            return str(role).strip().lower()
-    except Exception:
-        pass
-    return "worker"
+    return (session.assigned_role or "worker").strip().lower()
 
 
 async def _assign_stage_entry_roles(db, task: Task, stage: Stage, *, skip_agent_id: Optional[int] = None) -> list[dict]:
@@ -365,18 +308,33 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
     """Mark the session DONE, record handoff, and advance the card to the next collaboration stage."""
     now = datetime.now(UTC)
     async with async_session_maker() as db:
-        row = (await db.execute(
-            select(AgentSession).filter(AgentSession.id == session.id)
-        )).scalar_one_or_none()
-        task = (await db.execute(
-            select(Task).filter(Task.id == session.task_id)
-        )).scalar_one_or_none()
-        if not row or not task:
+        claimed = await db.execute(
+            sa_update(AgentSession)
+            .where(
+                AgentSession.id == session.id,
+                AgentSession.ended_at.is_(None),
+                AgentSession.status.in_([
+                    AgentSessionStatus.STARTING,
+                    AgentSessionStatus.ACTIVE,
+                    AgentSessionStatus.BLOCKED,
+                ]),
+            )
+            .values(
+                status=AgentSessionStatus.DONE,
+                ended_at=now,
+                last_seen_at=now,
+                handoff_summary=summary,
+                handoff_state=func.coalesce(AgentSession.handoff_state, "done"),
+                handoff_received_at=func.coalesce(AgentSession.handoff_received_at, now),
+            )
+        )
+        if claimed.rowcount != 1:
             return False
-
-        row.status = AgentSessionStatus.DONE
-        row.ended_at = now
-        row.last_seen_at = now
+        row = await db.get(AgentSession, session.id)
+        task = await db.get(Task, row.task_id) if row and row.task_id else None
+        if not task or task.project_id != row.project_id:
+            await db.rollback()
+            return False
 
         transition_event, assigned_stage_roles = await _advance_task_after_session(db, row, task)
 
@@ -386,7 +344,6 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
                 AgentApproval.status == AgentApprovalStatus.PENDING,
             )
         )).scalars().all()
-        from sqlalchemy import update as sa_update
         for approval in pending:
             # Use atomic CAS to avoid overwriting a concurrent resolution
             cas_result = await db.execute(
@@ -610,6 +567,17 @@ async def gc_leak_worktrees() -> None:
 async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
     tmux_session = _tmux_session_name(agent_name, session.task_id)
 
+    # Agents may submit the handoff and exit between polls. Persist and
+    # finalize that handoff before interpreting the missing runner as failure.
+    early_summary = await _completion_for_session(session)
+    if early_summary and await _finalize_completed_session(session, "", early_summary):
+        if _tmux_has_session(tmux_session):
+            kill_session(tmux_session)
+        await _cleanup_worktree_for_session(session.id)
+        _pane_cursor.pop(session.id, None)
+        _pending_approvals.pop(session.id, None)
+        return
+
     if not _tmux_has_session(tmux_session):
         # tmux session is gone → wrap up the AgentSession so the UI stops
         # showing it as Active forever.
@@ -683,7 +651,7 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
 
     pane = capture_pane(tmux_session, lines=200)
     await _upsert_checkpoint(session, pane, status_type)
-    summary = _check_completion(pane, session.workspace_path)
+    summary = await _completion_for_session(session)
     if summary and await _finalize_completed_session(session, pane, summary):
         kill_session(tmux_session)
         await _cleanup_worktree_for_session(session.id)

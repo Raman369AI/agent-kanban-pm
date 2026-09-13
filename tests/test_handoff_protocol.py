@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from agent_kanban_pm.runtime.handoff_protocol import (
     STATUS_TEMPLATE,
     available_handoff_agents,
@@ -9,6 +11,7 @@ from agent_kanban_pm.runtime.handoff_protocol import (
     profile_for_agent,
     read_status_file,
     status_path_for_workspace,
+    status_matches_session,
 )
 from agent_kanban_pm.runtime.preferences import Preferences, RoleAssignment, RoleConfig
 
@@ -116,3 +119,31 @@ def test_available_handoff_agents_includes_active_team_and_defaults(monkeypatch)
     assert "claude" in agents
     assert "codex" in agents
     assert "custom-cli" in agents
+
+
+def test_reassigning_shared_workspace_resets_stale_completion_and_preserves_notes(tmp_path):
+    initialize_status_file(
+        tmp_path, task_id=1, project_id=7, session_id=11, run_token="first",
+        current_agent="agent-a", assigned_role="worker",
+    )
+    status_path = tmp_path / "STATUS.md"
+    status_path.write_text(status_path.read_text() + "Human notes stay here.\n", encoding="utf-8")
+    from agent_kanban_pm.runtime.handoff_protocol import update_status_file
+    update_status_file(tmp_path, {"state": "done", "handoff_ready": True, "summary": "First task"})
+    assert "Human notes stay here." in status_path.read_text()
+    stale = read_status_file(tmp_path)
+    second = SimpleNamespace(id=12, task_id=2, project_id=7, run_token="second")
+    assert status_matches_session(stale, second) is False
+
+    initialize_status_file(
+        tmp_path, task_id=2, project_id=7, session_id=12, run_token="second",
+        current_agent="agent-b", assigned_role="worker",
+    )
+    fresh = read_status_file(tmp_path)
+    assert fresh["state"] == "assigned"
+    assert fresh["handoff_ready"] is False
+    assert fresh["validated"].task_id == 2
+    assert fresh["validated"].session_id == 12
+    assert status_matches_session(fresh, second) is False
+    update_status_file(tmp_path, {"state": "done", "handoff_ready": True, "summary": "Second task"})
+    assert status_matches_session(read_status_file(tmp_path), second) is True

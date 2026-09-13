@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, and_
+from sqlalchemy import select, desc, and_, update as sa_update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
-from typing import List, Optional
+from typing import List, Optional, Literal
 from datetime import UTC, datetime, timedelta
+from pydantic import BaseModel, Field
 import asyncio
 import logging
 import json
+import uuid
 import subprocess
 
 from agent_kanban_pm.db import get_db
@@ -35,7 +37,7 @@ from agent_kanban_pm.schemas import (
 )
 from agent_kanban_pm.auth import get_current_entity, is_owner_or_manager
 from agent_kanban_pm.events import event_bus, EventType
-from agent_kanban_pm.runtime.handoff_protocol import read_status_file
+from agent_kanban_pm.runtime.handoff_protocol import read_status_file, status_matches_session, status_identity_matches_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agents", tags=["agent-activity"])
@@ -614,6 +616,68 @@ async def get_agent_terminal(
     return {"session": session, "activities": activity_result.scalars().all()}
 
 
+class SessionHandoffSubmit(BaseModel):
+    project_id: int
+    task_id: int
+    run_token: str = Field(min_length=1)
+    state: Literal["done", "completed", "review"]
+    summary: str = Field(min_length=1, max_length=4000)
+
+
+@router.post("/sessions/{session_id}/handoff")
+async def submit_agent_session_handoff(
+    session_id: int,
+    handoff: SessionHandoffSubmit,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    """Record a run-scoped handoff durably; the streamer advances it once."""
+    if not current_entity:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    session = await db.get(AgentSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not is_owner_or_manager(current_entity) and current_entity.id != session.agent_id:
+        raise HTTPException(status_code=403, detail="You can only submit your own handoff")
+    if (
+        session.project_id != handoff.project_id
+        or session.task_id != handoff.task_id
+        or not session.run_token
+        or session.run_token != handoff.run_token
+    ):
+        raise HTTPException(status_code=409, detail="Handoff identity does not match the active run")
+    if session.ended_at is not None:
+        raise HTTPException(status_code=409, detail="Session has already ended")
+    if not handoff.summary.strip():
+        raise HTTPException(status_code=422, detail="summary must contain text")
+    result = await db.execute(
+        sa_update(AgentSession)
+        .where(
+            AgentSession.id == session_id,
+            AgentSession.ended_at.is_(None),
+            AgentSession.handoff_received_at.is_(None),
+            AgentSession.run_token == handoff.run_token,
+        )
+        .values(
+            handoff_state=handoff.state,
+            handoff_summary=handoff.summary.strip(),
+            handoff_received_at=datetime.now(UTC),
+        )
+    )
+    if result.rowcount == 1:
+        await db.commit()
+        return {"session_id": session_id, "accepted": True}
+    await db.commit()
+    existing = await db.get(AgentSession, session_id, populate_existing=True)
+    if (
+        existing and existing.ended_at is None
+        and existing.handoff_state == handoff.state
+        and existing.handoff_summary == handoff.summary.strip()
+    ):
+        return {"session_id": session_id, "accepted": True}
+    raise HTTPException(status_code=409, detail="A different handoff was already submitted")
+
+
 @router.get("/sessions/{session_id}/handoff")
 async def get_agent_session_handoff(
     session_id: int,
@@ -624,7 +688,15 @@ async def get_agent_session_handoff(
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return read_status_file(session.workspace_path)
+    status_data = read_status_file(session.workspace_path)
+    status_data["identity_matches_session"] = status_identity_matches_session(status_data, session)
+    status_data["matches_session"] = status_matches_session(status_data, session)
+    status_data["durable"] = {
+        "state": session.handoff_state,
+        "summary": session.handoff_summary,
+        "received_at": session.handoff_received_at.isoformat() if session.handoff_received_at else None,
+    }
+    return status_data
 
 
 @router.get("/tasks/{task_id}/active-session", response_model=Optional[AgentSessionResponse])
@@ -963,6 +1035,8 @@ async def start_agent_session(
         project_id=session.project_id,
         task_id=session.task_id,
         workspace_path=workspace_path,
+        assigned_role="worker",
+        run_token=uuid.uuid4().hex,
         command=session.command,
         model=session.model,
         mode=session.mode,

@@ -153,9 +153,11 @@ The server does not choose which agent should do new work, but it does keep the
 standard role handoff moving once an assigned session finishes:
 
 1. A worker assignment starts from To Do or In Progress.
-2. When the agent marks `STATUS.md` with `handoff_ready: true` and `state: done`,
-   `completed`, or `review`, the session streamer marks the session done and
-   moves the card to Review.
+2. The agent submits a handoff through `POST /agents/sessions/{id}/handoff` or
+   marks its worktree `STATUS.md` with `handoff_ready: true` and `state: done`,
+   `completed`, or `review`. The streamer accepts a file only when its
+   project, task, session, and run token match the active session. It records
+   the handoff on that session before moving the card to Review.
 3. Review-stage policy roles, normally `test` and `diff_review`, are assigned
    and launched from Review when configured in `~/.kanban/preferences.yaml`.
 4. When review/test sessions complete, the card moves to Done.
@@ -169,9 +171,18 @@ it. The key is derived from the name when a stage is created and is kept when it
 is renamed; pass `workflow_key` when creating a custom stage to give it workflow
 meaning. Stages with no recognised key leave a moved task's status unchanged.
 
-The handoff source of truth is each worktree's `STATUS.md`. If an agent exits
-without updating it, the card may stay where it is because the runtime cannot
-reliably tell whether the work is ready for review.
+The database session is the durable handoff source of truth. `STATUS.md` is
+an agent-readable input and can be deleted with the worktree after its verified
+contents are recorded. The streamer checks for a submitted handoff before it
+handles an exited process. If the agent neither submits a handoff nor updates
+the file, the card stays in its current stage for review. The assignment launcher runs one agent session at a time in a non-Git
+workspace so tasks cannot overwrite a shared handoff.
+Chat planning records its decisions and cards in the database without writing
+to `STATUS.md`.
+
+An explicit handoff uses `POST /agents/sessions/{id}/handoff` with
+`project_id`, `task_id`, the session's `run_token`, `state`, and a
+non-empty `summary`. The session agent or an owner/manager may submit it.
 
 ## Bundled agent adapters
 

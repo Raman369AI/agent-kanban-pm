@@ -261,6 +261,7 @@ class AgentSessionResponse(BaseModel):
     project_id: int
     task_id: Optional[int] = None
     workspace_path: str
+    run_token: Optional[str] = None
     status: AgentSessionStatus
     command: Optional[str] = None
     model: Optional[str] = None

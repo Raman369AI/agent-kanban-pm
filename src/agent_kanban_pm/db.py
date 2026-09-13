@@ -256,6 +256,18 @@ async def _migrate_db_schema():
                                    {"key": normalize_stage_key(name), "id": stage_id})
             await _record_migration(10, "stable_stage_identity")
 
+        if not await _migration_applied(11):
+            for column, ddl in (
+                ("assigned_role", "VARCHAR(100)"),
+                ("run_token", "VARCHAR(64)"),
+                ("handoff_state", "VARCHAR(32)"),
+                ("handoff_summary", "TEXT"),
+                ("handoff_received_at", "DATETIME"),
+            ):
+                if not await _column_exists(conn, "agent_sessions", column):
+                    await conn.execute(text(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}"))
+            await _record_migration(11, "session_handoff_identity")
+
     # Backfill default roles
     async with async_session_maker() as session:
         from agent_kanban_pm.models import Entity

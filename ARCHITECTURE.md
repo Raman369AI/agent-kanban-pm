@@ -59,15 +59,15 @@ Assignment launcher starts task session
   ├─► creates/reuses per-task git worktree and branch
   ├─► rebases from detected base ref when possible
   ├─► starts CLI in tmux or PTY fallback
-  └─► writes/updates STATUS.md handoff file
+  └─► writes run-scoped STATUS.md handoff file
         │
         ▼
-Session streamer watches terminal + STATUS.md
+Session streamer watches terminal + verified STATUS.md / submitted handoffs
   │
   ├─► writes terminal output to AgentActivity
   ├─► updates AgentHeartbeat / AgentCheckpoint
   ├─► captures approval prompts into AgentApproval
-  └─► on handoff_ready=true:
+  └─► after durable handoff submission:
         ├─ worker complete: move In Progress/To Do -> Review
         ├─ assign Review-stage roles (test, diff_review) when configured
         ├─ review complete: move Review -> Done
@@ -89,7 +89,8 @@ Agent session
   ├─ AgentActivity: append-only terminal/tool/activity feed
   ├─ AgentCheckpoint: restart context and terminal tail
   ├─ AgentApproval: durable approval prompt queue
-  └─ STATUS.md: worktree-local handoff summary and completion signal
+  ├─ AgentSession handoff fields: durable, run-scoped completion record
+  └─ STATUS.md: optional worktree-local handoff input and readable notes
 ```
 
 ## Boundaries
