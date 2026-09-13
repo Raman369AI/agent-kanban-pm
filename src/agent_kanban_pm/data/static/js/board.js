@@ -1527,6 +1527,7 @@
     // --- WebSocket ---
     var boardWsBackoff = 1000;
     var boardSocket = null;
+    var boardWsNeedsRefresh = false;
     var BOARD_WS_MAX_BACKOFF = 30000;
     var boardExecutionRefreshTimer = null;
     function setBoardConnectionStatus(message, stale) {
@@ -1541,7 +1542,21 @@
         console.log('Connecting to project updates:', wsUrl);
         var socket = new WebSocket(wsUrl);
         boardSocket = socket;
-        socket.onopen = function() { boardWsBackoff = 1000; setBoardConnectionStatus('Refreshing…', true); refreshBoardFromServer().then(function(ok) { if (socket.readyState === WebSocket.OPEN) setBoardConnectionStatus(ok ? 'Live' : 'Refresh failed', !ok); }); };
+        socket.onopen = function() {
+            boardWsBackoff = 1000;
+            // The server-rendered board is current on first load. Only a
+            // reconnect needs a fetch to recover events missed while offline.
+            if (!boardWsNeedsRefresh) {
+                setBoardConnectionStatus('Live', false);
+                return;
+            }
+            setBoardConnectionStatus('Refreshing…', true);
+            refreshBoardFromServer().then(function(ok) {
+                if (socket.readyState !== WebSocket.OPEN) return;
+                if (ok) boardWsNeedsRefresh = false;
+                setBoardConnectionStatus(ok ? 'Live' : 'Refresh failed', !ok);
+            });
+        };
         socket.onmessage = function(event) {
             var msg = JSON.parse(event.data);
             console.log('WS Message:', msg);
@@ -1621,7 +1636,7 @@
                 if (currentApprovalId && String(currentApprovalId) === String(msg.data.approval_id)) closeApprovalPopup();
             }
         };
-        socket.onclose = function() { setBoardConnectionStatus('Reconnecting…', true); console.log('WS Connection closed. Retrying in ' + boardWsBackoff + 'ms...'); setTimeout(initWebSocket, boardWsBackoff); boardWsBackoff = Math.min(boardWsBackoff * 2, BOARD_WS_MAX_BACKOFF); };
+        socket.onclose = function() { boardWsNeedsRefresh = true; setBoardConnectionStatus('Reconnecting…', true); console.log('WS Connection closed. Retrying in ' + boardWsBackoff + 'ms...'); setTimeout(initWebSocket, boardWsBackoff); boardWsBackoff = Math.min(boardWsBackoff * 2, BOARD_WS_MAX_BACKOFF); };
         socket.onerror = function(err) { setBoardConnectionStatus('Connection issue', true); console.error('WS Error:', err); };
     }
 

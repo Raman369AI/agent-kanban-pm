@@ -787,6 +787,17 @@ def test_mobile_drawer_closes_when_resized_to_desktop(
     expect(page.get_by_role("dialog", name="New task")).to_be_visible()
 
 
+def test_initial_socket_connection_keeps_rendered_card(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    card = page.locator(f"#task-card-{board['task']['id']}")
+    original = card.element_handle()
+    expect(page.locator("#board-connection-status")).to_have_text("Live")
+    assert original is not None and original.evaluate("element => element.isConnected")
+
+
 def test_board_refreshes_after_websocket_reconnect(
     page: Page, live_server: str, api: httpx.Client
 ):
