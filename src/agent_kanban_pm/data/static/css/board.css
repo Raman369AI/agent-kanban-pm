@@ -1,9 +1,3 @@
-/* Sub-nav */
-  .project-sub-nav{display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap;}
-  .sub-nav-pill{padding:0.35rem 1rem;border-radius:99px;text-decoration:none;font-size:0.8rem;font-weight:600;border:1px solid var(--glass-border);color:var(--text-secondary);background:var(--glass-bg);transition:all 0.2s;}
-  .sub-nav-pill:hover{background:rgba(var(--accent-primary-rgb),0.08);color:var(--text-primary);}
-  .sub-nav-pill.active{background:var(--accent-primary);color:#fff;border-color:var(--accent-primary);}
-
   /* Activity popup */
   .in-card-activity-header{display:flex;justify-content:flex-end;margin-bottom:0.35rem;}
   .act-entry{padding:0.45rem 0.6rem;border-radius:var(--radius-sm);border-left:2px solid var(--glass-border);margin-bottom:0.35rem;background:var(--glass-bg);}
@@ -229,15 +223,6 @@
   }
   .chat-input::placeholder { color: var(--text-muted); }
   .chat-input:focus { outline: none !important; }
-  .chat-btn {
-    border-radius: var(--radius-lg); padding: 0.55rem 1.35rem; font-weight: 700;
-    letter-spacing: 0.02em; font-size: 0.85rem;
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    color: white; box-shadow: 0 4px 14px rgba(var(--accent-primary-rgb), 0.35);
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  .chat-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(var(--accent-primary-rgb), 0.4); }
-
   .header-create-wrap {
     display: flex;
     align-items: center;
@@ -297,12 +282,9 @@
   }
   .chat-input-compact:focus { outline: none; }
   .chat-btn-compact {
+    min-height: var(--control-height-sm);
     padding: 0.35rem 0.75rem;
-    border-radius: var(--radius);
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    color: white;
-    border: none;
-    cursor: pointer;
+    flex-shrink: 0;
   }
 
   /* Board: full-width column layout */
@@ -662,29 +644,11 @@
     overflow-y: auto;
   }
 
-  /* Add Task button (same style as kanban_premium.css) */
   .btn-add-task {
-    background: rgba(var(--accent-primary-rgb), 0.02);
-    border: 2px dashed rgba(var(--accent-primary-rgb), 0.2);
     width: 100%;
-    padding: 0.7rem;
-    color: var(--text-secondary);
-    font-weight: 700;
-    font-size: 0.82rem;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-    border-radius: var(--radius-lg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
-  }
-  .btn-add-task:hover {
-    background: rgba(var(--accent-primary-rgb), 0.08);
-    border-color: var(--accent-primary);
-    color: var(--accent-primary);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(var(--accent-primary-rgb), 0.15);
+    margin: 0;
+    min-height: var(--control-height);
+    padding: 0.55rem 0.75rem;
   }
 
   .agent-managed-badge {
@@ -808,12 +772,6 @@
     gap: 0.5rem;
     padding: 1rem 1.25rem 1.25rem;
   }
-  .btn-sm { padding: 0.25rem 0.6rem; font-size: 0.75rem; }
-  .btn-success { background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: none; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; }
-  .btn-success:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16,185,129,0.3); }
-  .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; border: none; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; }
-  .btn-danger:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(239,68,68,0.3); }
-
   /* Responsive */
   .task-compact-face { padding: calc(var(--card-padding) / 2); }
   .kanban-container-revamp { gap: calc(var(--spacing-unit) / 2); }

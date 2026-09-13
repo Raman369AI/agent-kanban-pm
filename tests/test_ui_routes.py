@@ -91,11 +91,8 @@ def test_ui_routes_and_board_render():
         workbench_response = client.get(f"/ui/projects/{project['id']}/workbench")
         assert workbench_response.status_code == 200
         assert f"{project['name']} — Workbench" in workbench_response.text
-        assert (
-            "&#9888; Approvals" in workbench_response.text
-            or "\u26a0 Approvals" in workbench_response.text
-        )
-        assert "&#128272; Approvals" not in workbench_response.text
+        assert 'data-tab="approvals"' in workbench_response.text
+        assert "Approvals" in workbench_response.text
 
         git_response = client.get(f"/ui/projects/{project['id']}/git")
         assert git_response.status_code == 200

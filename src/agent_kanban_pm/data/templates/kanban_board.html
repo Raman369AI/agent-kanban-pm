@@ -15,10 +15,10 @@
 <div class="board-revamp-shell board-simple-shell" style="--stage-count: {{ project.stages|length }};">
   <!-- Consistent Project Navigation -->
   <div class="project-sub-nav">
-    <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill active" aria-current="page">&#128203; Board</a>
-    <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">&#9889; Activity</a>
-    <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Changes</a>
-    <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">&#9881;&#65039; Settings</a>
+    <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill active" aria-current="page">Board</a>
+    <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">Activity</a>
+    <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">Changes</a>
+    <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">Settings</a>
   </div>
 
   <section class="board-header-section board-simple-header">
@@ -44,7 +44,7 @@
           <input type="text" id="chat-task-input" class="form-input chat-input-compact"
             placeholder="Describe work to plan&hellip;" aria-label="Describe work to plan"
             aria-describedby="chat-plan-hint">
-          <button class="btn chat-btn-compact" id="chat-plan-btn" type="button" onclick="createTaskFromChat()"
+          <button class="btn btn-secondary chat-btn-compact" id="chat-plan-btn" type="button" onclick="createTaskFromChat()"
             title="Preview proposed task cards for {{ plan_stage.name if plan_stage else 'Backlog' }}">Plan work</button>
           <p class="chat-plan-hint text-secondary" id="chat-plan-hint">
             Planning proposes task cards for {{ plan_stage.name if plan_stage else 'Backlog' }}. Review before creating.
@@ -55,10 +55,10 @@
 
       <div class="header-actions board-primary-actions">
         <span id="board-connection-status" class="board-connection-status is-stale" role="status" aria-live="polite">Connecting…</span>
-        <button class="btn btn-icon" id="header-bell-btn" onclick="toggleBellDropdown()" title="Pending approvals">
-          <span id="header-bell-icon">&#128276;</span> <span id="header-bell-count" class="badge" style="display:none;background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;position:absolute;top:0;right:0;border-radius:1rem;">0</span>
+        <button class="btn btn-icon" id="header-bell-btn" onclick="toggleBellDropdown()" title="Pending approvals" aria-label="Pending approvals">
+          <span id="header-bell-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></span> <span id="header-bell-count" class="badge" style="display:none;background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;position:absolute;top:0;right:0;border-radius:1rem;">0</span>
         </button>
-        <a class="btn btn-secondary" href="/ui/projects/{{ project.id }}/workbench" title="Activity &amp; sessions">&#9889; Activity</a>
+        <a class="btn btn-secondary" href="/ui/projects/{{ project.id }}/workbench" title="Activity &amp; sessions">Activity</a>
       </div>
     </div>
 

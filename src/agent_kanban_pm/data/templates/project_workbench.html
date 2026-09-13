@@ -3,15 +3,11 @@
 
 {% block content %}
 <style>
-  .project-sub-nav{display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap;}
-  .sub-nav-pill{padding:0.4rem 1.1rem;border-radius:99px;text-decoration:none;font-size:0.82rem;font-weight:600;border:1px solid var(--glass-border);color:var(--text-secondary);background:var(--glass-bg);transition:all 0.2s;}
-  .sub-nav-pill:hover{background:rgba(var(--accent-primary-rgb),0.08);color:var(--text-primary);}
-  .sub-nav-pill.active{background:var(--accent-primary);color:#fff;border-color:var(--accent-primary);}
 
   .wb-tabs{display:flex;gap:0.25rem;padding:0.25rem;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius);margin-bottom:1rem;}
   .wb-tab{flex:1;border:0;border-radius:var(--radius-sm);padding:0.5rem 0.5rem;background:transparent;color:var(--text-secondary);cursor:pointer;font-size:0.8rem;font-weight:700;transition:all 0.2s;position:relative;}
   .wb-tab:hover{color:var(--text-primary);background:rgba(var(--accent-primary-rgb),0.06);}
-  .wb-tab.active{background:linear-gradient(135deg,var(--accent-primary),var(--accent-secondary));color:#fff;box-shadow:0 3px 10px rgba(var(--accent-primary-rgb),0.3);}
+  .wb-tab.active{background:rgba(var(--accent-primary-rgb),0.11);color:var(--accent-primary);}
   .wb-tab .tab-badge{background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;border-radius:0.65rem;margin-left:0.2rem;}
   .wb-pane{display:none;} .wb-pane.active{display:block;}
 
@@ -121,10 +117,10 @@
 </style>
 
 <div class="project-sub-nav">
-  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">&#128203; Board</a>
-  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill active" aria-current="page">&#9889; Activity</a>
-  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Changes</a>
-  <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">&#9881;&#65039; Settings</a>
+  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">Board</a>
+  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill active" aria-current="page">Activity</a>
+  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">Changes</a>
+  <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">Settings</a>
 </div>
 
 <div class="d-flex align-items-center gap-3 mb-4">
@@ -134,13 +130,13 @@
 </div>
 
 <div class="wb-tabs" role="tablist">
-  <button class="wb-tab active" data-tab="live" onclick="switchWbTab('live')">&#9654; Live</button>
-  <button class="wb-tab" data-tab="terminal" onclick="switchWbTab('terminal')">&#128187; Terminal</button>
-  <button class="wb-tab" data-tab="handoff" onclick="switchWbTab('handoff')">&#128221; Handoff</button>
+  <button class="wb-tab active" data-tab="live" onclick="switchWbTab('live')">Live</button>
+  <button class="wb-tab" data-tab="terminal" onclick="switchWbTab('terminal')">Terminal</button>
+  <button class="wb-tab" data-tab="handoff" onclick="switchWbTab('handoff')">Handoff</button>
   <button class="wb-tab" data-tab="approvals" onclick="switchWbTab('approvals')">
-    &#9888; Approvals <span class="tab-badge" id="wb-approvals-badge" style="display:none;">0</span>
+    Approvals <span class="tab-badge" id="wb-approvals-badge" style="display:none;">0</span>
   </button>
-  <button class="wb-tab" data-tab="decisions" onclick="switchWbTab('decisions')">&#128196; Decisions</button>
+  <button class="wb-tab" data-tab="decisions" onclick="switchWbTab('decisions')">Decisions</button>
 </div>
 
 <!-- LIVE TAB -->
@@ -199,7 +195,7 @@
       </div>
     </div>
     <div class="handoff-summary" id="wb-handoff-view">
-      <div class="handoff-empty">Select a session to view its worktree STATUS.md.</div>
+      <div class="handoff-empty">Select a session to view its recorded handoff.</div>
     </div>
   </div>
 </div>
@@ -397,13 +393,27 @@ function renderHandoffSessionList(){
 function renderHandoff(data){
   const el=document.getElementById('wb-handoff-view');
   if(!el)return;
-  if(!data||!data.exists){
-    el.innerHTML='<div class="handoff-empty">No STATUS.md found for this session worktree.</div>';
+  const durable=data&&data.durable||{};
+  if(!data||(!data.exists&&!durable.summary)){
+    el.innerHTML='<div class="handoff-empty">No handoff has been submitted for this session.</div>';
+    return;
+  }
+  const durableBlock=durable.summary?`
+    <div class="handoff-summary">
+      <div class="section-hdr"><h5>Recorded handoff</h5><span class="text-secondary">${esc(durable.state||'done')}</span></div>
+      <pre class="handoff-pre">${esc(durable.summary)}</pre>
+    </div>`:'';
+  if(!data.exists){
+    el.innerHTML=durableBlock;
+    return;
+  }
+  if(data.identity_matches_session===false){
+    el.innerHTML=durableBlock+'<div class="handoff-empty">This workspace STATUS.md belongs to a different session or run.</div>';
     return;
   }
   const fm=data.frontmatter||{};
   const outputs=Array.isArray(fm.outputs)?fm.outputs.join('\n'):String(fm.outputs||'');
-  el.innerHTML=`
+  el.innerHTML=durableBlock+`
     <div class="section-hdr"><h5>STATUS.md</h5><code style="font-size:0.72rem;color:var(--text-muted);">${esc(data.path)}</code></div>
     <dl class="handoff-kv">
       <dt>State</dt><dd>${esc(data.state||'-')}</dd>
@@ -427,12 +437,12 @@ async function loadWbHandoff(sessionId, switchTab){
   renderHandoffSessionList();
   if(switchTab)switchWbTab('handoff');
   const el=document.getElementById('wb-handoff-view');
-  if(el)el.innerHTML='<div class="handoff-empty">Loading STATUS.md for session #'+sessionId+'…</div>';
+  if(el)el.innerHTML='<div class="handoff-empty">Loading handoff for session #'+sessionId+'…</div>';
   try{
     const data=await workbenchFetch('/agents/sessions/'+sessionId+'/handoff');
     renderHandoff(data);
   }catch(e){
-    if(el)el.innerHTML='<div class="handoff-empty">Failed to load STATUS.md: '+esc(e.message)+'</div>';
+    if(el)el.innerHTML='<div class="handoff-empty">Failed to load handoff: '+esc(e.message)+'</div>';
   }
 }
 
