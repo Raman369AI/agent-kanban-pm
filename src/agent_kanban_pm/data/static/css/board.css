@@ -86,9 +86,9 @@
     margin-top: 0.65rem;
   }
 
-  @media(max-width: 900px) {
+  @media(max-width: 1200px) {
     .board-title-row {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       align-items: stretch;
     }
 
@@ -238,10 +238,14 @@
   }
   .chat-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(var(--accent-primary-rgb), 0.4); }
 
-  .header-chat-wrap {
-    max-width: 600px;
+  .header-create-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    max-width: 640px;
     position: relative;
   }
+  #new-task-btn { flex-shrink: 0; }
   .chat-task-input-wrap-compact {
     display: flex;
     align-items: center;
@@ -251,6 +255,32 @@
     padding: 0.15rem 0.25rem 0.15rem 1rem;
     transition: all 0.2s;
     box-shadow: var(--shadow-sm);
+  }
+  /* The plan input is a grid row so the hint/error can sit under the field
+     without pushing the board around when it appears. */
+  #plan-work-wrap {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "input button" "note note";
+    align-items: center;
+    row-gap: 0.15rem;
+  }
+  #chat-task-input { grid-area: input; }
+  #chat-plan-btn { grid-area: button; margin-left: 0.4rem; }
+  .chat-plan-hint,
+  .chat-plan-error {
+    grid-area: note;
+    margin: 0;
+    padding-left: 1rem;
+    font-size: 0.7rem;
+    line-height: 1.3;
+  }
+  .chat-plan-error { font-weight: 600; }
+  @media (max-width: 900px) {
+    .header-create-wrap { flex-direction: column; align-items: stretch; }
+    #new-task-btn { width: 100%; }
   }
   .chat-task-input-wrap-compact:focus-within {
     border-color: var(--accent-primary);
@@ -449,7 +479,48 @@
     opacity: 0;
     transition: opacity 0.2s;
   }
-  .kanban-task-revamp:hover .task-actions-revamp { opacity: 1; }
+  /* Actions appear for pointer hover, keyboard focus, and touch screens. */
+  .kanban-task-revamp:hover .task-actions-revamp,
+  .kanban-task-revamp:focus-within .task-actions-revamp { opacity: 1; }
+  @media (hover: none) {
+    .task-actions-revamp { opacity: 1; }
+    .task-actions-revamp .btn-icon-sm {
+      min-width: 2rem;
+      min-height: 2rem;
+    }
+  }
+  /* Destructive and secondary actions live in an overflow menu. */
+  .task-menu-wrap { position: relative; }
+  .task-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 60;
+    min-width: 9rem;
+    padding: 0.25rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+  }
+  .task-menu-item {
+    display: block;
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--danger);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+  .task-menu-item:hover,
+  .task-menu-item:focus-visible {
+    background: rgba(239, 68, 68, 0.1);
+    outline: none;
+  }
   .task-meta-revamp {
     display: flex;
     flex-wrap: wrap;
@@ -546,6 +617,10 @@
   .task-footer-revamp .btn-link {
     font-size: 0.65rem;
     padding: 0.2rem 0.5rem;
+  }
+  .task-footer-revamp .btn-move-to-todo {
+    color: var(--success, #34d399);
+    font-weight: 600;
   }
 
   /* Expansion panel */
@@ -758,3 +833,134 @@
     .approval-popup-actions { flex-wrap: wrap; }
     .approval-popup-actions .btn { flex: 1 1 120px; }
   }
+
+  /* At 200% zoom on a 390px screen, the effective CSS viewport is about
+     195px. Keep the two creation actions inside the available width. */
+  @media (max-width: 320px) {
+    .board-title-row { grid-template-columns: minmax(0, 1fr); }
+    .board-title-row > * { min-width: 0; }
+    .board-title-block h2 { overflow-wrap: anywhere; }
+    .header-create-wrap { min-width: 0; max-width: 100%; }
+    #plan-work-wrap {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "input" "button" "note";
+    }
+    #chat-task-input { min-width: 0; width: 100%; }
+    #chat-plan-btn { width: 100%; margin-left: 0; }
+  }
+
+/* Phase 3: one task workspace outside the board columns. */
+body.task-panel-open { overflow: hidden; }
+.task-panel-backdrop[hidden], .task-detail-panel[hidden] { display: none !important; }
+.task-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 995;
+  background: rgba(15, 23, 42, 0.48);
+}
+.task-detail-panel {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 996;
+  width: min(620px, 100vw);
+  display: flex;
+  flex-direction: column;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border-color);
+  box-shadow: -12px 0 36px rgba(15, 23, 42, 0.2);
+}
+.task-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.task-panel-header h2 { margin: 0.2rem 0 0; font-size: 1.35rem; line-height: 1.3; }
+.task-panel-kicker { margin: 0; color: var(--text-secondary); font-size: 0.78rem; }
+.task-panel-header-actions { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+.task-panel-content { flex: 1; min-height: 0; overflow-y: auto; }
+.task-detail-panel .task-expansion-panel { border: 0; background: transparent; }
+.task-detail-panel .expansion-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  overflow-x: auto;
+  background: var(--bg-primary);
+  border-bottom-color: var(--border-color);
+}
+.task-detail-panel .expansion-tab {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+.task-detail-panel .expansion-pane { max-height: none; overflow: visible; padding: 1.25rem; }
+.task-overview-section h3 { margin: 0 0 0.5rem; font-size: 0.9rem; }
+.task-overview-description { margin: 0; white-space: pre-wrap; line-height: 1.55; font-size: 0.94rem; }
+.task-overview-facts { display: grid; gap: 0; margin: 1.4rem 0; border-top: 1px solid var(--border-color); }
+.task-overview-facts > div { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: 0.75rem; padding: 0.72rem 0; border-bottom: 1px solid var(--border-color); }
+.task-overview-facts dt { color: var(--text-secondary); font-size: 0.82rem; }
+.task-overview-facts dd { margin: 0; overflow-wrap: anywhere; font-size: 0.9rem; }
+.task-overview-facts select { width: 100%; }
+.task-overview-next { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.task-overview-next > span { color: var(--text-secondary); font-size: 0.82rem; }
+.task-log-entry { padding: 0.8rem 0; border-bottom: 1px solid var(--border-color); }
+.task-log-entry strong { text-transform: capitalize; font-size: 0.82rem; }
+.task-log-entry p { margin: 0.3rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .task-detail-panel { width: 100vw; border-left: 0; }
+  .task-panel-header { padding: 0.85rem 1rem; }
+  .task-detail-panel .expansion-pane { padding: 1rem; }
+  .task-overview-facts > div { grid-template-columns: 6.5rem minmax(0, 1fr); }
+}
+
+/* Phase 4: search and attention filters */
+.board-filter-bar {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  margin: 1rem 0;
+  padding: 0.9rem 1rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+}
+.board-filter-bar label { display: grid; gap: 0.3rem; min-width: 9rem; font-size: 0.76rem; color: var(--text-secondary); }
+.board-filter-bar label:first-child { flex: 1 1 14rem; }
+.board-filter-bar .form-input { width: 100%; min-height: 38px; color: var(--text-primary); }
+.board-filter-summary { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; white-space: nowrap; font-size: 0.82rem; }
+.kanban-task-revamp.is-filtered-out { display: none !important; }
+.board-filter-empty { margin: 0.5rem 0 1rem; padding: 1rem; border: 1px dashed var(--border-color); border-radius: var(--radius); color: var(--text-secondary); }
+.board-main-revamp.board-has-filters .kanban-empty-placeholder { display: none; }
+@media (max-width: 600px) {
+  .board-filter-bar { align-items: stretch; }
+  .board-filter-bar label { flex: 1 1 10rem; }
+  .board-filter-summary { width: 100%; justify-content: space-between; }
+}
+.board-connection-status { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--success); font-size: 0.76rem; white-space: nowrap; }
+.board-connection-status::before { content: ''; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: currentColor; }
+.board-connection-status.is-stale { color: var(--warning); }
+
+/* Readable board and planning preview */
+.board-simple-shell .kanban-task-revamp { backdrop-filter: none; border-color: var(--border-color); box-shadow: none; border-radius: var(--radius); }
+.board-simple-shell .kanban-task-revamp:hover { transform: none; border-color: var(--accent-primary); box-shadow: none; }
+.board-simple-shell .task-title-revamp { font-size: 0.9rem; line-height: 1.4; }
+.board-simple-shell .task-compact-face { padding: calc(var(--card-padding) / 2); }
+.board-simple-shell .task-meta-revamp, .board-simple-shell .task-assignees-revamp { font-size: 0.79rem; }
+.board-simple-shell .task-indicator { animation: none; width: 0.5rem; height: 0.5rem; }
+.board-simple-shell .task-approval-badge { animation: none; }
+.plan-preview-card { max-width: 680px; width: min(680px, calc(100vw - 1.5rem)); max-height: min(90vh, 850px); display: flex; flex-direction: column; }
+.plan-preview-items { overflow-y: auto; min-height: 0; display: grid; gap: 0.8rem; padding: 0.25rem; }
+.plan-preview-row { display: grid; gap: 0.5rem; margin: 0; padding: 0.8rem; border: 1px solid var(--border-color); border-radius: var(--radius); }
+.plan-preview-row legend { padding: 0 0.25rem; font-weight: 700; font-size: 0.9rem; }
+.plan-preview-row label { display: grid; gap: 0.25rem; font-size: 0.84rem; }
+.plan-preview-row label:has(.plan-include) { display: flex; align-items: center; }
+.plan-preview-row textarea { min-height: 5rem; resize: vertical; }
+.plan-preview-row .plan-priority { width: 6rem; }
+.plan-preview-row .btn-link { justify-self: start; }
+#plan-preview-error { min-height: 1.2rem; margin: 0.3rem 0; }

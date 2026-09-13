@@ -116,9 +116,9 @@ Human owns:
 ## Trust and Security Model
 
 The statements in this section and the following consistency/recovery sections
-are required architectural invariants. Where the current alpha does not yet
-enforce one, the gap is tracked explicitly in `PLAN.md`; these are not claims
-that every hardening item is already implemented.
+are required architectural invariants. Some hardening work is still planned,
+as summarized in the README roadmap; these are not claims that every item is
+already implemented.
 
 The supported topology is a single-user process on one trusted local machine.
 The HTTP server should bind to loopback by default. The browser, server, and

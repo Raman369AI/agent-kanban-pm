@@ -43,7 +43,7 @@
 <!-- Layout Wrapper -->
 <div class="layout-wrapper">
     <!-- Sidebar Navigation -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="app-sidebar">
         <div class="sidebar-header">
             <div class="nav-brand">
                 <h1>Agent PM</h1>
@@ -70,7 +70,7 @@
                 <li>
                     <a href="/ui/users" class="nav-link {% if '/users' in request.url.path %}active{% endif %}">
                         <span class="nav-icon">👥</span>
-                        <span class="nav-text">Team</span>
+                        <span class="nav-text">Agents & roles</span>
                     </a>
                 </li>
             </ul>
@@ -90,6 +90,8 @@
         <div class="sidebar-footer"></div>
     </aside>
 
+    <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+
     <!-- Main Content Area -->
     <div class="content-area">
         <!-- Header Bar -->
@@ -97,27 +99,27 @@
             <div class="container-fluid">
                 <div class="header-content">
                     <div class="page-context">
+                        <button id="mobile-nav-toggle" class="btn-icon mobile-nav-toggle" type="button"
+                            aria-label="Open navigation menu" aria-expanded="false" aria-controls="app-sidebar">
+                            <span class="icon">&#9776;</span>
+                        </button>
                         {% block page_title %}{% endblock %}
                     </div>
                     <div class="header-actions">
                         <div class="preferences-controls">
-                            <div class="theme-switcher">
-                                <button id="theme-toggle" class="btn-icon" title="Toggle theme">
-                                    <span class="icon">🌙</span>
-                                </button>
-                            </div>
-                            <div class="view-switcher">
-                                <button id="view-toggle" class="btn-icon" title="Toggle view">
-                                    <span class="icon">📊</span>
-                                </button>
-                            </div>
-                            <div class="density-switcher">
-                                <select id="density-select" class="select-small">
-                                    <option value="comfortable">Comfortable</option>
-                                    <option value="compact">Compact</option>
-                                    <option value="spacious">Spacious</option>
-                                </select>
-                            </div>
+                            <button id="view-toggle" class="btn btn-secondary" type="button">Board view</button>
+                            <details class="appearance-menu">
+                                <summary class="btn btn-secondary">Appearance</summary>
+                                <div class="appearance-menu-content">
+                                    <button id="theme-toggle" class="btn" type="button" title="Change theme">Change theme <span class="icon" aria-hidden="true">🌙</span></button>
+                                    <label for="density-select">Density</label>
+                                    <select id="density-select" class="select-small">
+                                        <option value="comfortable">Comfortable</option>
+                                        <option value="compact">Compact</option>
+                                        <option value="spacious">Spacious</option>
+                                    </select>
+                                </div>
+                            </details>
                         </div>
                     </div>
                 </div>

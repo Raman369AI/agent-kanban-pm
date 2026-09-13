@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0rc9] — 2026-09-12
+
+### Added
+- **A guided first-project flow** shows the next step for choosing a folder, configuring an available worker, creating a task, and starting work. Project pages share Board, Activity, Changes, and Settings navigation; Agents & roles shows configured tools and availability.
+- **A task detail workspace** opens from a board card or direct task link. Overview shows description, owner, priority, stage, execution state, blockers, and the next action; secondary tabs show approvals, activity, terminal output, logs, and reviews.
+- **Board search and attention filters** find tasks by title or ID and isolate decisions, blocked work, running sessions, unassigned tasks, agents, and priority. The dashboard links pending approvals, failed sessions, and review-ready tasks to their cards; project cards show progress and attention counts.
+- **A Plan work preview** lets users edit, remove, or deselect proposed cards before creation. Preparing a preview does not create tasks or write workspace files, and confirmation creates only the selected cards.
+
+### Changed
+- **Board and List are labeled views**, with theme and density under Appearance. Task titles and supporting text are larger, shared cards use quieter surfaces, and dashboard status labels are readable.
+- **New task and Plan work are separate actions** with a visible destination stage. Moving a Backlog card to To Do is labeled as a move, leaving approval language for actual approval requests.
+
+### Fixed
+- **Task creation is guarded against repeat submission** and keeps input after a failed request. Mobile navigation, task actions, and creation controls remain reachable by keyboard, touch, and narrow or zoomed viewports.
+- **Live updates keep task context**: the open panel, selected tab, board position, filters, and unsaved edit draft survive refresh. Concurrent task edits report a conflict instead of silently overwriting newer work. Reconnecting is shown until the board refresh succeeds.
+- **Stage policy copy reflects execution handoff behavior**, and board and dashboard badges show human-readable task status.
+
 ## [0.4.0rc8] — 2026-09-11
 
 ### Fixed

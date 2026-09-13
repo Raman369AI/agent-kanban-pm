@@ -88,6 +88,8 @@
                     }, 'Failed to save role');
                     current = result.roles.find(role => role.role === name);
                     feedback.textContent = 'Saved';
+                    if (typeof window.refreshBoardFromServer === 'function') window.refreshBoardFromServer();
+                    if (typeof window.onRoleSettingsSaved === 'function') window.onRoleSettingsSaved();
                 } catch (error) {
                     feedback.textContent = error.message;
                 } finally {

@@ -6,6 +6,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import Optional
 from datetime import UTC, datetime
+from collections import Counter
 from pathlib import Path
 import asyncio
 from pydantic import ValidationError
@@ -15,7 +16,8 @@ import re
 from agent_kanban_pm.db import get_db
 from agent_kanban_pm.models import (
     Project, Task, Entity, Stage, Comment, EntityType, TaskStatus, ApprovalStatus,
-    TaskLog, ProjectWorkspace, Role, OrchestrationDecision, DecisionType
+    TaskLog, ProjectWorkspace, Role, OrchestrationDecision, DecisionType,
+    AgentSession, AgentSessionStatus, AgentApproval, AgentApprovalStatus,
 )
 from agent_kanban_pm.schemas import ProjectResponse, ChatPlanRequest, TaskCreate, TaskUpdate
 from agent_kanban_pm.auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
@@ -44,6 +46,24 @@ templates = Jinja2Templates(directory=str(templates_dir()))
 templates.env.globals["current_year"] = lambda: datetime.now(UTC).year
 templates.env.globals["kanban_csrf_token"] = get_csrf_token
 
+# Human-readable labels for raw TaskStatus values ("in_progress" -> "In
+# progress"). Keeps board badges readable without changing API contracts.
+STATUS_LABELS = {
+    "pending": "Pending",
+    "in_progress": "In progress",
+    "in_review": "In review",
+    "completed": "Completed",
+    "blocked": "Blocked",
+}
+
+
+def _status_label(value) -> str:
+    key = getattr(value, "value", value)
+    return STATUS_LABELS.get(str(key), str(key).replace("_", " "))
+
+
+templates.env.filters["status_label"] = _status_label
+
 router = APIRouter(include_in_schema=False)
 
 
@@ -52,6 +72,7 @@ def _role_to_entity_role(role_name: str) -> Role:
 
 
 async def _role_assignment_payload():
+    import shutil
     from agent_kanban_pm.runtime.preferences import load_preferences
     from agent_kanban_pm.runtime.adapter_loader import load_all_adapters, discover_popular_clis
 
@@ -76,7 +97,7 @@ async def _role_assignment_payload():
             "model": assignment.model or (models[0] if models else "default"),
             "models": models,
             "source": "adapter" if adapter else "standalone",
-            "installed": command in discovered and discovered[command].installed or bool(adapter and __import__("shutil").which(command)),
+            "installed": shutil.which(command) is not None,
         })
 
     candidates = []
@@ -87,7 +108,7 @@ async def _role_assignment_payload():
             "command": adapter.invoke.command,
             "source": "adapter",
             "models": [m.id for m in adapter.models],
-            "installed": __import__("shutil").which(adapter.invoke.command) is not None,
+            "installed": shutil.which(adapter.invoke.command) is not None,
         })
     for cli in discovered.values():
         if cli.command not in {adapter.invoke.command for adapter in adapters.values()}:
@@ -284,11 +305,46 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     )
     recent_tasks = result.scalars().all()
 
+    visible_ids = {project.id for project in visible_projects}
+    task_rows = (await db.execute(select(Task).where(Task.project_id.in_(visible_ids)))).scalars().all() if visible_ids else []
+    tasks_by_id = {task.id: task for task in task_rows}
+    approval_rows = (await db.execute(
+        select(AgentApproval).where(
+            AgentApproval.project_id.in_(visible_ids),
+            AgentApproval.status == AgentApprovalStatus.PENDING,
+        ).order_by(AgentApproval.requested_at.desc())
+    )).scalars().all() if visible_ids else []
+    session_rows = (await db.execute(
+        select(AgentSession).where(
+            AgentSession.project_id.in_(visible_ids),
+            AgentSession.task_id.is_not(None),
+        ).order_by(AgentSession.started_at.desc(), AgentSession.id.desc())
+    )).scalars().all() if visible_ids else []
+    latest_sessions = {}
+    for session in session_rows:
+        latest_sessions.setdefault(session.task_id, session)
+    attention = []
+    for approval in approval_rows:
+        task = tasks_by_id.get(approval.task_id)
+        if task:
+            attention.append({"kind": "Approval", "title": approval.title,
+                              "task": task, "detail": "Agent is waiting for a decision"})
+    for task in task_rows:
+        latest = latest_sessions.get(task.id)
+        if latest and latest.status == AgentSessionStatus.ERROR:
+            attention.append({"kind": "Failed session", "title": task.title,
+                              "task": task, "detail": "Inspect the failed run"})
+    for task in task_rows:
+        if task.status == TaskStatus.IN_REVIEW:
+            attention.append({"kind": "Ready for review", "title": task.title,
+                              "task": task, "detail": "Review the result"})
+
     return templates.TemplateResponse(request, "dashboard.html", {
         "request": request,
         "stats": stats,
         "recent_projects": recent_projects,
-        "recent_tasks": recent_tasks
+        "recent_tasks": recent_tasks,
+        "attention": attention[:12],
     })
 
 
@@ -311,6 +367,31 @@ async def ui_projects(
             p for p in projects
             if p.approval_status != ApprovalStatus.REJECTED
         ]
+
+    project_ids = {project.id for project in projects}
+    pending_rows = (await db.execute(select(AgentApproval.project_id).where(
+        AgentApproval.project_id.in_(project_ids),
+        AgentApproval.status == AgentApprovalStatus.PENDING,
+    ))).scalars().all() if project_ids else []
+    pending_counts = Counter(pending_rows)
+    session_rows = (await db.execute(select(AgentSession).where(
+        AgentSession.project_id.in_(project_ids), AgentSession.task_id.is_not(None)
+    ).order_by(AgentSession.started_at.desc(), AgentSession.id.desc()))).scalars().all() if project_ids else []
+    latest_sessions = {}
+    for session in session_rows:
+        latest_sessions.setdefault(session.task_id, session)
+    for project in projects:
+        project.ui_total = len(project.tasks)
+        project.ui_completed = sum(task.status == TaskStatus.COMPLETED for task in project.tasks)
+        project.ui_blocked = sum(
+            task.status == TaskStatus.BLOCKED or
+            (latest_sessions.get(task.id) is not None and
+             latest_sessions[task.id].status in (AgentSessionStatus.BLOCKED, AgentSessionStatus.ERROR))
+            for task in project.tasks
+        )
+        project.ui_attention = project.ui_blocked + pending_counts.get(project.id, 0) + sum(
+            task.status == TaskStatus.IN_REVIEW for task in project.tasks
+        )
 
     agents_result = await db.execute(
         select(Entity).filter(Entity.entity_type == EntityType.AGENT, Entity.is_active == True)
@@ -348,11 +429,102 @@ async def project_kanban_board(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # A worker is ready only when the configured worker CLI is available.
+    # Task stage alone cannot prove execution: use durable agent sessions.
+    role_data = await _role_assignment_payload()
+    worker_role = next((role for role in role_data["roles"] if role["role"] == "worker"), None)
+    has_folder = bool(project.path and project.path.strip())
+    has_worker = bool(worker_role and worker_role["installed"])
+
+    all_tasks = [task for stage in project.stages for task in stage.tasks]
+    session_result = await db.execute(
+        select(AgentSession)
+        .where(AgentSession.project_id == project_id, AgentSession.task_id.is_not(None))
+        .order_by(AgentSession.started_at.desc(), AgentSession.id.desc())
+    )
+    sessions = session_result.scalars().all()
+    latest_session_by_task = {}
+    for session in sessions:
+        latest_session_by_task.setdefault(session.task_id, session.status.value)
+    approvals_result = await db.execute(
+        select(AgentApproval.task_id).where(
+            AgentApproval.project_id == project_id,
+            AgentApproval.status == AgentApprovalStatus.PENDING,
+            AgentApproval.task_id.is_not(None),
+        )
+    )
+    pending_approval_task_ids = set(approvals_result.scalars())
+    has_started = any(
+        session.status in (
+            AgentSessionStatus.ACTIVE,
+            AgentSessionStatus.IDLE,
+            AgentSessionStatus.BLOCKED,
+            AgentSessionStatus.DONE,
+        )
+        for session in sessions
+    )
+    execution_message = None
+    if sessions:
+        latest = sessions[0]
+        if latest.status == AgentSessionStatus.ERROR:
+            execution_message = f"Agent session failed for task #{latest.task_id}. Check Activity."
+        elif latest.status == AgentSessionStatus.BLOCKED:
+            execution_message = f"Agent session blocked on task #{latest.task_id}. Check Activity."
+        elif latest.status == AgentSessionStatus.DONE:
+            execution_message = f"Agent session finished for task #{latest.task_id}."
+        elif latest.status == AgentSessionStatus.STARTING:
+            execution_message = f"Agent starting task #{latest.task_id}."
+        else:
+            execution_message = f"Agent session active on task #{latest.task_id}."
+
+    first_backlog_task_id = next(
+        (task.id for stage in project.stages if stage.key == "backlog" for task in stage.tasks),
+        None,
+    )
+    def has_worker_assignee(task: Task) -> bool:
+        return bool(worker_role and any(
+            assignee.entity_type == EntityType.AGENT and assignee.name == worker_role["agent"]
+            for assignee in task.assignees
+        ))
+
+    first_todo_unassigned_task_id = next(
+        (task.id for stage in project.stages if stage.key == "to_do"
+         for task in stage.tasks if not has_worker_assignee(task)),
+        None,
+    )
+    first_todo_assigned_task_id = next(
+        (task.id for stage in project.stages if stage.key == "to_do"
+         for task in stage.tasks if has_worker_assignee(task)),
+        None,
+    )
+    completed_count = sum((has_folder, has_worker, bool(all_tasks), has_started))
+    setup_checklist = {
+        "has_folder": has_folder,
+        "has_worker": has_worker,
+        "worker_configured": worker_role is not None,
+        "worker_agent": worker_role["agent"] if worker_role else "None",
+        "worker_name": worker_role["display_name"] if worker_role else "Not configured",
+        "has_tasks": bool(all_tasks),
+        "task_count": len(all_tasks),
+        "has_started": has_started,
+        "execution_message": execution_message,
+        "first_backlog_task_id": first_backlog_task_id,
+        "todo_stage_id": next((stage.id for stage in project.stages if stage.key == "to_do"), None),
+        "first_todo_unassigned_task_id": first_todo_unassigned_task_id,
+        "first_todo_assigned_task_id": first_todo_assigned_task_id,
+        "completed_count": completed_count,
+        "all_complete": completed_count == 4,
+    }
+
     return templates.TemplateResponse(request, "kanban_board.html", {
         "request": request,
         "project": project,
         "current_entity": current_entity,
         "stage_statuses": STAGE_STATUSES,
+        "setup_checklist": setup_checklist,
+        "latest_session_by_task": latest_session_by_task,
+        "pending_approval_task_ids": pending_approval_task_ids,
+        "active_page": "board",
     })
 
 
@@ -370,7 +542,8 @@ async def project_workbench(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return templates.TemplateResponse(request, "project_workbench.html", {
-        "request": request, "project": project, "current_entity": current_entity
+        "request": request, "project": project, "current_entity": current_entity,
+        "active_page": "activity"
     })
 
 
@@ -388,7 +561,37 @@ async def project_git(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return templates.TemplateResponse(request, "project_git.html", {
-        "request": request, "project": project, "current_entity": current_entity
+        "request": request, "project": project, "current_entity": current_entity,
+        "active_page": "changes"
+    })
+
+
+@router.get("/ui/projects/{project_id}/settings", response_class=HTMLResponse)
+async def project_settings(
+    request: Request,
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity)
+):
+    result = await db.execute(
+        select(Project)
+        .filter(Project.id == project_id)
+        .options(
+            selectinload(Project.stages),
+            selectinload(Project.creator)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    role_data = await _role_assignment_payload()
+    return templates.TemplateResponse(request, "project_settings.html", {
+        "request": request,
+        "project": project,
+        "current_entity": current_entity,
+        "role_data": role_data,
+        "active_page": "settings",
     })
 
 
@@ -857,6 +1060,31 @@ def _render_dependencies(description: str, dep_task_ids: list[int]) -> str:
     return f"{body}\n\nDepends on: {refs}" if body else f"Depends on: {refs}"
 
 
+@router.post("/ui/tasks/chat-plan/preview")
+async def ui_preview_chat_plan(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity)
+):
+    """Prepare task proposals without creating tasks or writing workspace files."""
+    if not current_entity:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        chat_req = ChatPlanRequest(**(await request.json()))
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=f"invalid chat plan request: {exc}")
+    message = (chat_req.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="message is required")
+    project = (await db.execute(select(Project).where(
+        Project.id == chat_req.project_id
+    ))).scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await require_project_approval_for_mutation(project, current_entity)
+    return {"items": _plan_items_from_chat(message)}
+
+
 @router.post("/ui/tasks/chat-plan")
 async def ui_create_chat_plan(
     request: Request,
@@ -1023,6 +1251,7 @@ async def ui_edit_task(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid task update: {exc}")
     update_data = task_update.model_dump(exclude_unset=True)
+    expected_version = update_data.pop("version", None)
 
     result = await db.execute(
         select(Task).filter(Task.id == task_id).options(selectinload(Task.assignees))
@@ -1032,6 +1261,11 @@ async def ui_edit_task(
         raise HTTPException(status_code=404, detail="Task not found")
 
     await require_task_access(task, current_entity, db, require_write=True)
+    if expected_version is not None and expected_version != task.version:
+        raise HTTPException(
+            status_code=409,
+            detail="This task changed while you were editing. Review the latest version before saving.",
+        )
 
     new_status = task_update.status
     try:
@@ -1347,11 +1581,46 @@ async def ui_create_project(
 
 @router.get("/ui/users", response_class=HTMLResponse)
 async def ui_users(request: Request, db: AsyncSession = Depends(get_db)):
-    """List all registered users (entities)"""
+    """Show configured roles, CLI availability, and current agent work."""
     result = await db.execute(select(Entity).order_by(Entity.created_at.desc()))
     users = result.scalars().all()
+    role_payload = await _role_assignment_payload()
+    from agent_kanban_pm.runtime.preferences import get_manager_agent_name
+    manager_agent = get_manager_agent_name()
+
+    active_result = await db.execute(
+        select(AgentSession)
+        .where(
+            AgentSession.ended_at.is_(None),
+            AgentSession.status.in_([
+                AgentSessionStatus.STARTING,
+                AgentSessionStatus.ACTIVE,
+                AgentSessionStatus.IDLE,
+                AgentSessionStatus.BLOCKED,
+            ]),
+        )
+        .options(
+            selectinload(AgentSession.agent),
+            selectinload(AgentSession.task),
+            selectinload(AgentSession.project),
+        )
+        .order_by(AgentSession.started_at.desc(), AgentSession.id.desc())
+    )
+    current_work = {}
+    for session in active_result.scalars():
+        if session.agent.name not in current_work:
+            current_work[session.agent.name] = {
+                "task_id": session.task_id,
+                "task_title": session.task.title if session.task else None,
+                "project_id": session.project_id,
+                "project_name": session.project.name if session.project else None,
+                "status": session.status.value,
+            }
 
     return templates.TemplateResponse(request, "users.html", {
         "request": request,
-        "users": users
+        "users": users,
+        "role_payload": role_payload,
+        "manager_agent": manager_agent,
+        "current_work": current_work,
     })

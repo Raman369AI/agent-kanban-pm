@@ -78,7 +78,7 @@ def test_ui_routes_and_board_render():
         stage_names = re.findall(r'data-stage-name="([^"]+)"', body)
         add_task_stages = {
             name.lower().replace(" ", "").replace("-", "").replace("_", "")
-            for name in re.findall(r'class="btn-add-task" data-stage-name="([^"]+)"', body)
+            for name in re.findall(r'class="btn-add-task"[^>]*data-stage-name="([^"]+)"', body)
         }
         assert "backlog" in add_task_stages
         assert "todo" in add_task_stages
@@ -103,3 +103,236 @@ def test_ui_routes_and_board_render():
 
         for marker in ("TemplateNotFound", "Jinja2", "Traceback"):
             assert marker.lower() not in body.lower()
+
+
+def test_board_phase1_interaction_fixes():
+    """Phase 1 UI plan: creation entry points, pending guards, mobile nav,
+    accurate labels, and readable status text."""
+    with TestClient(app) as client:
+        assert client.get("/").status_code == 200
+
+        owner, headers = tests_helper.local_owner_headers(client)
+        project_response = client.post(
+            "/projects",
+            json={"name": "Phase 1 UI", "description": "Interaction fixes"},
+            headers=headers,
+        )
+        assert project_response.status_code == 201, project_response.text
+        project = project_response.json()
+        client.post(f"/projects/{project['id']}/approve", json={}, headers=headers)
+
+        task_response = client.post(
+            "/tasks",
+            json={"title": "Phase 1 task", "project_id": project["id"]},
+            headers=headers,
+        )
+        assert task_response.status_code == 201, task_response.text
+        task = task_response.json()
+
+        # Put the card in Backlog so the board renders its stage actions.
+        detail = client.get(f"/projects/{project['id']}").json()
+        stages = {s["name"]: s["id"] for s in detail["stages"]}
+        staged = client.post(
+            "/ui/tasks/create",
+            json={
+                "title": "Phase 1 backlog card",
+                "project_id": project["id"],
+                "stage_id": stages["Backlog"],
+            },
+            headers=headers,
+        )
+        assert staged.status_code == 200, staged.text
+        task = staged.json()["task"]
+
+        board = client.get(f"/ui/projects/{project['id']}/board")
+        assert board.status_code == 200
+        body = board.text
+        board_js = client.get("/static/js/board.js").text
+        base_html = client.get("/ui/projects").text
+        main_js = client.get("/static/js/main.js").text
+        style_css = client.get("/static/css/style.css").text
+
+        # Two explicit creation entry points with the destination stage
+        # visible before submission.
+        assert 'id="new-task-btn"' in body
+        assert "openNewTaskModal" in board_js
+        assert "Plan work" in body
+        assert 'id="task-form-stage"' in body
+        assert "Planning proposes task cards" in body
+
+        # One Enter handler only (no inline keydown on the plan input) and a
+        # pending guard so repeated submit attempts cannot duplicate work.
+        assert not re.search(r'id="chat-task-input"[^>]*onkeydown', body)
+        assert "planRequestPending" in board_js
+        assert "taskFormPending" in board_js
+        assert 'id="chat-plan-error"' in body
+        assert 'id="task-form-error"' in body
+
+        # Global navigation reachable at phone widths via a header toggle.
+        assert 'id="mobile-nav-toggle"' in base_html
+        assert "closeMobileNav" in main_js
+        assert "data-sidebar-open" in style_css
+        assert ".mobile-nav-toggle" in style_css
+
+        # Approval language is reserved for approval requests; the backlog
+        # action describes its actual effect.
+        assert "Move to To Do" in body
+        assert "moveToTodo" in board_js
+        assert "approveToTodo" not in board_js
+        assert 'title="Move this card to the To Do stage"' in body
+
+        # Destructive task actions live in an accessible overflow menu.
+        assert 'aria-haspopup="menu"' in body
+        assert "toggleTaskMenu" in board_js
+        assert "Delete task" in body
+        assert 'title="Delete"' not in body
+
+        # Stage policy copy describes the runtime's automatic handoff.
+        assert "STATUS.md" in body
+        assert "never auto-assigns or auto-moves" not in body
+
+        # Readable status labels instead of raw enum values.
+        move = client.patch(
+            f"/ui/tasks/{task['id']}/move",
+            json={"stage_id": stages["In Progress"], "status": "in_progress"},
+            headers=headers,
+        )
+        assert move.status_code == 200, move.text
+        moved_board = client.get(f"/ui/projects/{project['id']}/board").text
+        assert "In progress" in moved_board
+        assert ">in_progress<" not in moved_board
+        assert "function statusLabel" in board_js
+
+
+def test_phase2_setup_guide_and_unified_navigation():
+    """Phase 2 UI plan: setup checklist, unified project navigation,
+    Agents & roles directory, and empty state recovery."""
+    with TestClient(app) as client:
+        owner, headers = tests_helper.local_owner_headers(client)
+
+        # 1. New project with no folder or tasks initially
+        proj_resp = client.post(
+            "/projects",
+            json={"name": "Phase 2 Guide", "description": "Setup & Nav tests"},
+            headers=headers,
+        )
+        assert proj_resp.status_code == 201
+        project = proj_resp.json()
+        pid = project["id"]
+        client.post(f"/projects/{pid}/approve", json={}, headers=headers)
+
+        # Global navigation in base.html
+        base_resp = client.get("/ui/projects")
+        assert base_resp.status_code == 200
+        assert "Agents &amp; roles" in base_resp.text or "Agents & roles" in base_resp.text
+
+        # main.js defaults sidebar to expanded for new users
+        main_js = client.get("/static/js/main.js").text
+        assert "|| 'expanded'" in main_js
+
+        # Consistent project navigation on every project page
+        board_html = client.get(f"/ui/projects/{pid}/board").text
+        activity_html = client.get(f"/ui/projects/{pid}/workbench").text
+        changes_html = client.get(f"/ui/projects/{pid}/git").text
+        settings_html = client.get(f"/ui/projects/{pid}/settings").text
+
+        for page_html in (board_html, activity_html, changes_html, settings_html):
+            assert "project-sub-nav" in page_html
+            assert f"/ui/projects/{pid}/board" in page_html
+            assert f"/ui/projects/{pid}/workbench" in page_html
+            assert f"/ui/projects/{pid}/git" in page_html
+            assert f"/ui/projects/{pid}/settings" in page_html
+            assert "Board" in page_html
+            assert "Activity" in page_html
+            assert "Changes" in page_html
+            assert "Settings" in page_html
+
+        # Board page shows setup checklist with missing prerequisites
+        assert "project-setup-checklist" in board_html
+        assert "Choose folder" in board_html
+        assert "Configure worker" in board_html
+        assert "Create task" in board_html
+        assert "Start work" in board_html
+        assert "Missing prerequisite" in board_html or "Prerequisite" in board_html
+
+        # Assignment modal in board.js: Configure agents action in empty state & unavailable explanation
+        board_js = client.get("/static/js/board.js").text
+        assert "Configure agents" in board_js
+        assert "not found on PATH" in board_js
+
+        # Agents & roles page (/ui/users)
+        users_resp = client.get("/ui/users")
+        assert users_resp.status_code == 200
+        users_html = users_resp.text
+        assert "Agents &amp; Roles" in users_html or "Agents & Roles" in users_html
+        assert "Configured Roles" in users_html
+        assert "Team Members" in users_html
+        assert "highlight-antigravity" not in users_html
+        assert "Configure roles" in users_html
+        assert "role-editor-container" in users_html
+
+        # Project cards in /ui/projects have unified actions
+        projects_html = client.get("/ui/projects").text
+        assert f"/ui/projects/{pid}/settings" in projects_html
+        assert "Activity" in projects_html
+        assert "Changes" in projects_html
+
+
+
+def test_plan_preview_has_no_task_or_workspace_side_effects(tmp_path):
+    with TestClient(app) as client:
+        owner, headers = tests_helper.local_owner_headers(client)
+        project = client.post(
+            "/projects",
+            json={"name": "Preview only", "description": "No side effects", "path": str(tmp_path)},
+            headers=headers,
+        )
+        assert project.status_code == 201, project.text
+        project_id = project.json()["id"]
+        client.post(f"/projects/{project_id}/approve", json={}, headers=headers).raise_for_status()
+        status_file = tmp_path / "STATUS.md"
+        status_file.write_text("Original status" + chr(10))
+        before = client.get(f"/ui/projects/{project_id}/board").text.count('class="kanban-task-revamp')
+        preview = client.post(
+            "/ui/tasks/chat-plan/preview",
+            json={"project_id": project_id, "message": "Build onboarding"},
+            headers=headers,
+        )
+        assert preview.status_code == 200, preview.text
+        assert len(preview.json()["items"]) == 4
+        after = client.get(f"/ui/projects/{project_id}/board").text.count('class="kanban-task-revamp')
+        assert after == before
+        assert status_file.read_text() == "Original status" + chr(10)
+
+
+
+def test_dashboard_review_attention_and_project_progress():
+    with TestClient(app) as client:
+        owner, headers = tests_helper.local_owner_headers(client)
+        project = client.post(
+            "/projects",
+            json={"name": "Review attention", "description": "Dashboard attention sample"},
+            headers=headers,
+        )
+        assert project.status_code == 201, project.text
+        project_id = project.json()["id"]
+        client.post(f"/projects/{project_id}/approve", json={}, headers=headers).raise_for_status()
+        detail = client.get(f"/projects/{project_id}").json()
+        review_id = next(stage["id"] for stage in detail["stages"] if stage["name"] == "Review")
+        created = client.post(
+            "/ui/tasks/create",
+            json={"project_id": project_id, "stage_id": review_id,
+                  "title": "Review this result", "status": "in_review"},
+            headers=headers,
+        )
+        assert created.status_code == 200, created.text
+        task_id = created.json()["task"]["id"]
+        dashboard = client.get("/").text
+        assert "Ready for review" in dashboard
+        assert "TaskStatus." not in dashboard
+        assert "ApprovalStatus." not in dashboard
+        assert f"/ui/projects/{project_id}/board?task={task_id}" in dashboard
+        projects = client.get("/ui/projects").text
+        assert "0 of 1 tasks complete" in projects
+        assert "1 need attention" in projects
+        assert "More actions" in projects

@@ -296,6 +296,15 @@
             </div>
             <p class="text-secondary" style="font-size: 1rem; margin-bottom: 1.25rem; line-height: 1.6;">{{ project.description }}</p>
             
+            <div class="project-progress-summary" aria-label="{{ project.ui_completed }} of {{ project.ui_total }} tasks completed">
+                <span>{{ project.ui_completed }} of {{ project.ui_total }} tasks complete</span>
+                <progress value="{{ project.ui_completed }}" max="{{ project.ui_total or 1 }}">{{ project.ui_completed }} of {{ project.ui_total }}</progress>
+                {% if project.ui_attention %}
+                <a href="/ui/projects/{{ project.id }}/board">{{ project.ui_attention }} need attention</a>
+                {% else %}
+                <span class="text-secondary">No attention items</span>
+                {% endif %}
+            </div>
             <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
                 {% if project.path %}
                 <div style="display: flex; align-items: center; gap: 0.5rem;">
@@ -315,21 +324,25 @@
         </div>
     </div>
     <div style="display:flex;gap:0.75rem;margin-top:2rem; border-top: 1px solid var(--glass-border); padding-top: 1.5rem; flex-wrap: wrap;">
-        <a href="/ui/projects/{{ project.id }}/board" class="btn btn-primary" style="border-radius: 2rem; padding: 0.55rem 1.75rem; font-weight: 700; font-size: 0.85rem;">View Board</a>
-        <a href="/ui/projects/{{ project.id }}/workbench" class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.25rem; font-size: 0.85rem;">
-            <span style="margin-right: 0.4rem;">&#128295;</span> Workbench
+        <a href="/ui/projects/{{ project.id }}/board" class="btn btn-primary" style="border-radius: 2rem; padding: 0.55rem 1.5rem; font-weight: 700; font-size: 0.85rem;">Board</a>
+        <a href="/ui/projects/{{ project.id }}/workbench" class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.15rem; font-size: 0.85rem;">
+            <span style="margin-right: 0.3rem;">&#9889;</span> Activity
         </a>
-        <a href="/ui/projects/{{ project.id }}/git" class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.25rem; font-size: 0.85rem;">
-            <span style="margin-right: 0.4rem;">&#128260;</span> Git
+        <a href="/ui/projects/{{ project.id }}/git" class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.15rem; font-size: 0.85rem;">
+            <span style="margin-right: 0.3rem;">&#128260;</span> Changes
+        </a>
+        <a href="/ui/projects/{{ project.id }}/settings" class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.15rem; font-size: 0.85rem;">
+            <span style="margin-right: 0.3rem;">&#9881;&#65039;</span> Settings
         </a>
         {% if project.path %}
         <button class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.25rem; font-size: 0.85rem;" data-path="{{ project.path|e }}" onclick="openProjectFolder(this.dataset.path)">
             <span style="margin-right: 0.4rem;">📂</span> Open Folder
         </button>
         {% endif %}
-        <button class="btn" style="border-radius: 2rem; padding: 0.55rem 1.25rem; color: var(--danger); font-size: 0.85rem;" onclick="deleteProject({{ project.id }})">
-            <span style="margin-right: 0.4rem;">🗑️</span> Delete
-        </button>
+        <details class="project-action-menu">
+            <summary class="btn btn-secondary">More actions</summary>
+            <button type="button" class="btn" onclick="deleteProject({{ project.id }})">Delete project</button>
+        </details>
     </div>
 </div>
 {% endfor %}
