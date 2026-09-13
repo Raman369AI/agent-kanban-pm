@@ -107,23 +107,19 @@
                     </div>
                     <div class="header-actions">
                         <div class="preferences-controls">
-                            <div class="theme-switcher">
-                                <button id="theme-toggle" class="btn-icon" title="Toggle theme">
-                                    <span class="icon">🌙</span>
-                                </button>
-                            </div>
-                            <div class="view-switcher">
-                                <button id="view-toggle" class="btn-icon" title="Toggle view">
-                                    <span class="icon">📊</span>
-                                </button>
-                            </div>
-                            <div class="density-switcher">
-                                <select id="density-select" class="select-small">
-                                    <option value="comfortable">Comfortable</option>
-                                    <option value="compact">Compact</option>
-                                    <option value="spacious">Spacious</option>
-                                </select>
-                            </div>
+                            <button id="view-toggle" class="btn btn-secondary" type="button">Board view</button>
+                            <details class="appearance-menu">
+                                <summary class="btn btn-secondary">Appearance</summary>
+                                <div class="appearance-menu-content">
+                                    <button id="theme-toggle" class="btn" type="button" title="Change theme">Change theme <span class="icon" aria-hidden="true">🌙</span></button>
+                                    <label for="density-select">Density</label>
+                                    <select id="density-select" class="select-small">
+                                        <option value="comfortable">Comfortable</option>
+                                        <option value="compact">Compact</option>
+                                        <option value="spacious">Spacious</option>
+                                    </select>
+                                </div>
+                            </details>
                         </div>
                     </div>
                 </div>

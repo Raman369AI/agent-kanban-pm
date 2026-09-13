@@ -1,8 +1,8 @@
 # UI improvement plan
 
-Status: Phase 1 implementation and phase-specific browser validation complete
-and committed as `ff8c81b` (2026-09-12). Phase 2 implementation and
-validation are complete (2026-09-12); Phases 3–5 have not started.
+Status: Phases 1–5 implemented and validated (2026-09-12). Phase 1 was
+committed as `ff8c81b` and Phase 2 as `22601a5`. Phases 3–5 are implemented
+together with focused browser and route coverage.
 
 Phase 1 verification: 227 tests passed, including 17 Chromium browser tests.
 Navigation and creation controls were checked at 1440px, 1024px, 768px, and
@@ -129,6 +129,12 @@ Primary files: `data/templates/projects.html`, `data/templates/users.html`,
 
 Priority: High. Depends on the terminology decisions in Phases 1–2.
 
+Validation update (2026-09-12): A task opens in a single side panel, with
+Overview, execution, approval, activity, log, and review views. Deep links,
+browser Back, focus restoration, keyboard movement, explicit stage selection,
+refresh preservation, and edit conflict handling have browser coverage. Named
+priority options retain nonstandard existing values until changed.
+
 - Open a task in a side panel instead of expanding multiple panes inside a
   board column. Use a full-width panel on small screens.
 - Default to **Overview**: description, owner, priority, stage, execution state,
@@ -161,6 +167,12 @@ Primary files: `data/templates/kanban_board.html`, `data/static/js/board.js`,
 
 Priority: Medium. Depends on task deep links from Phase 3.
 
+Validation update (2026-09-12): Board search and attention filters use task
+status, latest durable session state, and pending approvals. Counts and filters
+survive board refresh. The dashboard links approvals, failed sessions, and
+review-ready tasks to their task panels; project cards show progress and
+attention. The connection indicator returns to Live only after refresh.
+
 - Add board search by title or task ID and filters for **Needs me**, **Blocked**,
   **Running**, **Unassigned**, agent, and priority.
 - Define filter semantics from actual task/session/approval data. Needs me
@@ -188,6 +200,13 @@ Primary files: board scripts/templates, `data/templates/dashboard.html`,
 ## Phase 5 — Simplify visual design and planning
 
 Priority: Medium. Build on the established navigation and task panel.
+
+Validation update (2026-09-12): Task and shared card text/surfaces are clearer,
+the Board/List control is labeled, and appearance options are secondary.
+Planning has a read-only preparation endpoint and an editable preview. Browser
+coverage confirms cancellation creates nothing, a double confirmation creates
+only selected proposals once, and API coverage confirms preview leaves tasks
+and STATUS.md unchanged.
 
 - Increase essential text sizes and improve spacing. Start with 14–16px task
   titles and 12–14px supporting text, then validate density in the browser.
@@ -243,3 +262,21 @@ Final usability walkthrough:
 Success means a first-time user can complete these steps without CLI/API
 instructions, distinguish planning from task creation, and explain what the
 primary action will do before clicking it.
+
+## Final validation record (2026-09-12)
+
+The isolated sample included a fresh project, a populated board, a blocked task,
+a failed durable session, and a pending approval. Chromium screenshots were
+captured before Phases 3–5 in `/tmp/agent-kanban-ui-baseline` and after them in
+`/tmp/agent-kanban-ui-final`. The final board and task panel were inspected at
+1440px, 1024px, 768px, and 390px; light, dark, blue, and rose themes were
+inspected at phone width. A 195px CSS viewport with device pixel ratio 2 stood
+in for 200% zoom, where the plan preview and its actions remained within the
+viewport. Browser regressions cover keyboard and touch actions, slow and failed
+requests, reconnect refresh, setup and worker launch, approval decisions, task
+search, panel navigation, and selected-only planning. The complete suite passed
+with 237 tests; JavaScript syntax and diff checks passed.
+
+Limitation: Browser zoom was emulated through viewport and pixel ratio rather
+than changing Chromium's own zoom setting. Screenshots are local validation
+artifacts, not tracked release assets.

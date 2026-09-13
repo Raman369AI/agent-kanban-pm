@@ -63,16 +63,12 @@
         }
     });
 
-    // --- Card expansion ---
-    function getExpandedCards() {
-        try {
-            var stored = localStorage.getItem('kanban.expanded.' + PROJECT_ID);
-            return stored ? JSON.parse(stored) : {};
-        } catch(e) { return {}; }
-    }
-    function saveExpandedCards() {
-        try { localStorage.setItem('kanban.expanded.' + PROJECT_ID, JSON.stringify(expandedCards)); } catch(e) {}
-    }
+    // --- One task detail panel, with the existing secondary views ---
+    var activeTaskId = null;
+    var panelReturnFocus = null;
+    var panelHistoryEntry = false;
+    var panelLoadSerial = 0;
+
     function getExpandedCardTabs() {
         try {
             var stored = localStorage.getItem('kanban.expandedTabs.' + PROJECT_ID);
@@ -82,79 +78,265 @@
     function saveExpandedCardTabs() {
         try { localStorage.setItem('kanban.expandedTabs.' + PROJECT_ID, JSON.stringify(expandedCardTabs)); } catch(e) {}
     }
+    function taskIdFromUrl() {
+        var value = new URL(window.location.href).searchParams.get('task');
+        var id = Number(value);
+        return Number.isInteger(id) && id > 0 ? id : null;
+    }
+    function returnPanelContentToCard() {
+        var content = document.getElementById('task-panel-content');
+        var expansion = content && content.querySelector('.task-expansion-panel');
+        if (!expansion) return;
+        var taskId = Number(expansion.id.replace('task-expansion-', ''));
+        var card = document.getElementById('task-card-' + taskId);
+        expansion.style.display = 'none';
+        if (card) card.insertBefore(expansion, card.querySelector('.task-footer-revamp'));
+        else expansion.remove();
+    }
+    function attachTaskPanel(taskId, reloadData) {
+        var card = document.getElementById('task-card-' + taskId);
+        var expansion = document.getElementById('task-expansion-' + taskId);
+        var content = document.getElementById('task-panel-content');
+        if (!card || !expansion || !content) return false;
+        returnPanelContentToCard();
+        content.appendChild(expansion);
+        expansion.style.display = 'block';
+        card.classList.add('expanded');
+        var face = card.querySelector('.task-compact-face');
+        if (face) face.setAttribute('aria-expanded', 'true');
+        document.getElementById('task-panel-number').textContent = 'Task #' + taskId;
+        document.getElementById('task-panel-title').textContent =
+            (card.querySelector('.task-title-revamp') || {}).textContent || 'Task';
+        switchExpansionTab(taskId, expandedCardTabs[taskId] || 'overview');
+        if (reloadData) loadCardData(taskId);
+        return true;
+    }
+    function closeTaskPanelNow() {
+        if (!activeTaskId) return;
+        var taskId = activeTaskId;
+        returnPanelContentToCard();
+        var card = document.getElementById('task-card-' + taskId);
+        if (card) {
+            card.classList.remove('expanded');
+            var face = card.querySelector('.task-compact-face');
+            if (face) face.setAttribute('aria-expanded', 'false');
+        }
+        var panel = document.getElementById('task-detail-panel');
+        panel.hidden = true;
+        panel.setAttribute('aria-hidden', 'true');
+        document.getElementById('task-panel-backdrop').hidden = true;
+        document.body.classList.remove('task-panel-open');
+        activeTaskId = null;
+        panelLoadSerial++;
+        var focusTarget = panelReturnFocus && panelReturnFocus.isConnected
+            ? panelReturnFocus : card;
+        panelReturnFocus = null;
+        if (focusTarget) focusTarget.focus({preventScroll: true});
+    }
+    function closeTaskPanel() {
+        if (!activeTaskId) return;
+        if (panelHistoryEntry && taskIdFromUrl() === activeTaskId) {
+            history.back();
+            return;
+        }
+        closeTaskPanelNow();
+        var url = new URL(window.location.href);
+        url.searchParams.delete('task');
+        history.replaceState({}, '', url);
+        panelHistoryEntry = false;
+    }
+    function openTaskPanel(taskId, options) {
+        options = options || {};
+        taskId = Number(taskId);
+        if (!document.getElementById('task-card-' + taskId)) {
+            showToast('Task #' + taskId + ' is not on this board', 'error');
+            return;
+        }
+        if (activeTaskId && activeTaskId !== taskId) closeTaskPanelNow();
+        if (!activeTaskId) {
+            var trigger = document.activeElement;
+            var sourceCard = document.getElementById('task-card-' + taskId);
+            panelReturnFocus = sourceCard && sourceCard.contains(trigger) ? trigger : sourceCard;
+        }
+        activeTaskId = taskId;
+        var panel = document.getElementById('task-detail-panel');
+        panel.hidden = false;
+        panel.setAttribute('aria-hidden', 'false');
+        document.getElementById('task-panel-backdrop').hidden = false;
+        document.body.classList.add('task-panel-open');
+        expandedCardTabs[taskId] = options.tab || 'overview';
+        attachTaskPanel(taskId, true);
+        if (options.history !== false && taskIdFromUrl() !== taskId) {
+            var url = new URL(window.location.href);
+            url.searchParams.set('task', String(taskId));
+            history.pushState({task: taskId}, '', url);
+            panelHistoryEntry = true;
+        }
+        if (options.focus !== false) document.getElementById('task-panel-close').focus();
+    }
     function initExpandedCards() {
-        expandedCards = getExpandedCards();
         expandedCardTabs = getExpandedCardTabs();
-        Object.keys(expandedCards).forEach(function(taskId) {
-            if (expandedCards[taskId]) {
-                var panel = document.getElementById('task-expansion-' + taskId);
-                if (panel) {
-                    panel.style.display = '';
-                    var card = document.getElementById('task-card-' + taskId);
-                    if (card) {
-                        card.classList.add('expanded');
-                        var face = card.querySelector('.task-compact-face');
-                        if (face) face.setAttribute('aria-expanded', 'true');
-                        switchExpansionTab(taskId, expandedCardTabs[taskId] || 'approvals');
-                        loadCardData(taskId);
-                    }
-                }
-            }
-        });
+        if (activeTaskId) {
+            if (!attachTaskPanel(activeTaskId, true)) closeTaskPanelNow();
+            return;
+        }
+        var linkedTask = taskIdFromUrl();
+        if (linkedTask) openTaskPanel(linkedTask, {history: false});
     }
     function toggleCardExpansion(taskId) {
-        var panel = document.getElementById('task-expansion-' + taskId);
-        var card = document.getElementById('task-card-' + taskId);
-        if (!panel || !card) return;
-        if (panel.style.display === 'none') {
-            panel.style.display = '';
-            card.classList.add('expanded');
-            var face = card.querySelector('.task-compact-face');
-            if (face) face.setAttribute('aria-expanded', 'true');
-            expandedCards[taskId] = true;
-            var tab = expandedCardTabs[taskId] || 'approvals';
-            switchExpansionTab(taskId, tab);
-            loadCardData(taskId);
-        } else {
-            panel.style.display = 'none';
-            card.classList.remove('expanded');
-            var collapsedFace = card.querySelector('.task-compact-face');
-            if (collapsedFace) collapsedFace.setAttribute('aria-expanded', 'false');
-            expandedCards[taskId] = false;
-        }
-        saveExpandedCards();
+        if (activeTaskId === taskId) closeTaskPanel();
+        else openTaskPanel(taskId);
     }
     function expandCardAndShowApprovals(taskId) {
-        var panel = document.getElementById('task-expansion-' + taskId);
-        var card = document.getElementById('task-card-' + taskId);
-        if (panel && card) {
-            panel.style.display = '';
-            card.classList.add('expanded');
-            expandedCards[taskId] = true;
-        }
-        switchExpansionTab(taskId, 'approvals');
-        saveExpandedCards();
-        loadCardData(taskId);
+        openTaskPanel(taskId, {tab: 'approvals'});
     }
     function switchExpansionTab(taskId, tab) {
         expandedCardTabs[taskId] = tab;
-        var card = document.getElementById('task-card-' + taskId);
-        if (!card) return;
-        card.querySelectorAll('.expansion-tab').forEach(function(btn) {
-            btn.classList.toggle('active', btn.dataset.tab === tab);
+        var expansion = document.getElementById('task-expansion-' + taskId);
+        if (!expansion) return;
+        expansion.querySelectorAll('.expansion-tab').forEach(function(btn) {
+            var selected = btn.dataset.tab === tab;
+            btn.classList.toggle('active', selected);
+            btn.setAttribute('aria-selected', selected ? 'true' : 'false');
         });
-        card.querySelectorAll('.expansion-pane').forEach(function(pane) {
+        expansion.querySelectorAll('.expansion-pane').forEach(function(pane) {
             var paneTab = pane.id.replace('expansion-pane-', '').replace('-' + taskId, '');
-            pane.classList.toggle('active', paneTab === tab);
+            var selected = paneTab === tab;
+            pane.classList.toggle('active', selected);
+            pane.setAttribute('aria-hidden', selected ? 'false' : 'true');
         });
         saveExpandedCardTabs();
     }
     function loadCardData(taskId) {
+        fetchTaskOverview(taskId);
         fetchTaskApprovals(taskId);
         fetchTaskActivity(taskId);
         fetchTaskReviews(taskId);
         fetchTaskTerminal(taskId);
     }
+    function priorityName(value) {
+        var n = Number(value);
+        if (n === 0) return 'None';
+        if (n <= 3) return 'Low';
+        if (n <= 6) return 'Normal';
+        if (n <= 8) return 'High';
+        return 'Urgent';
+    }
+    function renderTaskOverview(taskId, task, sessions, approvals) {
+        if (activeTaskId !== taskId) return;
+        var overview = document.getElementById('task-overview-' + taskId);
+        var logs = document.getElementById('task-logs-' + taskId);
+        if (!overview) return;
+        var card = document.getElementById('task-card-' + taskId);
+        if (card) card.dataset.version = task.version;
+        document.getElementById('task-panel-title').textContent = task.title || 'Task';
+        var columns = Array.from(document.querySelectorAll('.kanban-column-revamp'));
+        var stage = columns.find(function(column) { return Number(column.dataset.stageId) === task.stage_id; });
+        var stageName = stage ? stage.dataset.stageName : 'Unknown';
+        var stageOptions = columns.map(function(column) {
+            return '<option value="' + column.dataset.stageId + '"' +
+                (Number(column.dataset.stageId) === task.stage_id ? ' selected' : '') + '>' +
+                escapeHtml(column.dataset.stageName) + '</option>';
+        }).join('');
+        var owners = (task.assignees || []).map(function(agent) { return agent.name; });
+        var latest = sessions && sessions.length ? sessions[0] : null;
+        var execution = latest ? latest.status.charAt(0).toUpperCase() + latest.status.slice(1) : 'Not started';
+        var blocker = approvals && approvals.length ? 'Approval requested' :
+            latest && latest.status === 'error' ? 'Last agent session failed' :
+            latest && latest.status === 'blocked' ? 'Agent session blocked' :
+            task.status === 'blocked' ? 'Task marked blocked' : 'None';
+        var nextAction = approvals && approvals.length
+            ? '<button class="btn btn-primary" type="button" onclick="openApprovalPopup(' + approvals[0].id + ')">Review approval</button>'
+            : !(task.assignees || []).length
+                ? '<button class="btn btn-primary" type="button" onclick="openAssignModal(' + taskId + ')">Assign work</button>'
+                : stage && stage.dataset.stageKey === 'backlog'
+                    ? '<button class="btn btn-primary" type="button" onclick="moveToTodo(' + taskId + ',this)">Move to To Do</button>'
+                    : '<a class="btn btn-primary" href="/ui/projects/' + PROJECT_ID + '/workbench#terminal:task:' + taskId + '">View activity</a>';
+        overview.innerHTML =
+            '<section class="task-overview-section"><h3>Description</h3><p class="task-overview-description">' +
+                escapeHtml(task.description || 'No description yet.') + '</p></section>' +
+            '<dl class="task-overview-facts">' +
+                '<div><dt>Owner</dt><dd>' + escapeHtml(owners.join(', ') || 'Unassigned') + '</dd></div>' +
+                '<div><dt>Priority</dt><dd>' + priorityName(task.priority) + ' (' + Number(task.priority) + ')</dd></div>' +
+                '<div><dt>Board stage</dt><dd><select id="task-panel-stage" class="form-input" aria-label="Task stage">' +
+                    stageOptions + '</select></dd></div>' +
+                '<div><dt>Task status</dt><dd>' + escapeHtml(statusLabel(task.status)) + '</dd></div>' +
+                '<div><dt>Execution</dt><dd>' + escapeHtml(execution) + '</dd></div>' +
+                '<div><dt>Blocker</dt><dd>' + escapeHtml(blocker) + '</dd></div>' +
+            '</dl><div class="task-overview-next"><span>Next action</span>' + nextAction + '</div>';
+        var stageSelect = overview.querySelector('#task-panel-stage');
+        if (stageSelect) stageSelect.addEventListener('change', function() {
+            var target = document.querySelector('.kanban-drop-zone-revamp[data-stage-id="' + stageSelect.value + '"]');
+            stageSelect.disabled = true;
+            moveTaskCard(card, target).then(function(moved) {
+                if (!moved) stageSelect.value = String(task.stage_id);
+                else refreshBoardFromServer();
+            }).finally(function() { stageSelect.disabled = false; });
+        });
+        if (logs) {
+            var entries = (task.logs || []).slice().reverse();
+            logs.innerHTML = entries.length ? entries.map(function(entry) {
+                return '<div class="task-log-entry"><strong>' + escapeHtml(entry.log_type || 'Log') +
+                    '</strong><p>' + escapeHtml(entry.message || '') + '</p></div>';
+            }).join('') : '<p class="text-secondary">No task logs yet.</p>';
+        }
+        var editDialog = document.getElementById('task-modal');
+        if (editDialog && editDialog.getAttribute('aria-hidden') === 'false' &&
+            document.getElementById('task-form-id').value === String(taskId)) {
+            var draftVersion = document.getElementById('task-form-version').value;
+            if (draftVersion && Number(draftVersion) !== task.version) {
+                setTaskFormError('This task changed while you were editing. Your draft is preserved; review the latest task before saving.');
+            }
+        }
+    }
+    async function fetchTaskOverview(taskId) {
+        var serial = ++panelLoadSerial;
+        var results = await Promise.allSettled([
+            apiFetch('/tasks/' + taskId, {}, 'Could not load task'),
+            apiFetch('/agents/sessions?task_id=' + taskId + '&limit=1', {}, 'Could not load sessions'),
+            apiFetch('/agents/approvals?task_id=' + taskId + '&status_filter=pending&limit=10', {}, 'Could not load approvals')
+        ]);
+        if (serial !== panelLoadSerial || activeTaskId !== taskId) return;
+        if (results[0].status !== 'fulfilled') {
+            var overview = document.getElementById('task-overview-' + taskId);
+            if (overview) overview.textContent = results[0].reason.message;
+            return;
+        }
+        renderTaskOverview(taskId, results[0].value,
+            results[1].status === 'fulfilled' ? results[1].value : [],
+            results[2].status === 'fulfilled' ? results[2].value : []);
+    }
+    function editSelectedTask() {
+        var card = activeTaskId && document.getElementById('task-card-' + activeTaskId);
+        if (card) openEditModal(card);
+    }
+    window.addEventListener('popstate', function() {
+        var linkedTask = taskIdFromUrl();
+        panelHistoryEntry = false;
+        if (linkedTask) openTaskPanel(linkedTask, {history: false});
+        else closeTaskPanelNow();
+    });
+    document.addEventListener('keydown', function(event) {
+        var panel = document.getElementById('task-detail-panel');
+        if (!activeTaskId || !panel || panel.hidden ||
+            document.querySelector('.modal-overlay[aria-hidden="false"]')) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            closeTaskPanel();
+        } else if (event.key === 'Tab') {
+            var focusable = Array.from(panel.querySelectorAll('button:not([disabled]), a[href], select:not([disabled]), input:not([disabled])'))
+                .filter(function(node) { return node.getClientRects().length > 0; });
+            if (!focusable.length) return;
+            if (event.shiftKey && document.activeElement === focusable[0]) {
+                event.preventDefault();
+                focusable[focusable.length - 1].focus();
+            } else if (!event.shiftKey && document.activeElement === focusable[focusable.length - 1]) {
+                event.preventDefault();
+                focusable[0].focus();
+            }
+        }
+    }, true);
 
     // --- In-card terminal ---
     async function fetchTaskTerminal(taskId) {
@@ -633,6 +815,8 @@
                 (card.querySelector('.task-title-revamp') || {}).textContent + ' in ' + stageName +
                 '. Use left and right arrow keys to move.');
             showToast('Task moved to ' + stageName, 'success');
+            if (activeTaskId === Number(taskId)) fetchTaskOverview(Number(taskId));
+            applyBoardFilters(true);
             return true;
         }).catch(function(err) {
             clearPlaceholder(oldZone);
@@ -650,7 +834,7 @@
             return false;
         }).finally(function() {
             delete card.dataset.moving;
-            card.focus();
+            if (!activeTaskId) card.focus();
         });
     }
     window.handleTaskKeydown = function(event, card) {
@@ -713,10 +897,24 @@
         el.textContent = message || '';
         el.style.display = message ? '' : 'none';
     }
+    function setPriorityValue(value) {
+        var select = document.getElementById('task-form-priority');
+        select.querySelectorAll('option[data-preserved="true"]').forEach(function(option) { option.remove(); });
+        var key = String(value === null || value === undefined ? 0 : value);
+        if (!Array.from(select.options).some(function(option) { return option.value === key; })) {
+            var option = new Option('Current: ' + priorityName(key) + ' (' + key + ')', key);
+            option.dataset.preserved = 'true';
+            select.add(option);
+        }
+        select.value = key;
+    }
+    var editDetailRequestSerial = 0;
     window.openAddTaskModal = function(stageId, stageName) {
         document.getElementById('task-modal-title').textContent = 'New task';
         document.getElementById('task-form-mode').value = 'create';
         document.getElementById('task-form-id').value = '';
+        document.getElementById('task-form-version').value = '';
+        document.getElementById('task-form-submit').disabled = false;
         var stageSelect = document.getElementById('task-form-stage');
         if (stageId) stageSelect.value = String(stageId);
         else if (PLAN_STAGE_ID) stageSelect.value = String(PLAN_STAGE_ID);
@@ -725,7 +923,7 @@
         document.getElementById('task-form-stage-hint').style.display = 'none';
         document.getElementById('task-form-title').value = '';
         document.getElementById('task-form-desc').value = '';
-        document.getElementById('task-form-priority').value = '0';
+        setPriorityValue(0);
         document.getElementById('task-form-status').value = 'pending';
         document.getElementById('task-form-skills').value = '';
         document.getElementById('task-form-submit').textContent = 'Create task';
@@ -740,16 +938,20 @@
         document.getElementById('task-modal-title').textContent = 'Edit Task #' + taskId;
         document.getElementById('task-form-mode').value = 'edit';
         document.getElementById('task-form-id').value = taskId;
+        document.getElementById('task-form-version').value = '';
+        document.getElementById('task-form-submit').disabled = true;
+        var requestSerial = ++editDetailRequestSerial;
         var stageSelect = document.getElementById('task-form-stage');
         if (taskEl.dataset.currentStage) stageSelect.value = taskEl.dataset.currentStage;
         // The edit endpoint does not move cards; the board does.
         stageSelect.disabled = true;
         document.getElementById('task-form-stage-hint').style.display = '';
         var title = taskEl.querySelector('.task-title-revamp');
-        document.getElementById('task-form-title').value = title ? title.textContent.trim() : '';
+        var initialTitle = title ? title.textContent.trim() : '';
+        document.getElementById('task-form-title').value = initialTitle;
         document.getElementById('task-form-desc').value = '';
         document.getElementById('task-form-status').value = 'pending';
-        document.getElementById('task-form-priority').value = '0';
+        setPriorityValue(0);
         document.getElementById('task-form-skills').value = '';
         document.getElementById('task-form-submit').textContent = 'Save changes';
         setTaskFormError('');
@@ -757,11 +959,21 @@
         commentsList.innerHTML = '<p class="text-secondary">Loading activity...</p>';
         document.getElementById('task-comments-section').style.display = 'block';
         apiFetch('/tasks/' + taskId, {}, 'Failed to load task details').then(function(data) {
-            document.getElementById('task-form-title').value = data.title || '';
-            document.getElementById('task-form-desc').value = data.description || '';
-            document.getElementById('task-form-status').value = data.status || 'pending';
-            if (data.priority !== undefined) document.getElementById('task-form-priority').value = data.priority;
-            document.getElementById('task-form-skills').value = data.required_skills || '';
+            if (requestSerial !== editDetailRequestSerial ||
+                document.getElementById('task-form-id').value !== String(taskId)) return;
+            document.getElementById('task-form-version').value = String(data.version);
+            document.getElementById('task-form-submit').disabled = false;
+            // A slow detail response must not replace text typed while it loaded.
+            var titleInput = document.getElementById('task-form-title');
+            var descInput = document.getElementById('task-form-desc');
+            var statusInput = document.getElementById('task-form-status');
+            var priorityInput = document.getElementById('task-form-priority');
+            var skillsInput = document.getElementById('task-form-skills');
+            if (titleInput.value === initialTitle) titleInput.value = data.title || '';
+            if (descInput.value === '') descInput.value = data.description || '';
+            if (statusInput.value === 'pending') statusInput.value = data.status || 'pending';
+            if (data.priority !== undefined && priorityInput.value === '0') setPriorityValue(data.priority);
+            if (skillsInput.value === '') skillsInput.value = data.required_skills || '';
             var html = '';
             if (data.comments && data.comments.length > 0) {
                 data.comments.forEach(function(c) {
@@ -773,7 +985,9 @@
             } else { html = '<p class="text-secondary">No comments yet.</p>'; }
             commentsList.innerHTML = html;
         }).catch(function(err) {
+            if (requestSerial !== editDetailRequestSerial) return;
             commentsList.innerHTML = '<p class="text-danger">' + escapeHtml(err.message) + '</p>';
+            setTaskFormError('Could not load task details. Close and try again.');
             showToast('Could not load task: ' + err.message, 'error');
         });
         openModal('task-modal');
@@ -810,6 +1024,7 @@
                 var focusIndex = activeCard ? Array.from(activeCard.querySelectorAll('button, [tabindex]')).indexOf(active) : -1;
                 var scrollPositions = Array.from(board.querySelectorAll('.kanban-container-revamp, .kanban-drop-zone-revamp'))
                     .map(function(el) { return {stage: el.dataset.stageId, top: el.scrollTop, left: el.scrollLeft}; });
+                returnPanelContentToCard();
                 board.replaceWith(freshBoard);
                 var checklist = document.getElementById('project-setup-checklist');
                 var freshChecklist = doc.getElementById('project-setup-checklist');
@@ -825,6 +1040,8 @@
                 }
                 initDragDrop();
                 initExpandedCards();
+                updateAgentFilterChoices();
+                applyBoardFilters(true);
                 fetchAgentApprovals();
                 if (activeCard) {
                     var replacement = document.getElementById(activeCard.id);
@@ -835,8 +1052,10 @@
                     var el = position.stage ? freshBoard.querySelector('.kanban-drop-zone-revamp[data-stage-id="' + position.stage + '"]') : freshBoard.querySelector('.kanban-container-revamp');
                     if (el) { el.scrollTop = position.top; el.scrollLeft = position.left; }
                 });
+                if (boardSocket && boardSocket.readyState === WebSocket.OPEN) setBoardConnectionStatus('Live', false);
                 return true;
             }).catch(function(error) {
+                if (boardSocket && boardSocket.readyState === WebSocket.OPEN) setBoardConnectionStatus('Refresh failed', true);
                 showToast('Could not refresh board: ' + error.message, 'error');
                 return false;
             }).finally(function() {
@@ -868,6 +1087,14 @@
                 .catch(function(err) { setTaskFormError(err.message); showToast('Error: ' + err.message, 'error'); });
         } else {
             var taskId = document.getElementById('task-form-id').value;
+            var version = document.getElementById('task-form-version').value;
+            if (!version) {
+                taskFormPending = false;
+                if (btn) btn.disabled = false;
+                setTaskFormError('Task details are still loading. Try again.');
+                return;
+            }
+            data.version = Number(version);
             request = apiFetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) }, 'Failed to update task')
                 .then(function() { showToast('Task updated!', 'success'); closeModal('task-modal'); return refreshBoardFromServer(); })
                 .catch(function(err) { setTaskFormError(err.message); showToast('Error: ' + err.message, 'error'); });
@@ -881,7 +1108,7 @@
         if (!confirm('Delete this task?')) return;
         var stageId = taskEl.dataset.currentStage;
         apiFetch('/ui/tasks/' + taskId, { method: 'DELETE', headers: { 'x-entity-id': CURRENT_ENTITY_ID } }, 'Failed to delete task')
-            .then(function() { var dropZone = taskEl.parentElement; taskEl.remove(); addPlaceholderIfEmpty(dropZone); updateColumnCount(stageId, -1); showToast('Task deleted', 'success'); })
+            .then(function() { if (activeTaskId === Number(taskId)) closeTaskPanel(); var dropZone = taskEl.parentElement; taskEl.remove(); addPlaceholderIfEmpty(dropZone); updateColumnCount(stageId, -1); showToast('Task deleted', 'success'); })
             .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
     };
 
@@ -1093,6 +1320,58 @@
         el.textContent = message || '';
         el.style.display = message ? '' : 'none';
     }
+    var planPreviewRequest = null;
+    function updatePlanPreviewCount() {
+        var rows = Array.from(document.querySelectorAll('#plan-preview-items .plan-preview-row'));
+        var count = rows.filter(function(row) { return row.querySelector('.plan-include').checked; }).length;
+        document.getElementById('plan-preview-count').textContent = count + ' selected task' + (count === 1 ? '' : 's');
+        document.getElementById('plan-preview-create').disabled = !count || planRequestPending;
+    }
+    function renderPlanPreview(items) {
+        var list = document.getElementById('plan-preview-items');
+        list.replaceChildren();
+        items.forEach(function(item, index) {
+            var row = document.createElement('fieldset');
+            row.className = 'plan-preview-row';
+            var legend = document.createElement('legend');
+            legend.textContent = 'Proposed task ' + (index + 1);
+            row.appendChild(legend);
+            var includeLabel = document.createElement('label');
+            var checkbox = document.createElement('input');
+            checkbox.type = 'checkbox'; checkbox.className = 'plan-include'; checkbox.checked = true;
+            checkbox.addEventListener('change', updatePlanPreviewCount);
+            includeLabel.append(checkbox, document.createTextNode(' Create this task'));
+            row.appendChild(includeLabel);
+            [['Title', 'text', item.title], ['Description', 'textarea', item.description || ''], ['Priority (0–10)', 'number', item.priority]].forEach(function(field) {
+                var label = document.createElement('label');
+                label.textContent = field[0];
+                var input = document.createElement(field[1] === 'textarea' ? 'textarea' : 'input');
+                if (field[1] !== 'textarea') input.type = field[1];
+                input.value = field[2];
+                input.className = 'form-input plan-' + (field[0].startsWith('Priority') ? 'priority' : field[0].toLowerCase());
+                if (field[1] === 'number') { input.min = 0; input.max = 10; }
+                label.appendChild(input);
+                row.appendChild(label);
+            });
+            var remove = document.createElement('button');
+            remove.type = 'button'; remove.className = 'btn btn-link';
+            remove.textContent = 'Remove proposal';
+            remove.addEventListener('click', function() { row.remove(); updatePlanPreviewCount(); });
+            row.appendChild(remove);
+            list.appendChild(row);
+        });
+        document.getElementById('plan-preview-error').textContent = '';
+        updatePlanPreviewCount();
+        openModal('plan-preview-modal');
+        var first = list.querySelector('.plan-title');
+        if (first) first.focus();
+    }
+    function closePlanPreview() {
+        if (planRequestPending) return;
+        closeModal('plan-preview-modal');
+        planPreviewRequest = null;
+        document.getElementById('chat-task-input').focus();
+    }
     async function createTaskFromChat() {
         var input = document.getElementById('chat-task-input');
         var btn = document.getElementById('chat-plan-btn');
@@ -1101,36 +1380,168 @@
         if (!text) { setPlanError('Describe the work you want to plan.'); input.focus(); return; }
         setPlanError('');
         planRequestPending = true;
-        if (btn) { btn.disabled = true; btn.textContent = 'Planning\u2026'; }
+        if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
         try {
-            var resp = await fetch('/ui/tasks/chat-plan', { method: 'POST', headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''}, body: JSON.stringify({ project_id: PROJECT_ID, message: text }) });
-            if (!resp.ok) { var error = await resp.json().catch(function() { return {}; }); throw new Error(error.detail || 'Failed to create the plan'); }
-            var data = await resp.json();
-            input.value = '';
-            var wrap = document.getElementById('plan-work-wrap');
-            var stageName = wrap && wrap.dataset.stageName ? wrap.dataset.stageName : 'Backlog';
-            showToast('Created ' + data.tasks.length + ' card' + (data.tasks.length === 1 ? '' : 's') + ' in ' + stageName, 'success');
-            refreshBoardFromServer();
+            var resp = await fetch('/ui/tasks/chat-plan/preview', { method: 'POST', headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''}, body: JSON.stringify({ project_id: PROJECT_ID, message: text }) });
+            var data = await resp.json().catch(function() { return {}; });
+            if (!resp.ok) throw new Error(data.detail || 'Could not prepare the plan');
+            planPreviewRequest = text;
+            renderPlanPreview(data.items || []);
         } catch(err) {
-            // Keep the entered text so the request can be retried after fixing
-            // the reported problem.
             setPlanError(err.message);
             input.focus();
         } finally {
             planRequestPending = false;
             if (btn) { btn.disabled = false; btn.textContent = 'Plan work'; }
+            updatePlanPreviewCount();
         }
+    }
+    async function commitPlanPreview() {
+        if (planRequestPending || !planPreviewRequest) return;
+        var items = [];
+        var error = document.getElementById('plan-preview-error');
+        Array.from(document.querySelectorAll('#plan-preview-items .plan-preview-row')).forEach(function(row) {
+            if (!row.querySelector('.plan-include').checked) return;
+            items.push({
+                title: row.querySelector('.plan-title').value.trim(),
+                description: row.querySelector('.plan-description').value,
+                priority: Number(row.querySelector('.plan-priority').value)
+            });
+        });
+        if (!items.length) { error.textContent = 'Select at least one task.'; return; }
+        if (items.some(function(item) { return !item.title || !Number.isInteger(item.priority) || item.priority < 0 || item.priority > 10; })) {
+            error.textContent = 'Give each selected task a title and a priority from 0 to 10.'; return;
+        }
+        planRequestPending = true;
+        var button = document.getElementById('plan-preview-create');
+        button.disabled = true; button.textContent = 'Creating…';
+        error.textContent = '';
+        try {
+            var resp = await fetch('/ui/tasks/chat-plan', { method: 'POST', headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''}, body: JSON.stringify({ project_id: PROJECT_ID, message: planPreviewRequest, items: items }) });
+            var data = await resp.json().catch(function() { return {}; });
+            if (!resp.ok) throw new Error(data.detail || 'Could not create tasks');
+            planRequestPending = false;
+            closePlanPreview();
+            document.getElementById('chat-task-input').value = '';
+            var wrap = document.getElementById('plan-work-wrap');
+            var stageName = wrap && wrap.dataset.stageName ? wrap.dataset.stageName : 'Backlog';
+            showToast('Created ' + data.tasks.length + ' card' + (data.tasks.length === 1 ? '' : 's') + ' in ' + stageName, 'success');
+            refreshBoardFromServer();
+        } catch(err) {
+            error.textContent = err.message;
+            planRequestPending = false;
+        } finally {
+            button.textContent = 'Create selected tasks';
+            updatePlanPreviewCount();
+        }
+    }
+
+    // --- Board search and attention filters ---
+    function updateAgentFilterChoices() {
+        var select = document.getElementById('board-agent-filter');
+        if (!select) return;
+        var selected = select.value;
+        var agents = new Map();
+        document.querySelectorAll('.kanban-task-revamp .badge-assignee.badge-agent').forEach(function(badge) {
+            agents.set(badge.dataset.entityId, (badge.title || '').replace(/ \(agent\)$/, ''));
+        });
+        select.replaceChildren(new Option('All agents', ''));
+        Array.from(agents.entries()).sort(function(a, b) { return a[1].localeCompare(b[1]); })
+            .forEach(function(entry) { select.add(new Option(entry[1], entry[0])); });
+        if (selected && !agents.has(selected)) select.add(new Option('Previously selected agent', selected));
+        select.value = selected;
+    }
+    function initBoardFilters() {
+        var url = new URL(window.location.href);
+        document.getElementById('board-search').value = url.searchParams.get('q') || '';
+        document.getElementById('board-filter').value = url.searchParams.get('view') || '';
+        document.getElementById('board-priority-filter').value = url.searchParams.get('priority') || '';
+        updateAgentFilterChoices();
+        var agent = url.searchParams.get('agent') || '';
+        if (agent && !Array.from(document.getElementById('board-agent-filter').options).some(function(option) { return option.value === agent; })) {
+            document.getElementById('board-agent-filter').add(new Option('Selected agent', agent));
+        }
+        document.getElementById('board-agent-filter').value = agent;
+        applyBoardFilters(true);
+    }
+    function applyBoardFilters(skipUrlUpdate) {
+        var search = document.getElementById('board-search');
+        var modeSelect = document.getElementById('board-filter');
+        var agentSelect = document.getElementById('board-agent-filter');
+        var prioritySelect = document.getElementById('board-priority-filter');
+        if (!search || !modeSelect || !agentSelect || !prioritySelect) return;
+        var query = search.value.trim().toLowerCase();
+        var mode = modeSelect.value;
+        var agentId = agentSelect.value;
+        var priority = prioritySelect.value;
+        var active = !!(query || mode || agentId || priority);
+        var cards = Array.from(document.querySelectorAll('.kanban-task-revamp'));
+        var matching = 0;
+        cards.forEach(function(card) {
+            var id = card.dataset.taskId;
+            var title = (card.querySelector('.task-title-revamp') || {}).textContent || '';
+            var value = Number(card.dataset.priorityValue || 0);
+            var priorityGroup = value <= 0 ? 'none' : value <= 3 ? 'low' :
+                value <= 6 ? 'normal' : value <= 8 ? 'high' : 'urgent';
+            var execution = card.dataset.execution || '';
+            var hasAgent = !!card.querySelector('.badge-assignee.badge-agent');
+            var matchesMode = !mode ||
+                (mode === 'needs-me' && card.dataset.needsMe === 'true') ||
+                (mode === 'blocked' && (card.dataset.status === 'blocked' ||
+                    execution === 'blocked' || execution === 'error')) ||
+                (mode === 'running' && (execution === 'starting' || execution === 'active')) ||
+                (mode === 'unassigned' && !hasAgent);
+            var matchesAgent = !agentId || Array.from(card.querySelectorAll('.badge-assignee.badge-agent')).some(function(badge) {
+                return badge.dataset.entityId === agentId;
+            });
+            var visible = (!query || title.toLowerCase().includes(query) || String(id) === query ||
+                ('#' + id) === query) && matchesMode && matchesAgent &&
+                (!priority || priority === priorityGroup);
+            card.classList.toggle('is-filtered-out', !visible);
+            if (visible) matching++;
+        });
+        document.getElementById('board-match-count').textContent =
+            cards.length ? matching + ' of ' + cards.length + ' tasks' : 'No tasks yet';
+        document.getElementById('board-clear-filters').hidden = !active;
+        document.getElementById('board-filter-empty').hidden = !(active && cards.length && !matching);
+        var board = document.getElementById('board-main-revamp');
+        if (board) board.classList.toggle('board-has-filters', active);
+        if (!skipUrlUpdate) {
+            var url = new URL(window.location.href);
+            [['q', query], ['view', mode], ['agent', agentId], ['priority', priority]].forEach(function(entry) {
+                if (entry[1]) url.searchParams.set(entry[0], entry[1]);
+                else url.searchParams.delete(entry[0]);
+            });
+            history.replaceState(history.state || {}, '', url);
+        }
+    }
+    function clearBoardFilters() {
+        document.getElementById('board-search').value = '';
+        document.getElementById('board-filter').value = '';
+        document.getElementById('board-agent-filter').value = '';
+        document.getElementById('board-priority-filter').value = '';
+        applyBoardFilters();
+        document.getElementById('board-search').focus();
     }
 
     // --- WebSocket ---
     var boardWsBackoff = 1000;
+    var boardSocket = null;
     var BOARD_WS_MAX_BACKOFF = 30000;
+    var boardExecutionRefreshTimer = null;
+    function setBoardConnectionStatus(message, stale) {
+        var status = document.getElementById('board-connection-status');
+        if (!status) return;
+        status.textContent = message;
+        status.classList.toggle('is-stale', !!stale);
+    }
     function initWebSocket() {
         var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         var wsUrl = protocol + '//' + window.location.host + '/ws/projects/' + PROJECT_ID;
         console.log('Connecting to project updates:', wsUrl);
         var socket = new WebSocket(wsUrl);
-        socket.onopen = function() { boardWsBackoff = 1000; refreshBoardFromServer(); };
+        boardSocket = socket;
+        socket.onopen = function() { boardWsBackoff = 1000; setBoardConnectionStatus('Refreshing…', true); refreshBoardFromServer().then(function(ok) { if (socket.readyState === WebSocket.OPEN) setBoardConnectionStatus(ok ? 'Live' : 'Refresh failed', !ok); }); };
         socket.onmessage = function(event) {
             var msg = JSON.parse(event.data);
             console.log('WS Message:', msg);
@@ -1143,6 +1554,7 @@
                     badge.className = 'badge badge-' + data.status; badge.textContent = label;
                     badge.closest('.kanban-task-revamp').dataset.status = data.status;
                 }
+                if (activeTaskId === Number(data.task_id)) fetchTaskOverview(activeTaskId);
                 if (msg.event_type === 'task_moved' || data.status === 'completed') { setTimeout(refreshBoardFromServer, 500); }
             } else if (msg.event_type === 'task_commented') {
                 showToast('\u{1F4AC} Task #' + msg.data.task_id + ': ' + msg.data.comment.substring(0, 30) + '...', 'info', {background: true});
@@ -1152,7 +1564,14 @@
             } else if (msg.event_type === 'agent_status_updated') {
                 var data = msg.data;
                 // Update card session indicator
-                if (data.task_id) updateCardSessionIndicator(data.task_id, data.status_type === 'working' || data.status_type === 'thinking' ? {id: data.session_id, agent_id: data.agent_id, status: data.status_type} : null);
+                if (data.task_id) {
+                    updateCardSessionIndicator(data.task_id, data.status_type === 'working' || data.status_type === 'thinking' ? {id: data.session_id, agent_id: data.agent_id, status: data.status_type} : null);
+                    if (activeTaskId === Number(data.task_id)) fetchTaskOverview(activeTaskId);
+                    if (!boardExecutionRefreshTimer) boardExecutionRefreshTimer = setTimeout(function() {
+                        boardExecutionRefreshTimer = null;
+                        refreshBoardFromServer();
+                    }, 700);
+                }
             } else if (msg.event_type === 'agent_activity_logged') {
                 var data = msg.data;
                 // Add recent-activity dot on card
@@ -1181,6 +1600,7 @@
                 openApprovalPopupFromEvent(msg.data);
                 showToast('Approval needed: ' + (msg.data.title || msg.data.approval_type), 'warning');
                 fetchAgentApprovals();
+                setTimeout(refreshBoardFromServer, 300);
                 sendOSNotification('Approval Requested', msg.data.title || msg.data.approval_type, msg.data.task_id);
                 // Toast should scroll to the card
                 var toastEl = document.getElementById('toast');
@@ -1195,18 +1615,21 @@
             } else if (msg.event_type === 'agent_approval_resolved') {
                 showToast('Approval #' + msg.data.approval_id + ' ' + msg.data.status, 'info');
                 fetchAgentApprovals();
+                setTimeout(refreshBoardFromServer, 300);
                 if (msg.data.task_id) fetchTaskApprovals(msg.data.task_id);
+                if (activeTaskId === Number(msg.data.task_id)) fetchTaskOverview(activeTaskId);
                 if (currentApprovalId && String(currentApprovalId) === String(msg.data.approval_id)) closeApprovalPopup();
             }
         };
-        socket.onclose = function() { console.log('WS Connection closed. Retrying in ' + boardWsBackoff + 'ms...'); setTimeout(initWebSocket, boardWsBackoff); boardWsBackoff = Math.min(boardWsBackoff * 2, BOARD_WS_MAX_BACKOFF); };
-        socket.onerror = function(err) { console.error('WS Error:', err); };
+        socket.onclose = function() { setBoardConnectionStatus('Reconnecting…', true); console.log('WS Connection closed. Retrying in ' + boardWsBackoff + 'ms...'); setTimeout(initWebSocket, boardWsBackoff); boardWsBackoff = Math.min(boardWsBackoff * 2, BOARD_WS_MAX_BACKOFF); };
+        socket.onerror = function(err) { setBoardConnectionStatus('Connection issue', true); console.error('WS Error:', err); };
     }
 
     // --- Initialize ---
     initDragDrop();
     initWebSocket();
     initExpandedCards();
+    initBoardFilters();
     initNotificationSettings();
     fetchAgentApprovals();
     // Approvals refresh via WebSocket events only (no polling)

@@ -179,6 +179,7 @@ def test_layout_preferences_and_refresh_preserve_task_context(page: Page, live_s
     page.locator('#view-toggle').click()
     expect(page.locator('html')).to_have_attribute('data-view', 'list')
     assert page.locator('.kanban-container-revamp').evaluate("el => getComputedStyle(el).flexDirection") == 'column'
+    page.locator('.appearance-menu summary').click()
     page.locator('#density-select').select_option('compact')
     face = page.locator(f'#task-card-{task_id} .task-compact-face')
     compact = face.evaluate('el => parseFloat(getComputedStyle(el).paddingTop)')
@@ -187,12 +188,14 @@ def test_layout_preferences_and_refresh_preserve_task_context(page: Page, live_s
     card = page.locator(f'#task-card-{task_id}')
     card.focus()
     card.press('Enter')
-    card.locator('[data-tab="activity"]').click()
-    card.focus()
+    panel = page.locator('#task-detail-panel')
+    panel.locator('[data-tab="activity"]').click()
     page.evaluate('() => refreshBoardFromServer()')
-    expect(card).to_be_focused()
-    expect(card.locator('[data-tab="activity"]')).to_have_class('expansion-tab active')
+    expect(panel).to_be_visible()
+    expect(panel.locator('[data-tab="activity"]')).to_have_class('expansion-tab active')
+    expect(panel.locator('#task-panel-title')).to_have_text(board['task']['title'])
     page.reload()
+    expect(panel).to_be_visible()
     expect(page.locator('html')).to_have_attribute('data-view', 'list')
     expect(page.locator('#density-select')).to_have_value('spacious')
 
@@ -360,7 +363,7 @@ def test_plan_work_pending_guard_blocks_duplicate_submissions(
                 window.__planCalls += 1;
                 return new Promise(resolve => { window.__planRelease = resolve; })
                     .then(() => new Response(
-                        JSON.stringify({project_id: 1, tasks: [], status_path: null, from_designer: false}),
+                        JSON.stringify({items: [{title: 'Ship login fix', description: 'From preview', priority: 5}]}),
                         {status: 200, headers: {'Content-Type': 'application/json'}}));
             }
             return originalFetch(input, init);
@@ -377,12 +380,15 @@ def test_plan_work_pending_guard_blocks_duplicate_submissions(
     page.locator("#chat-plan-btn").dispatch_event("click")
     page.locator("#chat-plan-btn").dispatch_event("click")
     expect(page.locator("#chat-plan-btn")).to_be_disabled()
-    expect(page.locator("#chat-plan-btn")).to_have_text("Planning…")
+    expect(page.locator("#chat-plan-btn")).to_have_text("Preparing…")
     assert page.evaluate("window.__planCalls") == 1
 
     page.evaluate("window.__planRelease && window.__planRelease()")
     expect(page.locator("#chat-plan-btn")).to_be_enabled()
-    expect(inp).to_have_value("")
+    expect(page.locator("#plan-preview-modal")).to_be_visible()
+    expect(inp).to_have_value("Ship the login fix")
+    page.locator("#plan-preview-modal").get_by_role("button", name="Cancel").click()
+    expect(inp).to_have_value("Ship the login fix")
 
 
 def test_plan_work_failure_keeps_text_and_allows_retry(
@@ -404,7 +410,7 @@ def test_plan_work_failure_keeps_text_and_allows_retry(
                         {status: 422, headers: {'Content-Type': 'application/json'}}));
                 }
                 return Promise.resolve(new Response(
-                    JSON.stringify({project_id: 1, tasks: [{id: 11}], status_path: null, from_designer: false}),
+                    JSON.stringify({items: [{title: 'Onboarding', description: 'From preview', priority: 5}]}),
                     {status: 200, headers: {'Content-Type': 'application/json'}}));
             }
             return originalFetch(input, init);
@@ -423,7 +429,8 @@ def test_plan_work_failure_keeps_text_and_allows_retry(
     page.evaluate("window.__planMode = 'ok'")
     inp.press("Enter")
     expect(page.locator("#chat-plan-error")).to_be_hidden()
-    expect(inp).to_have_value("")
+    expect(page.locator("#plan-preview-modal")).to_be_visible()
+    expect(inp).to_have_value("Plan the onboarding flow")
     assert page.evaluate("window.__planCalls") == 2
 
 
@@ -749,7 +756,7 @@ def test_phase1_controls_at_200_percent_phone_zoom_equivalent(
         "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
     )
     for selector in (
-        "#mobile-nav-toggle", "#theme-toggle", "#density-select",
+        "#mobile-nav-toggle", ".appearance-menu summary",
         "#new-task-btn", "#chat-task-input", "#chat-plan-btn",
     ):
         box = page.locator(selector).bounding_box()
@@ -802,6 +809,7 @@ def test_board_refreshes_after_websocket_reconnect(
         "data-current-stage", str(board["stages"]["To Do"]), timeout=7000
     )
     assert len(sockets) >= 2
+    expect(page.locator("#board-connection-status")).to_have_text("Live", timeout=7000)
 
 
 def test_task_actions_are_usable_on_touch(
@@ -824,3 +832,175 @@ def test_task_actions_are_usable_on_touch(
         expect(card.locator(".task-menu-item")).to_be_visible()
     finally:
         context.close()
+
+
+def test_phase3_task_panel_deep_link_focus_and_stage_control(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    task_id = board["task"]["id"]
+    url = f"{live_server}/ui/projects/{board['project_id']}/board"
+    page.goto(url)
+
+    card = page.locator(f"#task-card-{task_id}")
+    card.focus()
+    card.press("Enter")
+    panel = page.locator("#task-detail-panel")
+    expect(panel).to_be_visible()
+    expect(panel.locator("#task-panel-title")).to_have_text(
+        card.locator(".task-title-revamp").inner_text()
+    )
+    expect(panel.get_by_role("tab", name="Overview")).to_have_attribute(
+        "aria-selected", "true"
+    )
+    expect(panel.locator(".task-overview-description")).to_contain_text(
+        "Canonical description from the API"
+    )
+    assert page.url.endswith(f"?task={task_id}")
+    panel.get_by_role("tab", name="Logs").click()
+    expect(panel.get_by_role("tab", name="Logs")).to_have_attribute(
+        "aria-selected", "true"
+    )
+    panel.get_by_role("tab", name="Overview").click()
+    panel.get_by_role("combobox", name="Task stage").select_option(
+        str(board["stages"]["To Do"])
+    )
+    expect(page.locator(
+        f'.kanban-column-revamp[data-stage-name="To Do"] #task-card-{task_id}'
+    )).to_be_visible()
+    expect(panel).to_be_visible()
+    page.go_back()
+    expect(panel).to_be_hidden()
+    expect(card).to_be_focused()
+
+    page.goto(url + f"?task={task_id}")
+    expect(panel).to_be_visible()
+    panel.get_by_role("button", name="Close task details").click()
+    expect(panel).to_be_hidden()
+    assert "?task=" not in page.url
+
+
+def test_phase3_edit_draft_survives_refresh_and_conflict(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    task_id = board["task"]["id"]
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    page.locator(f"#task-card-{task_id}").focus()
+    page.locator(f"#task-card-{task_id}").press("Enter")
+    panel = page.locator("#task-detail-panel")
+    expect(panel).to_be_visible()
+    panel.get_by_role("button", name="Edit").click()
+    dialog = page.get_by_role("dialog", name=f"Edit Task #{task_id}")
+    title = dialog.locator("#task-form-title")
+    expect(title).to_have_value(board["task"]["title"])
+    title.fill("My unsaved draft")
+
+    changed = api.patch(
+        f"/ui/tasks/{task_id}/edit",
+        json={"title": "Updated by another user"},
+        headers=board["headers"],
+    )
+    changed.raise_for_status()
+    page.evaluate("refreshBoardFromServer()")
+    expect(title).to_have_value("My unsaved draft")
+    expect(dialog.locator("#task-form-error")).to_contain_text(
+        "changed while you were editing"
+    )
+    dialog.get_by_role("button", name="Save changes").click()
+    expect(dialog.locator("#task-form-error")).to_contain_text(
+        "changed while you were editing"
+    )
+    expect(title).to_have_value("My unsaved draft")
+    expect(panel).to_be_visible()
+
+
+def test_phase3_named_priority_preserves_existing_numeric_value(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    task_id = board["task"]["id"]
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    page.locator(f"#task-card-{task_id}").get_by_role(
+        "button", name=f"Edit task {task_id}", exact=True
+    ).click()
+    dialog = page.get_by_role("dialog", name=f"Edit Task #{task_id}")
+    priority = dialog.locator("#task-form-priority")
+    expect(priority).to_have_value("4")
+    expect(priority.locator("option:checked")).to_contain_text("Normal (4)")
+    dialog.locator("#task-form-title").fill("Updated without changing priority")
+    dialog.get_by_role("button", name="Save changes").click()
+    expect(dialog).to_be_hidden()
+    assert api.get(f"/tasks/{task_id}").json()["priority"] == 4
+
+    page.locator(f"#task-card-{task_id}").get_by_role(
+        "button", name=f"Edit task {task_id}", exact=True
+    ).click()
+    priority.select_option("8")
+    dialog.get_by_role("button", name="Save changes").click()
+    expect(dialog).to_be_hidden()
+    assert api.get(f"/tasks/{task_id}").json()["priority"] == 8
+
+
+
+def test_phase4_board_search_filters_and_refresh(page: Page, live_server: str, api: httpx.Client):
+    board = _prepare_board(api)
+    created = api.post(
+        "/ui/tasks/create",
+        json={"project_id": board["project_id"], "stage_id": board["stages"]["Backlog"],
+              "title": "Urgent second task", "priority": 9, "status": "pending"},
+        headers=board["headers"],
+    )
+    created.raise_for_status()
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    cards = page.locator(".kanban-task-revamp")
+    expect(cards).to_have_count(2)
+    page.locator("#board-search").fill("Urgent second")
+    expect(page.locator(".kanban-task-revamp:visible")).to_have_count(1)
+    expect(page.locator("#board-match-count")).to_have_text("1 of 2 tasks")
+    page.locator("#board-search").fill("#" + str(board["task"]["id"]))
+    expect(page.locator(".kanban-task-revamp:visible")).to_have_count(1)
+    page.locator("#board-search").fill("")
+    page.locator("#board-priority-filter").select_option("urgent")
+    expect(page.locator(".kanban-task-revamp:visible")).to_have_count(1)
+    page.evaluate("refreshBoardFromServer()")
+    expect(page.locator(".kanban-task-revamp:visible")).to_have_count(1)
+    page.locator("#board-filter").select_option("running")
+    expect(page.locator("#board-filter-empty")).to_be_visible()
+    expect(page.locator("#board-match-count")).to_have_text("0 of 2 tasks")
+    page.locator("#board-clear-filters").click()
+    expect(page.locator(".kanban-task-revamp:visible")).to_have_count(2)
+    expect(page.locator("#board-filter-empty")).to_be_hidden()
+
+
+def test_phase5_plan_preview_cancel_and_selected_commit_once(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    input_box = page.locator("#chat-task-input")
+    input_box.fill("Build a small onboarding flow")
+    input_box.press("Enter")
+    preview = page.locator("#plan-preview-modal")
+    expect(preview).to_be_visible()
+    expect(preview.locator(".plan-preview-row")).to_have_count(4)
+    expect(page.locator(".kanban-task-revamp")).to_have_count(1)
+    preview.get_by_role("button", name="Cancel").click()
+    expect(preview).to_be_hidden()
+    expect(page.locator(".kanban-task-revamp")).to_have_count(1)
+    expect(input_box).to_have_value("Build a small onboarding flow")
+
+    input_box.press("Enter")
+    expect(preview).to_be_visible()
+    rows = preview.locator(".plan-preview-row")
+    rows.nth(0).locator(".plan-title").fill("Only selected proposal")
+    rows.nth(1).get_by_role("button", name="Remove proposal").click()
+    for index in (1, 2):
+        rows.nth(index).locator(".plan-include").uncheck()
+    expect(preview.locator("#plan-preview-count")).to_have_text("1 selected task")
+    preview.locator("#plan-preview-create").dispatch_event("click")
+    preview.locator("#plan-preview-create").dispatch_event("click")
+    expect(preview).to_be_hidden()
+    expect(page.locator(".kanban-task-revamp")).to_have_count(2)
+    expect(page.locator(".kanban-task-revamp").filter(has_text="Only selected proposal")).to_have_count(1)
+    expect(input_box).to_have_value("")

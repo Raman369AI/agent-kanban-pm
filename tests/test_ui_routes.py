@@ -276,3 +276,63 @@ def test_phase2_setup_guide_and_unified_navigation():
         assert f"/ui/projects/{pid}/settings" in projects_html
         assert "Activity" in projects_html
         assert "Changes" in projects_html
+
+
+
+def test_plan_preview_has_no_task_or_workspace_side_effects(tmp_path):
+    with TestClient(app) as client:
+        owner, headers = tests_helper.local_owner_headers(client)
+        project = client.post(
+            "/projects",
+            json={"name": "Preview only", "description": "No side effects", "path": str(tmp_path)},
+            headers=headers,
+        )
+        assert project.status_code == 201, project.text
+        project_id = project.json()["id"]
+        client.post(f"/projects/{project_id}/approve", json={}, headers=headers).raise_for_status()
+        status_file = tmp_path / "STATUS.md"
+        status_file.write_text("Original status" + chr(10))
+        before = client.get(f"/ui/projects/{project_id}/board").text.count('class="kanban-task-revamp')
+        preview = client.post(
+            "/ui/tasks/chat-plan/preview",
+            json={"project_id": project_id, "message": "Build onboarding"},
+            headers=headers,
+        )
+        assert preview.status_code == 200, preview.text
+        assert len(preview.json()["items"]) == 4
+        after = client.get(f"/ui/projects/{project_id}/board").text.count('class="kanban-task-revamp')
+        assert after == before
+        assert status_file.read_text() == "Original status" + chr(10)
+
+
+
+def test_dashboard_review_attention_and_project_progress():
+    with TestClient(app) as client:
+        owner, headers = tests_helper.local_owner_headers(client)
+        project = client.post(
+            "/projects",
+            json={"name": "Review attention", "description": "Dashboard attention sample"},
+            headers=headers,
+        )
+        assert project.status_code == 201, project.text
+        project_id = project.json()["id"]
+        client.post(f"/projects/{project_id}/approve", json={}, headers=headers).raise_for_status()
+        detail = client.get(f"/projects/{project_id}").json()
+        review_id = next(stage["id"] for stage in detail["stages"] if stage["name"] == "Review")
+        created = client.post(
+            "/ui/tasks/create",
+            json={"project_id": project_id, "stage_id": review_id,
+                  "title": "Review this result", "status": "in_review"},
+            headers=headers,
+        )
+        assert created.status_code == 200, created.text
+        task_id = created.json()["task"]["id"]
+        dashboard = client.get("/").text
+        assert "Ready for review" in dashboard
+        assert "TaskStatus." not in dashboard
+        assert "ApprovalStatus." not in dashboard
+        assert f"/ui/projects/{project_id}/board?task={task_id}" in dashboard
+        projects = client.get("/ui/projects").text
+        assert "0 of 1 tasks complete" in projects
+        assert "1 need attention" in projects
+        assert "More actions" in projects

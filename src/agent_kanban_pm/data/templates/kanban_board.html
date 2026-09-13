@@ -45,15 +45,16 @@
             placeholder="Describe work to plan&hellip;" aria-label="Describe work to plan"
             aria-describedby="chat-plan-hint">
           <button class="btn chat-btn-compact" id="chat-plan-btn" type="button" onclick="createTaskFromChat()"
-            title="Create proposed task cards in {{ plan_stage.name if plan_stage else 'Backlog' }}">Plan work</button>
+            title="Preview proposed task cards for {{ plan_stage.name if plan_stage else 'Backlog' }}">Plan work</button>
           <p class="chat-plan-hint text-secondary" id="chat-plan-hint">
-            Planning proposes task cards in {{ plan_stage.name if plan_stage else 'Backlog' }}.
+            Planning proposes task cards for {{ plan_stage.name if plan_stage else 'Backlog' }}. Review before creating.
           </p>
           <p class="chat-plan-error text-danger" id="chat-plan-error" role="alert" style="display:none;"></p>
         </div>
       </div>
 
       <div class="header-actions board-primary-actions">
+        <span id="board-connection-status" class="board-connection-status is-stale" role="status" aria-live="polite">Connecting…</span>
         <button class="btn btn-icon" id="header-bell-btn" onclick="toggleBellDropdown()" title="Pending approvals">
           <span id="header-bell-icon">&#128276;</span> <span id="header-bell-count" class="badge" style="display:none;background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;position:absolute;top:0;right:0;border-radius:1rem;">0</span>
         </button>
@@ -237,6 +238,41 @@
   {% endif %}
 
 
+  <section class="board-filter-bar" aria-label="Find board tasks">
+    <label for="board-search">Search tasks
+      <input id="board-search" class="form-input" type="search" placeholder="Title or task ID" oninput="applyBoardFilters()">
+    </label>
+    <label for="board-filter">Show
+      <select id="board-filter" class="form-input" onchange="applyBoardFilters()">
+        <option value="">All tasks</option>
+        <option value="needs-me">Needs me</option>
+        <option value="blocked">Blocked</option>
+        <option value="running">Running</option>
+        <option value="unassigned">Unassigned</option>
+      </select>
+    </label>
+    <label for="board-agent-filter">Agent
+      <select id="board-agent-filter" class="form-input" onchange="applyBoardFilters()">
+        <option value="">All agents</option>
+      </select>
+    </label>
+    <label for="board-priority-filter">Priority
+      <select id="board-priority-filter" class="form-input" onchange="applyBoardFilters()">
+        <option value="">All priorities</option>
+        <option value="none">None (0)</option>
+        <option value="low">Low (1–3)</option>
+        <option value="normal">Normal (4–6)</option>
+        <option value="high">High (7–8)</option>
+        <option value="urgent">Urgent (9–10)</option>
+      </select>
+    </label>
+    <div class="board-filter-summary">
+      <span id="board-match-count" role="status" aria-live="polite"></span>
+      <button class="btn btn-sm" type="button" id="board-clear-filters" onclick="clearBoardFilters()" hidden>Clear filters</button>
+    </div>
+  </section>
+  <p id="board-filter-empty" class="board-filter-empty" hidden>No tasks match these filters. Clear filters to see all tasks.</p>
+
   <section class="board-main-revamp" id="board-main-revamp">
     <div class="kanban-container-revamp">
       {% for stage in project.stages %}
@@ -251,8 +287,11 @@
           <div class="kanban-task-revamp" draggable="true" tabindex="0" role="group"
             aria-label="Task {{ task.title }} in {{ stage.name }}. Use left and right arrow keys to move."
             aria-keyshortcuts="ArrowLeft ArrowRight" onkeydown="handleTaskKeydown(event, this)"
-            data-task-id="{{ task.id }}" data-current-stage="{{ stage.id }}" data-status="{{ task.status.value }}" data-priority="P{{ task.priority }}" id="task-card-{{ task.id }}">
-            <div class="task-compact-face" role="button" aria-expanded="false" onclick="toggleCardExpansion({{ task.id }})">
+            data-task-id="{{ task.id }}" data-current-stage="{{ stage.id }}" data-status="{{ task.status.value }}"
+            data-priority="P{{ task.priority }}" data-priority-value="{{ task.priority }}"
+            data-execution="{{ latest_session_by_task.get(task.id, '') }}" data-needs-me="{{ 'true' if task.id in pending_approval_task_ids else 'false' }}"
+            id="task-card-{{ task.id }}">
+            <div class="task-compact-face" role="button" aria-haspopup="dialog" aria-controls="task-detail-panel" aria-expanded="false" onclick="toggleCardExpansion({{ task.id }})">
               <div class="task-state-indicators" id="task-indicators-{{ task.id }}"></div>
               <div class="task-header-revamp">
                 <strong class="task-title-revamp">{{ task.title }}</strong>
@@ -299,24 +338,29 @@
               {% endif %}
             </div>
             <div class="task-expansion-panel" id="task-expansion-{{ task.id }}" style="display:none;">
-              <div class="expansion-tabs">
-                <button type="button" class="expansion-tab" data-tab="terminal" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'terminal')">&#128187; Terminal</button>
-                <button type="button" class="expansion-tab active" data-tab="approvals" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'approvals')">&#9888; Approvals <span class="badge" id="task-approvals-count-{{ task.id }}" style="display:none;">0</span></button>
-                <button type="button" class="expansion-tab" data-tab="activity" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'activity')">&#128196; Activity</button>
-                <button type="button" class="expansion-tab" data-tab="reviews" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'reviews')">&#128270; Reviews</button>
+              <div class="expansion-tabs" role="tablist" aria-label="Task details">
+                <button type="button" class="expansion-tab active" role="tab" aria-selected="true" data-tab="overview" aria-controls="expansion-pane-overview-{{ task.id }}" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'overview')">Overview</button>
+                <button type="button" class="expansion-tab" role="tab" aria-selected="false" data-tab="terminal" aria-controls="expansion-pane-terminal-{{ task.id }}" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'terminal')">&#128187; Terminal</button>
+                <button type="button" class="expansion-tab" role="tab" aria-selected="false" data-tab="approvals" aria-controls="expansion-pane-approvals-{{ task.id }}" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'approvals')">&#9888; Approvals <span class="badge" id="task-approvals-count-{{ task.id }}" style="display:none;">0</span></button>
+                <button type="button" class="expansion-tab" role="tab" aria-selected="false" data-tab="activity" aria-controls="expansion-pane-activity-{{ task.id }}" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'activity')">Activity</button>
+                <button type="button" class="expansion-tab" role="tab" aria-selected="false" data-tab="logs" aria-controls="expansion-pane-logs-{{ task.id }}" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'logs')">Logs</button>
+                <button type="button" class="expansion-tab" role="tab" aria-selected="false" data-tab="reviews" aria-controls="expansion-pane-reviews-{{ task.id }}" onclick="event.stopPropagation();switchExpansionTab({{ task.id }},'reviews')">&#128270; Reviews</button>
               </div>
-              <div class="expansion-pane" id="expansion-pane-terminal-{{ task.id }}">
+              <div class="expansion-pane active" role="tabpanel" id="expansion-pane-overview-{{ task.id }}">
+                <div class="task-overview" id="task-overview-{{ task.id }}">Loading task details…</div>
+              </div>
+              <div class="expansion-pane" role="tabpanel" id="expansion-pane-terminal-{{ task.id }}">
                 <div style="display:flex;justify-content:flex-end;margin-bottom:0.35rem;">
                   <button class="btn-link" style="font-size:0.72rem;" onclick="event.stopPropagation();popOutTerminal({{ task.id }})">&#8599; Open in Workbench</button>
                 </div>
                 <pre class="in-card-terminal" id="task-terminal-pre-{{ task.id }}" style="background:#020617;color:#d1fae5;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.72rem;line-height:1.4;padding:0.6rem;border-radius:var(--radius-sm);max-height:220px;overflow:auto;white-space:pre-wrap;margin:0;">No active session.</pre>
               </div>
-              <div class="expansion-pane active" id="expansion-pane-approvals-{{ task.id }}">
+              <div class="expansion-pane" role="tabpanel" id="expansion-pane-approvals-{{ task.id }}">
                 <div id="task-approvals-list-{{ task.id }}">
                   <p class="text-secondary" style="font-size:0.8rem;">Loading&hellip;</p>
                 </div>
               </div>
-              <div class="expansion-pane" id="expansion-pane-activity-{{ task.id }}">
+              <div class="expansion-pane" role="tabpanel" id="expansion-pane-activity-{{ task.id }}">
                 <div class="in-card-activity-header">
                   <button class="btn-link" style="font-size:0.72rem;" onclick="event.stopPropagation();openActivityPopup({{ task.id }})">&#8599; Expand all</button>
                 </div>
@@ -324,7 +368,10 @@
                   <p class="text-secondary" style="font-size:0.8rem;">Loading&hellip;</p>
                 </div>
               </div>
-              <div class="expansion-pane" id="expansion-pane-reviews-{{ task.id }}">
+              <div class="expansion-pane" role="tabpanel" id="expansion-pane-logs-{{ task.id }}">
+                <div id="task-logs-{{ task.id }}" class="task-logs-list">Loading task logs…</div>
+              </div>
+              <div class="expansion-pane" role="tabpanel" id="expansion-pane-reviews-{{ task.id }}">
                 <div id="task-reviews-list-{{ task.id }}">
                   <p class="text-secondary" style="font-size:0.8rem;">Loading&hellip;</p>
                 </div>
@@ -360,6 +407,22 @@
       {% endfor %}
     </div>
   </section>
+
+  <div id="task-panel-backdrop" class="task-panel-backdrop" hidden onclick="closeTaskPanel()" aria-hidden="true"></div>
+  <aside id="task-detail-panel" class="task-detail-panel" role="dialog" aria-modal="true"
+    aria-labelledby="task-panel-title" aria-hidden="true" tabindex="-1" hidden>
+    <div class="task-panel-header">
+      <div>
+        <p class="task-panel-kicker" id="task-panel-number">Task details</p>
+        <h2 id="task-panel-title">Task</h2>
+      </div>
+      <div class="task-panel-header-actions">
+        <button class="btn btn-sm" type="button" id="task-panel-edit" onclick="editSelectedTask()">Edit</button>
+        <button class="btn-icon" type="button" id="task-panel-close" aria-label="Close task details" onclick="closeTaskPanel()">&times;</button>
+      </div>
+    </div>
+    <div id="task-panel-content" class="task-panel-content"></div>
+  </aside>
 
   <!-- Activity popup modal -->
   <div id="activity-popup-overlay" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
@@ -418,6 +481,7 @@
       <form id="task-form" onsubmit="return false;">
         <input type="hidden" id="task-form-id">
         <input type="hidden" id="task-form-mode" value="edit">
+        <input type="hidden" id="task-form-version" value="">
         <div class="form-group">
           <label for="task-form-title">Title</label>
           <input type="text" id="task-form-title" class="form-input" required autofocus placeholder="Task title">
@@ -439,8 +503,15 @@
             </small>
           </div>
           <div class="form-group">
-            <label for="task-form-priority">Priority (0-10)</label>
-            <input type="number" id="task-form-priority" class="form-input" min="0" max="10" value="0">
+            <label for="task-form-priority">Priority</label>
+            <select id="task-form-priority" class="form-input">
+              <option value="0">None (0)</option>
+              <option value="2">Low (2)</option>
+              <option value="5">Normal (5)</option>
+              <option value="8">High (8)</option>
+              <option value="10">Urgent (10)</option>
+            </select>
+            <small class="text-secondary">Existing values 0–10 stay unchanged unless you choose a new priority.</small>
           </div>
         </div>
         <div class="form-row">
@@ -517,6 +588,24 @@
     <div class="form-actions">
       <button class="btn" onclick="closeModal('project-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="submitProjectEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="plan-preview-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+    aria-hidden="true" aria-labelledby="plan-preview-title" onclick="if(event.target===this)closePlanPreview()">
+  <div class="modal-card plan-preview-card">
+    <div class="modal-header">
+      <div><h3 id="plan-preview-title">Review proposed tasks</h3>
+        <p class="text-secondary">Edit, remove, or deselect tasks. Nothing is created until you confirm.</p></div>
+      <button type="button" class="btn-icon" aria-label="Close plan preview" onclick="closePlanPreview()">&times;</button>
+    </div>
+    <div id="plan-preview-items" class="plan-preview-items"></div>
+    <p id="plan-preview-error" class="text-danger" role="alert"></p>
+    <div class="form-actions">
+      <span id="plan-preview-count" role="status"></span>
+      <button type="button" class="btn" onclick="closePlanPreview()">Cancel</button>
+      <button type="button" class="btn btn-primary" id="plan-preview-create" onclick="commitPlanPreview()">Create selected tasks</button>
     </div>
   </div>
 </div>

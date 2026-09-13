@@ -6,6 +6,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import Optional
 from datetime import UTC, datetime
+from collections import Counter
 from pathlib import Path
 import asyncio
 from pydantic import ValidationError
@@ -16,7 +17,7 @@ from agent_kanban_pm.db import get_db
 from agent_kanban_pm.models import (
     Project, Task, Entity, Stage, Comment, EntityType, TaskStatus, ApprovalStatus,
     TaskLog, ProjectWorkspace, Role, OrchestrationDecision, DecisionType,
-    AgentSession, AgentSessionStatus,
+    AgentSession, AgentSessionStatus, AgentApproval, AgentApprovalStatus,
 )
 from agent_kanban_pm.schemas import ProjectResponse, ChatPlanRequest, TaskCreate, TaskUpdate
 from agent_kanban_pm.auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
@@ -304,11 +305,46 @@ async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     )
     recent_tasks = result.scalars().all()
 
+    visible_ids = {project.id for project in visible_projects}
+    task_rows = (await db.execute(select(Task).where(Task.project_id.in_(visible_ids)))).scalars().all() if visible_ids else []
+    tasks_by_id = {task.id: task for task in task_rows}
+    approval_rows = (await db.execute(
+        select(AgentApproval).where(
+            AgentApproval.project_id.in_(visible_ids),
+            AgentApproval.status == AgentApprovalStatus.PENDING,
+        ).order_by(AgentApproval.requested_at.desc())
+    )).scalars().all() if visible_ids else []
+    session_rows = (await db.execute(
+        select(AgentSession).where(
+            AgentSession.project_id.in_(visible_ids),
+            AgentSession.task_id.is_not(None),
+        ).order_by(AgentSession.started_at.desc(), AgentSession.id.desc())
+    )).scalars().all() if visible_ids else []
+    latest_sessions = {}
+    for session in session_rows:
+        latest_sessions.setdefault(session.task_id, session)
+    attention = []
+    for approval in approval_rows:
+        task = tasks_by_id.get(approval.task_id)
+        if task:
+            attention.append({"kind": "Approval", "title": approval.title,
+                              "task": task, "detail": "Agent is waiting for a decision"})
+    for task in task_rows:
+        latest = latest_sessions.get(task.id)
+        if latest and latest.status == AgentSessionStatus.ERROR:
+            attention.append({"kind": "Failed session", "title": task.title,
+                              "task": task, "detail": "Inspect the failed run"})
+    for task in task_rows:
+        if task.status == TaskStatus.IN_REVIEW:
+            attention.append({"kind": "Ready for review", "title": task.title,
+                              "task": task, "detail": "Review the result"})
+
     return templates.TemplateResponse(request, "dashboard.html", {
         "request": request,
         "stats": stats,
         "recent_projects": recent_projects,
-        "recent_tasks": recent_tasks
+        "recent_tasks": recent_tasks,
+        "attention": attention[:12],
     })
 
 
@@ -331,6 +367,31 @@ async def ui_projects(
             p for p in projects
             if p.approval_status != ApprovalStatus.REJECTED
         ]
+
+    project_ids = {project.id for project in projects}
+    pending_rows = (await db.execute(select(AgentApproval.project_id).where(
+        AgentApproval.project_id.in_(project_ids),
+        AgentApproval.status == AgentApprovalStatus.PENDING,
+    ))).scalars().all() if project_ids else []
+    pending_counts = Counter(pending_rows)
+    session_rows = (await db.execute(select(AgentSession).where(
+        AgentSession.project_id.in_(project_ids), AgentSession.task_id.is_not(None)
+    ).order_by(AgentSession.started_at.desc(), AgentSession.id.desc()))).scalars().all() if project_ids else []
+    latest_sessions = {}
+    for session in session_rows:
+        latest_sessions.setdefault(session.task_id, session)
+    for project in projects:
+        project.ui_total = len(project.tasks)
+        project.ui_completed = sum(task.status == TaskStatus.COMPLETED for task in project.tasks)
+        project.ui_blocked = sum(
+            task.status == TaskStatus.BLOCKED or
+            (latest_sessions.get(task.id) is not None and
+             latest_sessions[task.id].status in (AgentSessionStatus.BLOCKED, AgentSessionStatus.ERROR))
+            for task in project.tasks
+        )
+        project.ui_attention = project.ui_blocked + pending_counts.get(project.id, 0) + sum(
+            task.status == TaskStatus.IN_REVIEW for task in project.tasks
+        )
 
     agents_result = await db.execute(
         select(Entity).filter(Entity.entity_type == EntityType.AGENT, Entity.is_active == True)
@@ -382,6 +443,17 @@ async def project_kanban_board(
         .order_by(AgentSession.started_at.desc(), AgentSession.id.desc())
     )
     sessions = session_result.scalars().all()
+    latest_session_by_task = {}
+    for session in sessions:
+        latest_session_by_task.setdefault(session.task_id, session.status.value)
+    approvals_result = await db.execute(
+        select(AgentApproval.task_id).where(
+            AgentApproval.project_id == project_id,
+            AgentApproval.status == AgentApprovalStatus.PENDING,
+            AgentApproval.task_id.is_not(None),
+        )
+    )
+    pending_approval_task_ids = set(approvals_result.scalars())
     has_started = any(
         session.status in (
             AgentSessionStatus.ACTIVE,
@@ -450,6 +522,8 @@ async def project_kanban_board(
         "current_entity": current_entity,
         "stage_statuses": STAGE_STATUSES,
         "setup_checklist": setup_checklist,
+        "latest_session_by_task": latest_session_by_task,
+        "pending_approval_task_ids": pending_approval_task_ids,
         "active_page": "board",
     })
 
@@ -986,6 +1060,31 @@ def _render_dependencies(description: str, dep_task_ids: list[int]) -> str:
     return f"{body}\n\nDepends on: {refs}" if body else f"Depends on: {refs}"
 
 
+@router.post("/ui/tasks/chat-plan/preview")
+async def ui_preview_chat_plan(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity)
+):
+    """Prepare task proposals without creating tasks or writing workspace files."""
+    if not current_entity:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        chat_req = ChatPlanRequest(**(await request.json()))
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=f"invalid chat plan request: {exc}")
+    message = (chat_req.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="message is required")
+    project = (await db.execute(select(Project).where(
+        Project.id == chat_req.project_id
+    ))).scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await require_project_approval_for_mutation(project, current_entity)
+    return {"items": _plan_items_from_chat(message)}
+
+
 @router.post("/ui/tasks/chat-plan")
 async def ui_create_chat_plan(
     request: Request,
@@ -1152,6 +1251,7 @@ async def ui_edit_task(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid task update: {exc}")
     update_data = task_update.model_dump(exclude_unset=True)
+    expected_version = update_data.pop("version", None)
 
     result = await db.execute(
         select(Task).filter(Task.id == task_id).options(selectinload(Task.assignees))
@@ -1161,6 +1261,11 @@ async def ui_edit_task(
         raise HTTPException(status_code=404, detail="Task not found")
 
     await require_task_access(task, current_entity, db, require_write=True)
+    if expected_version is not None and expected_version != task.version:
+        raise HTTPException(
+            status_code=409,
+            detail="This task changed while you were editing. Review the latest version before saving.",
+        )
 
     new_status = task_update.status
     try:
