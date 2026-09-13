@@ -2,16 +2,15 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
-Status: release candidate (`0.4.0rc9`) for local, single-user development.
+Status: stable release (`0.4.0`) for local, single-user development.
 The local runtime, board UI, per-task agent sessions, and MCP surface work and
 are covered by tests, including a database upgrade path. It is a single-operator
 tool by design: one shared token guards the local server, so do not expose it to
 an untrusted network or share an instance with people you would not give shell
 access.
 
-The version in this checkout can be newer than the latest published package.
-`pip install --pre` installs the latest candidate available on PyPI; use the
-matching Git tag when you need to reproduce a particular release.
+The version in this checkout can be newer than the latest published package;
+use the matching Git tag when you need to reproduce a particular release.
 
 The server stores state, starts assigned local agents, streams terminal output,
 and advances cards through the standard execution/review handoff. The selected
@@ -38,19 +37,17 @@ system diagram.
 
 ## Install
 
-Release candidates need pre-release resolution:
-
 ```bash
-pip install --pre agent-kanban-pm
+pip install agent-kanban-pm
 kanban init
 ```
 
 For an isolated CLI installation:
 
 ```bash
-pipx install --pip-args="--pre" agent-kanban-pm
+pipx install agent-kanban-pm
 # Or run without installing:
-uvx --prerelease allow --from agent-kanban-pm kanban --help
+uvx --from agent-kanban-pm kanban --help
 ```
 
 From source:
@@ -362,24 +359,13 @@ the packaged runtime.
 
 ## Roadmap
 
-The guided UI workflow and its browser coverage are complete. Before a stable
-`0.4.0` release, the remaining work is:
+Version `0.4.0` completes the guided UI workflow, durable session handoffs,
+review controls, and browser coverage. The next architectural work is to review
+service boundaries for projects, sessions, approvals, and transitions, and to
+decide when the tested versioned SQLite upgrades should move to Alembic.
 
-1. Integrate the durable session-handoff and consistent-control changes into
-   `main`, with their changelog entries. They are present in this checkout but
-   are not part of the published package yet.
-2. Review the remaining runtime boundaries and database migration strategy.
-   Task mutations already share a service; project, session, approval, and
-   transition rules still need a deliberate service-boundary decision. The
-   current versioned SQLite upgrades are tested, but an Alembic migration path
-   remains an architectural follow-up unless it is chosen as a stable-release
-   gate.
-3. Pass the full release checks on the integrated commit: Linux Python
-   3.11–3.13, macOS Python 3.12, Chromium workflows, existing-database upgrade,
-   locked dependencies, wheel build, and clean-install smoke test.
-4. Finalize the `0.4.0` changelog and version, merge the release commit, tag
-   it, and verify the published PyPI package and GitHub Release. See
-   [RELEASING.md](RELEASING.md) for the procedure.
+Usage accounting, quota-aware model routing, and cross-CLI task continuation
+are planned separately in [USAGE_ROUTING_PLAN.md](USAGE_ROUTING_PLAN.md).
 
 ## Security
 

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-13
+
+### Added
+- **Task reviews include the actual Git changes** from the retained task worktree, committed task branch, or saved review snapshot. Reviewers can inspect patches file by file and approve or reject pending reviews with an optional note; decisions update the review record without changing Git or moving the card.
+- **The terminal and activity views have a focused feed** that removes repeated screen redraws while preserving a raw-output view for diagnosis. Finished sessions remain available in task terminal history.
+
+### Changed
+- **Session handoffs are durable and scoped to one run**. The runtime records the handoff on `AgentSession` before changing task state, verifies `STATUS.md` against the project, task, session, and run token, and serializes non-Git workspaces so concurrent tasks cannot overwrite a shared handoff.
+- **Task worktrees remain available for review after sessions finish**. Automatic cleanup retains recorded worktrees and never removes dirty work, allowing later review and Git roles to inspect unfinished or uncommitted changes.
+- **Controls and project navigation share consistent styling** across the dashboard, board, activity, changes, settings, project list, and appearance menu.
+
+### Fixed
+- **Supervised interactive CLI menus resolve predictably**. Menu selections use constrained navigation keys, resolved decisions are delivered once, and approval notes are retained as audit text instead of being typed into menus.
+- **Review completion stays separate from Git integration**. Approving a diff review records the decision without silently applying, committing, merging, or publishing the reviewed patch.
+
 ## [0.4.0rc9] — 2026-09-12
 
 ### Added
