@@ -292,18 +292,14 @@
 </style>
 <div class="project-sub-nav">
   <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">&#128203; Board</a>
-  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">&#128295; Workbench</a>
-  <a href="#" class="sub-nav-pill active">&#128260; Git</a>
-</div>
-<div class="sub-nav" style="display:none;">
-    <a href="/ui/projects/{{ project.id }}/board" class="nav-pill">Board</a>
-    <a href="/ui/projects/{{ project.id }}/workbench" class="nav-pill">Workbench</a>
-    <a href="#" class="nav-pill active">Git</a>
+  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">&#9889; Activity</a>
+  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill active" aria-current="page">&#128260; Changes</a>
+  <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">&#9881;&#65039; Settings</a>
 </div>
 
 <div class="git-header">
     <div class="project-info">
-        <h1>{{ project.name }}</h1>
+        <h1>{{ project.name }} — Changes</h1>
         <div class="path-chip">{{ project.path }}</div>
     </div>
     <div class="sync-controls">

@@ -44,6 +44,24 @@ templates = Jinja2Templates(directory=str(templates_dir()))
 templates.env.globals["current_year"] = lambda: datetime.now(UTC).year
 templates.env.globals["kanban_csrf_token"] = get_csrf_token
 
+# Human-readable labels for raw TaskStatus values ("in_progress" -> "In
+# progress"). Keeps board badges readable without changing API contracts.
+STATUS_LABELS = {
+    "pending": "Pending",
+    "in_progress": "In progress",
+    "in_review": "In review",
+    "completed": "Completed",
+    "blocked": "Blocked",
+}
+
+
+def _status_label(value) -> str:
+    key = getattr(value, "value", value)
+    return STATUS_LABELS.get(str(key), str(key).replace("_", " "))
+
+
+templates.env.filters["status_label"] = _status_label
+
 router = APIRouter(include_in_schema=False)
 
 
@@ -348,11 +366,73 @@ async def project_kanban_board(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # Project setup checklist derivation:
+    # 1. Choose folder: project.path is set
+    # 2. Configure worker: at least one role is assigned and installed
+    # 3. Create task: at least one task exists
+    # 4. Start work: at least one task has started (in_progress, in_review, completed)
+    from agent_kanban_pm.runtime.preferences import load_preferences
+    from agent_kanban_pm.runtime.adapter_loader import load_all_adapters, discover_popular_clis
+    import shutil
+
+    prefs = load_preferences()
+    role_assignments = prefs.get_role_assignments() if prefs else {}
+    adapters = {a.name: a for a in load_all_adapters()}
+    discovered = {c.command: c for c in discover_popular_clis()}
+
+    has_folder = bool(project.path and project.path.strip())
+
+    worker_assignment = role_assignments.get("worker")
+    worker_installed = False
+    worker_agent = None
+    worker_name = None
+    if worker_assignment:
+        worker_agent = worker_assignment.agent
+        w_adapter = adapters.get(worker_agent)
+        w_cmd = w_adapter.invoke.command if w_adapter else (worker_assignment.command or worker_agent)
+        worker_name = w_adapter.display_name if w_adapter else (worker_assignment.display_name or worker_agent)
+        worker_installed = (w_cmd in discovered and discovered[w_cmd].installed) or bool(w_adapter and shutil.which(w_cmd)) or bool(shutil.which(w_cmd))
+    else:
+        for r_name, r_assign in role_assignments.items():
+            r_ad = adapters.get(r_assign.agent)
+            r_cmd = r_ad.invoke.command if r_ad else (r_assign.command or r_assign.agent)
+            if (r_cmd in discovered and discovered[r_cmd].installed) or bool(r_ad and shutil.which(r_cmd)) or bool(shutil.which(r_cmd)):
+                worker_installed = True
+                worker_agent = r_assign.agent
+                worker_name = r_ad.display_name if r_ad else r_assign.agent
+                break
+
+    all_tasks = [t for s in project.stages for t in s.tasks]
+    has_tasks = len(all_tasks) > 0
+    has_started = any(t.status.value in ("in_progress", "in_review", "completed") for t in all_tasks)
+
+    first_backlog_task_id = None
+    for s in project.stages:
+        if s.key == "backlog" and s.tasks:
+            first_backlog_task_id = s.tasks[0].id
+            break
+
+    completed_count = sum([has_folder, worker_installed, has_tasks, has_started])
+    setup_checklist = {
+        "has_folder": has_folder,
+        "has_worker": worker_installed,
+        "worker_agent": worker_agent or "None",
+        "worker_name": worker_name or "Not configured",
+        "has_tasks": has_tasks,
+        "task_count": len(all_tasks),
+        "has_started": has_started,
+        "first_backlog_task_id": first_backlog_task_id,
+        "completed_count": completed_count,
+        "all_complete": completed_count == 4,
+    }
+
     return templates.TemplateResponse(request, "kanban_board.html", {
         "request": request,
         "project": project,
         "current_entity": current_entity,
         "stage_statuses": STAGE_STATUSES,
+        "setup_checklist": setup_checklist,
+        "active_page": "board",
     })
 
 
@@ -370,7 +450,8 @@ async def project_workbench(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return templates.TemplateResponse(request, "project_workbench.html", {
-        "request": request, "project": project, "current_entity": current_entity
+        "request": request, "project": project, "current_entity": current_entity,
+        "active_page": "activity"
     })
 
 
@@ -388,7 +469,37 @@ async def project_git(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return templates.TemplateResponse(request, "project_git.html", {
-        "request": request, "project": project, "current_entity": current_entity
+        "request": request, "project": project, "current_entity": current_entity,
+        "active_page": "changes"
+    })
+
+
+@router.get("/ui/projects/{project_id}/settings", response_class=HTMLResponse)
+async def project_settings(
+    request: Request,
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity)
+):
+    result = await db.execute(
+        select(Project)
+        .filter(Project.id == project_id)
+        .options(
+            selectinload(Project.stages),
+            selectinload(Project.creator)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    role_data = await _role_assignment_payload()
+    return templates.TemplateResponse(request, "project_settings.html", {
+        "request": request,
+        "project": project,
+        "current_entity": current_entity,
+        "role_data": role_data,
+        "active_page": "settings",
     })
 
 
@@ -1347,11 +1458,17 @@ async def ui_create_project(
 
 @router.get("/ui/users", response_class=HTMLResponse)
 async def ui_users(request: Request, db: AsyncSession = Depends(get_db)):
-    """List all registered users (entities)"""
+    """List all registered users and agent roles"""
     result = await db.execute(select(Entity).order_by(Entity.created_at.desc()))
     users = result.scalars().all()
+    role_payload = await _role_assignment_payload()
+    from agent_kanban_pm.runtime.preferences import load_preferences
+    prefs = load_preferences()
+    manager_agent = prefs.manager.agent if prefs and prefs.manager else None
 
     return templates.TemplateResponse(request, "users.html", {
         "request": request,
-        "users": users
+        "users": users,
+        "role_payload": role_payload,
+        "manager_agent": manager_agent,
     })

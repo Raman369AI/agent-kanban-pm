@@ -178,8 +178,49 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         // Set initial state
-        const savedSidebar = localStorage.getItem('sidebar') || 'collapsed';
+        const savedSidebar = localStorage.getItem('sidebar') || 'expanded';
         document.documentElement.setAttribute('data-sidebar', savedSidebar);
+    }
+
+    // Mobile navigation drawer: the sidebar is hidden below 992px, so the
+    // header button is the only way to reach global navigation there.
+    const mobileNavToggle = document.getElementById('mobile-nav-toggle');
+    const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+    function closeMobileNav(returnFocus) {
+        document.documentElement.setAttribute('data-sidebar-open', 'false');
+        if (mobileNavToggle) mobileNavToggle.setAttribute('aria-expanded', 'false');
+        if (sidebarBackdrop) sidebarBackdrop.hidden = true;
+        if (returnFocus && mobileNavToggle) mobileNavToggle.focus();
+    }
+    if (mobileNavToggle) {
+        mobileNavToggle.addEventListener('click', function() {
+            if (document.documentElement.getAttribute('data-sidebar-open') === 'true') {
+                closeMobileNav(false);
+                return;
+            }
+            document.documentElement.setAttribute('data-sidebar-open', 'true');
+            mobileNavToggle.setAttribute('aria-expanded', 'true');
+            if (sidebarBackdrop) sidebarBackdrop.hidden = false;
+            const firstLink = document.querySelector('.sidebar-nav a');
+            if (firstLink) firstLink.focus({ preventScroll: true });
+        });
+        document.querySelectorAll('.sidebar-nav a').forEach(function(link) {
+            link.addEventListener('click', () => closeMobileNav(false));
+        });
+        if (sidebarBackdrop) {
+            sidebarBackdrop.addEventListener('click', () => closeMobileNav(false));
+        }
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 992 && document.documentElement.getAttribute('data-sidebar-open') === 'true') {
+                closeMobileNav(false);
+            }
+        });
+        document.addEventListener('keydown', function(event) {
+            if (event.key !== 'Escape') return;
+            if (document.documentElement.getAttribute('data-sidebar-open') === 'true') {
+                closeMobileNav(true);
+            }
+        });
     }
 
     // Auto-refresh data every 30 seconds

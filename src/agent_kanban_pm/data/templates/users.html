@@ -1,16 +1,91 @@
 {% extends "base.html" %}
 
-{% block title %}Team - Agent Kanban PM{% endblock %}
+{% block title %}Agents &amp; roles - Agent Kanban PM{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4" style="animation: fadeIn 0.4s ease-out;">
     <div>
-        <h2 style="font-weight: 800; font-size: 1.75rem; letter-spacing: -0.02em; margin: 0; background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Team Members</h2>
-        <p class="text-secondary" style="font-size: 0.9rem; margin-top: 0.25rem;">You and the agents working in your workspace</p>
+        <h2 style="font-weight: 800; font-size: 1.75rem; letter-spacing: -0.02em; margin: 0; background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Agents &amp; Roles</h2>
+        <p class="text-secondary" style="font-size: 0.9rem; margin-top: 0.25rem;">Configured agent roles, available CLI tools, and workspace team members</p>
     </div>
 </div>
 
-<div class="card glass-card" style="padding: 0;">
+<!-- Section 1: Configured Roles -->
+<div class="card glass-card mb-4" style="padding: 1.5rem;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h3 style="margin:0; font-size:1.2rem; font-weight:700;">Configured Roles</h3>
+            <p class="text-secondary" style="font-size:0.85rem; margin:0.25rem 0 0 0;">Roles map workflow responsibilities to specific agent CLIs, models, and autonomy modes.</p>
+        </div>
+        <button class="btn btn-primary btn-sm" type="button" id="toggle-role-editor-btn" onclick="toggleRoleEditor()">
+            <span id="role-editor-btn-text">Configure roles</span>
+        </button>
+    </div>
+
+    <div class="table-container mb-2" id="roles-summary-view">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Role</th>
+                    <th>Assigned Agent</th>
+                    <th>Tool / CLI</th>
+                    <th>Model</th>
+                    <th>Mode</th>
+                    <th>Availability</th>
+                    <th>Role Type</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if role_payload and role_payload.roles %}
+                {% for r in role_payload.roles %}
+                <tr>
+                    <td><strong>{{ r.role }}</strong></td>
+                    <td>{{ r.display_name }}</td>
+                    <td><code>{{ r.command }}</code></td>
+                    <td><span class="badge" style="background:var(--bg-primary);border:1px solid var(--border-color);font-size:0.75rem;">{{ r.model }}</span></td>
+                    <td style="font-size:0.82rem;color:var(--text-secondary);">{{ r.mode }} ({{ r.autonomy }})</td>
+                    <td>
+                        {% if r.installed %}
+                        <span class="badge badge-success" style="font-size:0.72rem;">Available</span>
+                        {% else %}
+                        <span class="badge badge-danger" style="font-size:0.72rem;" title="CLI not found on PATH">Not on PATH</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if manager_agent and (r.agent == manager_agent or r.role == 'manager') %}
+                        <span class="badge badge-warning" style="font-size:0.68rem;">Manager</span>
+                        {% else %}
+                        <span class="text-secondary" style="font-size:0.82rem;">Worker</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-secondary py-3">No roles configured. Click Configure roles above to assign agent CLIs.</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Interactive Role Editor (using role-settings.js) -->
+    <div id="role-editor-container" style="display:none; border-top: 1px solid var(--border-color); padding-top: 1.25rem; margin-top: 1rem;">
+        <h4 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Edit Role Assignments</h4>
+        <small class="text-secondary d-block mb-3">Assign installed CLI tools to each role. Saving one role preserves settings on others.</small>
+        <div id="team-list" class="team-list">
+            <p class="text-secondary">Loading role settings...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Section 2: Team Members & Entities -->
+<div class="card glass-card" style="padding: 1.5rem;">
+    <div class="mb-3">
+        <h3 style="margin:0; font-size:1.2rem; font-weight:700;">Team Members &amp; Entities</h3>
+        <p class="text-secondary" style="font-size:0.85rem; margin:0.25rem 0 0 0;">Registered human users and agent entities in the local runtime</p>
+    </div>
+
     <div class="table-container">
         <table class="table">
             <thead>
@@ -24,10 +99,10 @@
             </thead>
             <tbody>
                 {% for user in users %}
-                <tr {% if user.name=='Antigravity' %}class="highlight-antigravity" {% endif %}>
+                <tr>
                     <td>
                         <strong>{{ user.name }}</strong>
-                        {% if user.name == 'Antigravity' %}
+                        {% if (manager_agent and user.name == manager_agent) or user.role.value == 'manager' %}
                         <span class="badge badge-warning" style="font-size: 0.65rem; margin-left: 0.35rem;">MANAGER</span>
                         {% endif %}
                     </td>
@@ -60,28 +135,6 @@
 </div>
 
 <style>
-    .highlight-antigravity {
-        background: linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.1), rgba(var(--accent-secondary-rgb), 0.05)) !important;
-        border-left: 4px solid var(--accent-primary);
-        position: relative;
-        overflow: hidden;
-    }
-
-    .highlight-antigravity::after {
-        content: '';
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: 100px;
-        height: 100%;
-        background: linear-gradient(90deg, transparent, rgba(var(--accent-primary-rgb), 0.05));
-        pointer-events: none;
-    }
-
-    .highlight-antigravity:hover td {
-        background: rgba(var(--accent-primary-rgb), 0.08) !important;
-    }
-
     .status-indicator {
         display: inline-block;
         width: 10px;
@@ -107,4 +160,37 @@
         box-shadow: 0 0 6px rgba(239, 68, 68, 0.3);
     }
 </style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/role-settings.js"></script>
+<script>
+    var CURRENT_ENTITY_ID = {{ (current_entity.id if current_entity else 'null') }};
+    var roleEditorLoaded = false;
+
+    function toggleRoleEditor() {
+        var container = document.getElementById('role-editor-container');
+        var btnText = document.getElementById('role-editor-btn-text');
+        if (!container) return;
+
+        if (container.style.display === 'none') {
+            container.style.display = 'block';
+            if (btnText) btnText.textContent = 'Hide editor';
+            if (!roleEditorLoaded) {
+                roleEditorLoaded = true;
+                apiFetch('/ui/api/roles', {}, 'Failed to load roles').then(function(data) {
+                    if (window.renderRoleCliPanel) {
+                        window.renderRoleCliPanel(data);
+                    }
+                }).catch(function(err) {
+                    var list = document.getElementById('team-list');
+                    if (list) list.innerHTML = '<p class="text-danger">Failed to load roles: ' + err.message + '</p>';
+                });
+            }
+        } else {
+            container.style.display = 'none';
+            if (btnText) btnText.textContent = 'Configure roles';
+        }
+    }
+</script>
 {% endblock %}

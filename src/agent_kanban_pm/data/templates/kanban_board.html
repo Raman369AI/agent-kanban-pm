@@ -6,7 +6,21 @@
 <link rel="stylesheet" href="/static/css/kanban_premium.css?v=6">
 <link rel="stylesheet" href="/static/css/board.css">
 
+{# Destination stage for planned work: Backlog, or the first stage when no
+   Backlog stage exists (mirrors the server-side chat-plan fallback). #}
+{% set backlog_stage = project.stages | selectattr('key', 'equalto', 'backlog') | first %}
+{% set plan_stage = backlog_stage or (project.stages | first) %}
+{% set new_task_default_stage = plan_stage %}
+
 <div class="board-revamp-shell board-simple-shell" style="--stage-count: {{ project.stages|length }};">
+  <!-- Consistent Project Navigation -->
+  <div class="project-sub-nav">
+    <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill active" aria-current="page">&#128203; Board</a>
+    <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">&#9889; Activity</a>
+    <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Changes</a>
+    <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">&#9881;&#65039; Settings</a>
+  </div>
+
   <section class="board-header-section board-simple-header">
     <div class="board-title-row">
       <div class="board-title-block">
@@ -23,11 +37,19 @@
         </div>
       </div>
 
-      <div id="header-chat-wrap" class="header-chat-wrap">
-        <div class="chat-task-input-wrap-compact">
-          <input type="text" id="chat-task-input" class="form-input chat-input-compact" placeholder="Add a task..."
-            onkeydown="if(event.key==='Enter') createTaskFromChat()">
-          <button class="btn btn-primary chat-btn-compact" onclick="createTaskFromChat()" title="Add task">Add</button>
+      <div id="header-create-wrap" class="header-create-wrap">
+        <button class="btn btn-primary" id="new-task-btn" type="button" onclick="openNewTaskModal()">New task</button>
+        <div class="chat-task-input-wrap-compact" id="plan-work-wrap"
+          data-stage-name="{{ (plan_stage.name if plan_stage else 'Backlog')|e }}">
+          <input type="text" id="chat-task-input" class="form-input chat-input-compact"
+            placeholder="Describe work to plan&hellip;" aria-label="Describe work to plan"
+            aria-describedby="chat-plan-hint">
+          <button class="btn chat-btn-compact" id="chat-plan-btn" type="button" onclick="createTaskFromChat()"
+            title="Create proposed task cards in {{ plan_stage.name if plan_stage else 'Backlog' }}">Plan work</button>
+          <p class="chat-plan-hint text-secondary" id="chat-plan-hint">
+            Planning proposes task cards in {{ plan_stage.name if plan_stage else 'Backlog' }}.
+          </p>
+          <p class="chat-plan-error text-danger" id="chat-plan-error" role="alert" style="display:none;"></p>
         </div>
       </div>
 
@@ -35,7 +57,7 @@
         <button class="btn btn-icon" id="header-bell-btn" onclick="toggleBellDropdown()" title="Pending approvals">
           <span id="header-bell-icon">&#128276;</span> <span id="header-bell-count" class="badge" style="display:none;background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;position:absolute;top:0;right:0;border-radius:1rem;">0</span>
         </button>
-        <a class="btn btn-secondary" href="/ui/projects/{{ project.id }}/workbench">Workbench</a>
+        <a class="btn btn-secondary" href="/ui/projects/{{ project.id }}/workbench" title="Activity &amp; sessions">&#9889; Activity</a>
       </div>
     </div>
 
@@ -73,6 +95,117 @@
     </div>
   </section>
 
+  {% if setup_checklist %}
+  <section class="project-setup-checklist" id="project-setup-checklist" aria-label="Project setup checklist">
+    <div class="setup-checklist-header" onclick="toggleSetupChecklist()">
+      <div class="setup-header-left">
+        <span class="setup-badge">Setup Checklist</span>
+        <strong class="setup-progress" id="setup-progress-text">{{ setup_checklist.completed_count }}/4 complete</strong>
+      </div>
+      <div class="setup-header-right">
+        <button class="btn-icon btn-sm" id="toggle-checklist-btn" type="button" aria-label="Toggle setup checklist" onclick="event.stopPropagation();toggleSetupChecklist()">
+          <span id="checklist-toggle-icon">{% if setup_checklist.all_complete %}&#9660;{% else %}&#9650;{% endif %}</span>
+        </button>
+      </div>
+    </div>
+    <div class="setup-steps-grid" id="setup-steps-grid" {% if setup_checklist.all_complete %}style="display:none;"{% endif %}>
+      <!-- Step 1: Choose folder -->
+      <div class="setup-step-item {% if setup_checklist.has_folder %}step-complete{% else %}step-pending{% endif %}" id="step-choose-folder">
+        <div class="setup-step-top">
+          <div class="step-num-indicator">{% if setup_checklist.has_folder %}&#10003;{% else %}1{% endif %}</div>
+          <div class="step-content">
+            <div class="step-title">Choose folder</div>
+            <div class="step-detail">
+              {% if setup_checklist.has_folder %}
+              <code style="font-size:0.75rem;">{{ project.path }}</code>
+              {% else %}
+              <span class="text-warning">Missing prerequisite: Set a project folder for workspace files.</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="step-action">
+          {% if not setup_checklist.has_folder %}
+          <button class="btn btn-sm btn-primary" type="button" onclick="openWorkspaceFolderPicker()">Choose folder</button>
+          {% else %}
+          <span class="step-done-tag">&#10003; Configured</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Step 2: Configure worker -->
+      <div class="setup-step-item {% if setup_checklist.has_worker %}step-complete{% else %}step-pending{% endif %}" id="step-configure-worker">
+        <div class="setup-step-top">
+          <div class="step-num-indicator">{% if setup_checklist.has_worker %}&#10003;{% else %}2{% endif %}</div>
+          <div class="step-content">
+            <div class="step-title">Configure worker</div>
+            <div class="step-detail">
+              {% if setup_checklist.has_worker %}
+              <span>Worker: <strong>{{ setup_checklist.worker_name }}</strong> ({{ setup_checklist.worker_agent }})</span>
+              {% elif not setup_checklist.has_folder %}
+              <span class="text-muted">Prerequisite: choose a project folder first.</span>
+              {% else %}
+              <span class="text-warning">Missing prerequisite: No worker CLI installed on PATH.</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="step-action">
+          <button class="btn btn-sm {% if not setup_checklist.has_worker %}btn-primary{% else %}btn-secondary{% endif %}" type="button" onclick="openTeamModal()">Configure agents</button>
+        </div>
+      </div>
+
+      <!-- Step 3: Create task -->
+      <div class="setup-step-item {% if setup_checklist.has_tasks %}step-complete{% else %}step-pending{% endif %}" id="step-create-task">
+        <div class="setup-step-top">
+          <div class="step-num-indicator">{% if setup_checklist.has_tasks %}&#10003;{% else %}3{% endif %}</div>
+          <div class="step-content">
+            <div class="step-title">Create task</div>
+            <div class="step-detail">
+              {% if setup_checklist.has_tasks %}
+              <span>{{ setup_checklist.task_count }} task(s) on board</span>
+              {% elif not setup_checklist.has_worker %}
+              <span class="text-muted">Prerequisite: configure an agent worker first.</span>
+              {% else %}
+              <span class="text-warning">Missing prerequisite: Create your first task to define work.</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="step-action">
+          <button class="btn btn-sm {% if not setup_checklist.has_tasks %}btn-primary{% else %}btn-secondary{% endif %}" type="button" onclick="openNewTaskModal()">New task</button>
+        </div>
+      </div>
+
+      <!-- Step 4: Start work -->
+      <div class="setup-step-item {% if setup_checklist.has_started %}step-complete{% else %}step-pending{% endif %}" id="step-start-work">
+        <div class="setup-step-top">
+          <div class="step-num-indicator">{% if setup_checklist.has_started %}&#10003;{% else %}4{% endif %}</div>
+          <div class="step-content">
+            <div class="step-title">Start work</div>
+            <div class="step-detail">
+              {% if setup_checklist.has_started %}
+              <span class="text-success">Work execution in progress</span>
+              {% elif not setup_checklist.has_tasks %}
+              <span class="text-muted">Prerequisite: create a task first.</span>
+              {% else %}
+              <span class="text-warning">Move a task to To Do or In Progress to begin execution.</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="step-action">
+          {% if not setup_checklist.has_started and setup_checklist.has_tasks and setup_checklist.first_backlog_task_id %}
+          <button class="btn btn-sm btn-primary" type="button" onclick="moveToTodo({{ setup_checklist.first_backlog_task_id }})">Move to To Do</button>
+          {% elif setup_checklist.has_started %}
+          <span class="step-done-tag">&#10003; Started</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
 
   <section class="board-main-revamp" id="board-main-revamp">
     <div class="kanban-container-revamp">
@@ -94,13 +227,21 @@
               <div class="task-header-revamp">
                 <strong class="task-title-revamp">{{ task.title }}</strong>
                 <div class="task-actions-revamp">
-                  <button class="btn-icon-sm" onclick="event.stopPropagation();openEditModal(this.closest('.kanban-task-revamp'))" title="Edit">&#9998;</button>
-                  <button class="btn-icon-sm btn-danger-sm" onclick="event.stopPropagation();deleteTask({{ task.id }}, this.closest('.kanban-task-revamp'))" title="Delete">&#128465;</button>
+                  <button class="btn-icon-sm" type="button" onclick="event.stopPropagation();openEditModal(this.closest('.kanban-task-revamp'))" title="Edit" aria-label="Edit task {{ task.id }}">&#9998;</button>
+                  <div class="task-menu-wrap">
+                    <button class="btn-icon-sm task-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false"
+                      aria-controls="task-menu-{{ task.id }}" aria-label="More actions for task {{ task.id }}"
+                      onclick="event.stopPropagation();toggleTaskMenu({{ task.id }}, this)" title="More actions">&#8942;</button>
+                    <div class="task-menu" id="task-menu-{{ task.id }}" role="menu" style="display:none;">
+                      <button class="task-menu-item" type="button" role="menuitem"
+                        onclick="event.stopPropagation();deleteTaskFromMenu({{ task.id }})">Delete task</button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div class="task-meta-revamp">
                 <span class="badge badge-{{ task.status.value }}" id="status-task-{{ task.id }}">
-                  {% if task.status.value == 'completed' %}&#9989;{% elif task.status.value == 'in_progress' %}&#9889;{% elif task.status.value == 'in_review' %}&#128269;{% elif task.status.value == 'blocked' %}&#128683;{% else %}&#9203;{% endif %} {{ task.status.value }}
+                  {% if task.status.value == 'completed' %}&#9989;{% elif task.status.value == 'in_progress' %}&#9889;{% elif task.status.value == 'in_review' %}&#128269;{% elif task.status.value == 'blocked' %}&#128683;{% else %}&#9203;{% endif %} {{ task.status.value | status_label }}
                 </span>
                 {% if task.priority > 5 %}
                 <span class="badge badge-warning">&#128293; P{{ task.priority }}</span>
@@ -163,7 +304,8 @@
             <div class="task-footer-revamp" onclick="event.stopPropagation()">
               <button class="btn-link" onclick="openAssignModal({{ task.id }})">&#128100; Assign</button>
               {% if stage.key == 'backlog' %}
-              <button class="btn-link" style="color:var(--success,#34d399);font-weight:600;" onclick="approveToTodo({{ task.id }}, this)" title="Approve and move to To Do">&#9989; Approve</button>
+              <button class="btn-link btn-move-to-todo" type="button" onclick="moveToTodo({{ task.id }}, this)"
+                title="Move this card to the To Do stage">&#8594; Move to To Do</button>
               {% endif %}
             </div>
           </div>
@@ -179,8 +321,8 @@
 
         {% if stage.key in ['backlog', 'to_do'] %}
         <div class="kanban-column-footer-revamp">
-          <button class="btn-add-task" data-stage-name="{{ stage.name|e }}" onclick="openAddTaskModal({{ stage.id }}, this.dataset.stageName)">
-            <span>+</span> Add Task
+          <button class="btn-add-task" type="button" data-stage-name="{{ stage.name|e }}" onclick="openAddTaskModal({{ stage.id }}, this.dataset.stageName)">
+            <span>+</span> New task
           </button>
         </div>
         {% endif %}
@@ -239,13 +381,12 @@
     onclick="if(event.target===this)closeModal('task-modal')">
   <div class="modal-card">
     <div class="modal-header">
-      <h3 id="task-modal-title">Edit Task</h3>
+      <h3 id="task-modal-title">New task</h3>
       <button class="btn-icon" aria-label="Close task dialog" onclick="closeModal('task-modal')">&times;</button>
     </div>
     <div class="tab-content">
       <form id="task-form" onsubmit="return false;">
         <input type="hidden" id="task-form-id">
-        <input type="hidden" id="task-form-stage-id">
         <input type="hidden" id="task-form-mode" value="edit">
         <div class="form-group">
           <label for="task-form-title">Title</label>
@@ -257,9 +398,22 @@
         </div>
         <div class="form-row">
           <div class="form-group">
+            <label for="task-form-stage">Stage</label>
+            <select id="task-form-stage" class="form-input">
+              {% for stage in project.stages %}
+              <option value="{{ stage.id }}">{{ stage.name }}</option>
+              {% endfor %}
+            </select>
+            <small id="task-form-stage-hint" class="text-secondary" style="display:none;">
+              Move the card on the board to change its stage.
+            </small>
+          </div>
+          <div class="form-group">
             <label for="task-form-priority">Priority (0-10)</label>
             <input type="number" id="task-form-priority" class="form-input" min="0" max="10" value="0">
           </div>
+        </div>
+        <div class="form-row">
           <div class="form-group">
             <label for="task-form-status">Status</label>
             <select id="task-form-status" class="form-input">
@@ -270,18 +424,19 @@
               <option value="blocked">Blocked</option>
             </select>
           </div>
-        </div>
-        <div class="form-group">
-          <label for="task-form-skills">Required Skills</label>
-          <input type="text" id="task-form-skills" class="form-input" placeholder="python,react,testing">
+          <div class="form-group">
+            <label for="task-form-skills">Required Skills</label>
+            <input type="text" id="task-form-skills" class="form-input" placeholder="python,react,testing">
+          </div>
         </div>
         <div id="task-comments-section" style="display:none; margin-top: 1rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
           <h4>Activity &amp; Comments</h4>
           <div id="task-comments-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 1rem; font-size: 0.9rem;"></div>
         </div>
+        <p id="task-form-error" class="text-danger" role="alert" style="display:none;margin-top:0.5rem;"></p>
         <div class="form-actions">
           <button type="button" class="btn" onclick="closeModal('task-modal')">Cancel</button>
-          <button type="button" class="btn btn-primary" onclick="submitTaskForm()">Save</button>
+          <button type="button" class="btn btn-primary" id="task-form-submit" onclick="submitTaskForm(this)">Create task</button>
         </div>
       </form>
     </div>
@@ -346,9 +501,12 @@
       <button class="btn-icon" aria-label="Close stage policy dialog" onclick="closeModal('stage-policy-modal')">&times;</button>
     </div>
     <p class="text-secondary" style="margin-bottom:1rem;">
-      Configure expected roles, required outputs, and review mode for each stage.
-      The orchestrator reads these policies to decide assignments and card movement.
-      The server never auto-assigns or auto-moves cards.
+      Expected roles, required outputs, and review mode for each stage. When an
+      agent session finishes and reports its work ready in <code>STATUS.md</code>,
+      the runtime moves the card automatically &mdash; work finished in To Do or
+      In Progress goes to Review, and a finished test or diff review moves the
+      card to Done &mdash; and assigns the new stage's expected roles. Every
+      other move is made by you or the orchestrator.
     </p>
     <div id="stage-policy-list" style="max-height:50vh;overflow-y:auto;"></div>
     <div class="form-actions" style="margin-top:1rem;">
@@ -407,6 +565,7 @@
 <script>
     var PROJECT_ID = {{ project.id }};
     var CURRENT_ENTITY_ID = {{ current_entity.id if current_entity else 'null' }};
+    var PLAN_STAGE_ID = {{ new_task_default_stage.id if new_task_default_stage else 'null' }};
 </script>
 <script src="/static/js/role-settings.js"></script>
 <script src="/static/js/board.js"></script>

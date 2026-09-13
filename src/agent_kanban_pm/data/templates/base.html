@@ -43,7 +43,7 @@
 <!-- Layout Wrapper -->
 <div class="layout-wrapper">
     <!-- Sidebar Navigation -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="app-sidebar">
         <div class="sidebar-header">
             <div class="nav-brand">
                 <h1>Agent PM</h1>
@@ -70,7 +70,7 @@
                 <li>
                     <a href="/ui/users" class="nav-link {% if '/users' in request.url.path %}active{% endif %}">
                         <span class="nav-icon">👥</span>
-                        <span class="nav-text">Team</span>
+                        <span class="nav-text">Agents & roles</span>
                     </a>
                 </li>
             </ul>
@@ -90,6 +90,8 @@
         <div class="sidebar-footer"></div>
     </aside>
 
+    <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+
     <!-- Main Content Area -->
     <div class="content-area">
         <!-- Header Bar -->
@@ -97,6 +99,10 @@
             <div class="container-fluid">
                 <div class="header-content">
                     <div class="page-context">
+                        <button id="mobile-nav-toggle" class="btn-icon mobile-nav-toggle" type="button"
+                            aria-label="Open navigation menu" aria-expanded="false" aria-controls="app-sidebar">
+                            <span class="icon">&#9776;</span>
+                        </button>
                         {% block page_title %}{% endblock %}
                     </div>
                     <div class="header-actions">

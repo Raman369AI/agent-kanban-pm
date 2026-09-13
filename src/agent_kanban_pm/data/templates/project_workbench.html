@@ -122,12 +122,14 @@
 
 <div class="project-sub-nav">
   <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">&#128203; Board</a>
-  <a href="#" class="sub-nav-pill active">&#128295; Workbench</a>
-  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Git</a>
+  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill active" aria-current="page">&#9889; Activity</a>
+  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Changes</a>
+  <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">&#9881;&#65039; Settings</a>
 </div>
 
 <div class="d-flex align-items-center gap-3 mb-4">
-  <h2 style="margin:0;font-size:1.4rem;font-weight:800;">{{ project.name }} — Workbench</h2>
+  <h2 style="margin:0;font-size:1.4rem;font-weight:800;">{{ project.name }} — Activity</h2>
+  <span class="badge" style="background:var(--bg-card);border:1px solid var(--border-color);font-size:0.75rem;color:var(--text-secondary);">{{ project.name }} — Workbench</span>
   {% if project.path %}<code style="font-size:0.8rem;color:var(--text-muted);">{{ project.path }}</code>{% endif %}
 </div>
 

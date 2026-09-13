@@ -86,9 +86,9 @@
     margin-top: 0.65rem;
   }
 
-  @media(max-width: 900px) {
+  @media(max-width: 1200px) {
     .board-title-row {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       align-items: stretch;
     }
 
@@ -238,10 +238,14 @@
   }
   .chat-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(var(--accent-primary-rgb), 0.4); }
 
-  .header-chat-wrap {
-    max-width: 600px;
+  .header-create-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    max-width: 640px;
     position: relative;
   }
+  #new-task-btn { flex-shrink: 0; }
   .chat-task-input-wrap-compact {
     display: flex;
     align-items: center;
@@ -251,6 +255,32 @@
     padding: 0.15rem 0.25rem 0.15rem 1rem;
     transition: all 0.2s;
     box-shadow: var(--shadow-sm);
+  }
+  /* The plan input is a grid row so the hint/error can sit under the field
+     without pushing the board around when it appears. */
+  #plan-work-wrap {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "input button" "note note";
+    align-items: center;
+    row-gap: 0.15rem;
+  }
+  #chat-task-input { grid-area: input; }
+  #chat-plan-btn { grid-area: button; margin-left: 0.4rem; }
+  .chat-plan-hint,
+  .chat-plan-error {
+    grid-area: note;
+    margin: 0;
+    padding-left: 1rem;
+    font-size: 0.7rem;
+    line-height: 1.3;
+  }
+  .chat-plan-error { font-weight: 600; }
+  @media (max-width: 900px) {
+    .header-create-wrap { flex-direction: column; align-items: stretch; }
+    #new-task-btn { width: 100%; }
   }
   .chat-task-input-wrap-compact:focus-within {
     border-color: var(--accent-primary);
@@ -449,7 +479,48 @@
     opacity: 0;
     transition: opacity 0.2s;
   }
-  .kanban-task-revamp:hover .task-actions-revamp { opacity: 1; }
+  /* Actions appear for pointer hover, keyboard focus, and touch screens. */
+  .kanban-task-revamp:hover .task-actions-revamp,
+  .kanban-task-revamp:focus-within .task-actions-revamp { opacity: 1; }
+  @media (hover: none) {
+    .task-actions-revamp { opacity: 1; }
+    .task-actions-revamp .btn-icon-sm {
+      min-width: 2rem;
+      min-height: 2rem;
+    }
+  }
+  /* Destructive and secondary actions live in an overflow menu. */
+  .task-menu-wrap { position: relative; }
+  .task-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 60;
+    min-width: 9rem;
+    padding: 0.25rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+  }
+  .task-menu-item {
+    display: block;
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--danger);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+  .task-menu-item:hover,
+  .task-menu-item:focus-visible {
+    background: rgba(239, 68, 68, 0.1);
+    outline: none;
+  }
   .task-meta-revamp {
     display: flex;
     flex-wrap: wrap;
@@ -546,6 +617,10 @@
   .task-footer-revamp .btn-link {
     font-size: 0.65rem;
     padding: 0.2rem 0.5rem;
+  }
+  .task-footer-revamp .btn-move-to-todo {
+    color: var(--success, #34d399);
+    font-weight: 600;
   }
 
   /* Expansion panel */
@@ -757,4 +832,19 @@
     .approval-popup-grid { grid-template-columns: 1fr; }
     .approval-popup-actions { flex-wrap: wrap; }
     .approval-popup-actions .btn { flex: 1 1 120px; }
+  }
+
+  /* At 200% zoom on a 390px screen, the effective CSS viewport is about
+     195px. Keep the two creation actions inside the available width. */
+  @media (max-width: 320px) {
+    .board-title-row { grid-template-columns: minmax(0, 1fr); }
+    .board-title-row > * { min-width: 0; }
+    .board-title-block h2 { overflow-wrap: anywhere; }
+    .header-create-wrap { min-width: 0; max-width: 100%; }
+    #plan-work-wrap {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "input" "button" "note";
+    }
+    #chat-task-input { min-width: 0; width: 100%; }
+    #chat-plan-btn { width: 100%; margin-left: 0; }
   }

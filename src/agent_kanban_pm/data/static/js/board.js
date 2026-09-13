@@ -520,6 +520,53 @@
     function escapeHtml(value) {
         return String(value || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
     }
+    var STATUS_LABELS = {
+        pending: 'Pending',
+        in_progress: 'In progress',
+        in_review: 'In review',
+        completed: 'Completed',
+        blocked: 'Blocked'
+    };
+    function statusLabel(value) {
+        return STATUS_LABELS[value] || String(value || '').replace(/_/g, ' ');
+    }
+
+    // --- Card action overflow menu ---
+    window.closeTaskMenus = function(returnFocus) {
+        document.querySelectorAll('.task-menu').forEach(function(menu) {
+            menu.style.display = 'none';
+        });
+        document.querySelectorAll('.task-menu-btn[aria-expanded="true"]').forEach(function(btn) {
+            btn.setAttribute('aria-expanded', 'false');
+            if (returnFocus) btn.focus();
+        });
+    };
+    window.toggleTaskMenu = function(taskId, btn) {
+        var menu = document.getElementById('task-menu-' + taskId);
+        if (!menu) return;
+        var wasOpen = menu.style.display !== 'none';
+        window.closeTaskMenus(false);
+        if (wasOpen) return;
+        menu.style.display = 'block';
+        btn.setAttribute('aria-expanded', 'true');
+        var firstItem = menu.querySelector('.task-menu-item');
+        if (firstItem) firstItem.focus();
+    };
+    window.deleteTaskFromMenu = function(taskId) {
+        window.closeTaskMenus(false);
+        var card = document.getElementById('task-card-' + taskId);
+        if (card) window.deleteTask(taskId, card);
+    };
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest || !e.target.closest('.task-menu-wrap')) window.closeTaskMenus(false);
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Escape') return;
+        if (document.querySelector('.task-menu-btn[aria-expanded="true"]')) {
+            e.preventDefault();
+            window.closeTaskMenus(true);
+        }
+    });
 
     // --- Drag and Drop ---
     function initDragDrop() {
@@ -563,7 +610,7 @@
         card.dataset.status = newStatus;
         card.style.opacity = '';
         if (statusBadge) {
-            statusBadge.textContent = newStatus;
+            statusBadge.textContent = statusLabel(newStatus);
             statusBadge.className = 'badge badge-' + newStatus;
         }
         addPlaceholderIfEmpty(oldZone);
@@ -627,8 +674,8 @@
         });
     }
 
-    // --- Approve backlog task → To Do ---
-    window.approveToTodo = function(taskId, btn) {
+    // --- Move a Backlog card to To Do ---
+    window.moveToTodo = function(taskId, btn) {
         var todoCol = document.querySelector('.kanban-column-revamp[data-stage-key="to_do"]');
         if (!todoCol) { showToast('No "To Do" column found', 'error'); return; }
         var todoZone = todoCol.querySelector('.kanban-drop-zone-revamp');
@@ -641,16 +688,16 @@
         apiFetch('/ui/tasks/' + taskId + '/move', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
-            body: JSON.stringify({ stage_id: parseInt(todoStageId), status: 'pending', summary: 'Approved from backlog' })
-        }, 'Failed to approve task').then(function() {
+            body: JSON.stringify({ stage_id: parseInt(todoStageId), status: 'pending', summary: 'Moved from Backlog to To Do' })
+        }, 'Failed to move task').then(function() {
             clearPlaceholder(todoZone);
             todoZone.appendChild(card);
             card.dataset.currentStage = todoStageId;
             addPlaceholderIfEmpty(oldZone);
             updateColumnCount(oldStageId, -1);
             updateColumnCount(todoStageId, 1);
-            btn.closest('.task-footer-revamp').querySelector('.btn-link[title*="Approve"]').remove();
-            showToast('Task approved and moved to To Do', 'success');
+            btn.remove();
+            showToast('Task moved to To Do', 'success');
         }).catch(function(err) {
             btn.disabled = false;
             showToast('Failed: ' + err.message, 'error');
@@ -658,30 +705,52 @@
     };
 
     // --- Task CRUD ---
+    function setTaskFormError(message) {
+        var el = document.getElementById('task-form-error');
+        if (!el) return;
+        el.textContent = message || '';
+        el.style.display = message ? '' : 'none';
+    }
     window.openAddTaskModal = function(stageId, stageName) {
-        document.getElementById('task-modal-title').textContent = 'Add Task to ' + stageName;
+        document.getElementById('task-modal-title').textContent = 'New task';
         document.getElementById('task-form-mode').value = 'create';
         document.getElementById('task-form-id').value = '';
-        document.getElementById('task-form-stage-id').value = stageId;
+        var stageSelect = document.getElementById('task-form-stage');
+        if (stageId) stageSelect.value = String(stageId);
+        else if (PLAN_STAGE_ID) stageSelect.value = String(PLAN_STAGE_ID);
+        else stageSelect.selectedIndex = 0;
+        stageSelect.disabled = false;
+        document.getElementById('task-form-stage-hint').style.display = 'none';
         document.getElementById('task-form-title').value = '';
         document.getElementById('task-form-desc').value = '';
         document.getElementById('task-form-priority').value = '0';
         document.getElementById('task-form-status').value = 'pending';
         document.getElementById('task-form-skills').value = '';
+        document.getElementById('task-form-submit').textContent = 'Create task';
         document.getElementById('task-comments-section').style.display = 'none';
+        setTaskFormError('');
         openModal('task-modal');
     };
+    // Header entry point: same dialog, destination stage preselected.
+    window.openNewTaskModal = function() { window.openAddTaskModal(null, null); };
     window.openEditModal = function(taskEl) {
         var taskId = taskEl.dataset.taskId;
         document.getElementById('task-modal-title').textContent = 'Edit Task #' + taskId;
         document.getElementById('task-form-mode').value = 'edit';
         document.getElementById('task-form-id').value = taskId;
-        document.getElementById('task-form-stage-id').value = taskEl.dataset.currentStage;
+        var stageSelect = document.getElementById('task-form-stage');
+        if (taskEl.dataset.currentStage) stageSelect.value = taskEl.dataset.currentStage;
+        // The edit endpoint does not move cards; the board does.
+        stageSelect.disabled = true;
+        document.getElementById('task-form-stage-hint').style.display = '';
         var title = taskEl.querySelector('.task-title-revamp');
         document.getElementById('task-form-title').value = title ? title.textContent.trim() : '';
+        document.getElementById('task-form-desc').value = '';
         document.getElementById('task-form-status').value = 'pending';
         document.getElementById('task-form-priority').value = '0';
         document.getElementById('task-form-skills').value = '';
+        document.getElementById('task-form-submit').textContent = 'Save changes';
+        setTaskFormError('');
         var commentsList = document.getElementById('task-comments-list');
         commentsList.innerHTML = '<p class="text-secondary">Loading activity...</p>';
         document.getElementById('task-comments-section').style.display = 'block';
@@ -765,23 +834,33 @@
             });
         return boardRefreshInFlight;
     }
-    window.submitTaskForm = function() {
+    var taskFormPending = false;
+    window.submitTaskForm = function(btn) {
+        if (taskFormPending) return;
         var mode = document.getElementById('task-form-mode').value;
         var title = document.getElementById('task-form-title').value.trim();
         if (!title) { showToast('Title is required', 'error'); return; }
         var data = { title: title, description: document.getElementById('task-form-desc').value.trim(), priority: parseInt(document.getElementById('task-form-priority').value) || 0, status: document.getElementById('task-form-status').value, required_skills: document.getElementById('task-form-skills').value.trim() };
+        taskFormPending = true;
+        if (btn) { btn.disabled = true; }
+        setTaskFormError('');
+        var request;
         if (mode === 'create') {
             data.project_id = PROJECT_ID;
-            data.stage_id = parseInt(document.getElementById('task-form-stage-id').value);
-            apiFetch('/ui/tasks/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) }, 'Failed to create task')
-                .then(function() { showToast('Task created!', 'success'); closeModal('task-modal'); return refreshBoardFromServer(); })
-                .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
+            data.stage_id = parseInt(document.getElementById('task-form-stage').value);
+            request = apiFetch('/ui/tasks/create', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) }, 'Failed to create task')
+                .then(function() { showToast('Task created', 'success'); closeModal('task-modal'); return refreshBoardFromServer(); })
+                .catch(function(err) { setTaskFormError(err.message); showToast('Error: ' + err.message, 'error'); });
         } else {
             var taskId = document.getElementById('task-form-id').value;
-            apiFetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) }, 'Failed to update task')
+            request = apiFetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) }, 'Failed to update task')
                 .then(function() { showToast('Task updated!', 'success'); closeModal('task-modal'); return refreshBoardFromServer(); })
-                .catch(function(err) { showToast('Error: ' + err.message, 'error'); });
+                .catch(function(err) { setTaskFormError(err.message); showToast('Error: ' + err.message, 'error'); });
         }
+        request.finally(function() {
+            taskFormPending = false;
+            if (btn) { btn.disabled = false; }
+        });
     };
     window.deleteTask = function(taskId, taskEl) {
         if (!confirm('Delete this task?')) return;
@@ -801,11 +880,32 @@
             (data.roles || []).forEach(function(r) {
                 var disabled = r.installed ? '' : 'disabled';
                 var model = r.model ? ' \u00B7 ' + r.model : '';
-                html += '<div class="entity-item"><span><strong>' + r.role + '</strong> \u2192 ' + r.display_name + '<small class="text-secondary"> (' + r.command + model + ')</small></span><button class="btn btn-sm btn-primary" ' + disabled + ' onclick="assignRoleToTask(' + taskId + ',\'' + r.role + '\',this)">Assign</button></div>';
+                var unavailMsg = !r.installed ? '<small class="text-danger" style="display:block;font-size:0.75rem;margin-top:0.2rem;">CLI \'' + r.command + '\' not found on PATH</small>' : '';
+                var unavailTitle = !r.installed ? ' title="Cannot assign: CLI \'' + r.command + '\' is not installed on PATH"' : '';
+                html += '<div class="entity-item"><span><strong>' + r.role + '</strong> \u2192 ' + r.display_name + '<small class="text-secondary"> (' + r.command + model + ')</small>' + unavailMsg + '</span><button class="btn btn-sm btn-primary" ' + disabled + unavailTitle + ' onclick="assignRoleToTask(' + taskId + ',\'' + r.role + '\',this)">Assign</button></div>';
             });
-            if (!html) html = '<p class="text-secondary">No roles configured.</p>';
+            if (!html) {
+                html = '<div class="empty-state text-center" style="padding:1.5rem 0;"><p class="text-secondary" style="margin-bottom:0.75rem;">No roles configured.</p><button class="btn btn-sm btn-primary" type="button" onclick="closeModal(\'assign-modal\');openTeamModal();">Configure agents</button></div>';
+            }
             document.getElementById('assign-entity-list').innerHTML = html;
         }).catch(function() { document.getElementById('assign-entity-list').innerHTML = '<p class="text-danger">Failed to load roles.</p>'; });
+    };
+    window.toggleSetupChecklist = function() {
+        var grid = document.getElementById('setup-steps-grid');
+        var icon = document.getElementById('checklist-toggle-icon');
+        if (!grid) return;
+        if (grid.style.display === 'none') {
+            grid.style.display = 'grid';
+            if (icon) icon.innerHTML = '&#9650;';
+        } else {
+            grid.style.display = 'none';
+            if (icon) icon.innerHTML = '&#9660;';
+        }
+    };
+    window.openWorkspaceFolderPicker = function() {
+        editProject();
+        var pathBtn = document.querySelector('#project-modal button[onclick*="openFolderPicker"]');
+        if (pathBtn) pathBtn.focus();
     };
     window.assignRoleToTask = function(taskId, roleName, btn) {
         btn.disabled = true; btn.textContent = '...';
@@ -965,26 +1065,47 @@
         } catch(err) { showToast('Sync error: ' + err.message, 'error'); }
     }
 
-    // --- Chat task creation ---
+    // --- Plan work (chat task creation) ---
     var chatInput = document.getElementById('chat-task-input');
     if (chatInput) {
         chatInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); createTaskFromChat(); }
         });
     }
+    var planRequestPending = false;
+    function setPlanError(message) {
+        var el = document.getElementById('chat-plan-error');
+        if (!el) return;
+        el.textContent = message || '';
+        el.style.display = message ? '' : 'none';
+    }
     async function createTaskFromChat() {
         var input = document.getElementById('chat-task-input');
-        if (!input) return;
+        var btn = document.getElementById('chat-plan-btn');
+        if (!input || planRequestPending) return;
         var text = input.value.trim();
-        if (!text) return;
+        if (!text) { setPlanError('Describe the work you want to plan.'); input.focus(); return; }
+        setPlanError('');
+        planRequestPending = true;
+        if (btn) { btn.disabled = true; btn.textContent = 'Planning\u2026'; }
         try {
             var resp = await fetch('/ui/tasks/chat-plan', { method: 'POST', headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID || ''}, body: JSON.stringify({ project_id: PROJECT_ID, message: text }) });
-            if (!resp.ok) { var error = await resp.json().catch(function() { return {}; }); throw new Error(error.detail || 'Failed to create backlog plan'); }
+            if (!resp.ok) { var error = await resp.json().catch(function() { return {}; }); throw new Error(error.detail || 'Failed to create the plan'); }
             var data = await resp.json();
             input.value = '';
-            showToast('Created ' + data.tasks.length + ' backlog cards', 'success');
+            var wrap = document.getElementById('plan-work-wrap');
+            var stageName = wrap && wrap.dataset.stageName ? wrap.dataset.stageName : 'Backlog';
+            showToast('Created ' + data.tasks.length + ' card' + (data.tasks.length === 1 ? '' : 's') + ' in ' + stageName, 'success');
             refreshBoardFromServer();
-        } catch(err) { showToast('Error: ' + err.message, 'error'); }
+        } catch(err) {
+            // Keep the entered text so the request can be retried after fixing
+            // the reported problem.
+            setPlanError(err.message);
+            input.focus();
+        } finally {
+            planRequestPending = false;
+            if (btn) { btn.disabled = false; btn.textContent = 'Plan work'; }
+        }
     }
 
     // --- WebSocket ---
@@ -1001,11 +1122,11 @@
             console.log('WS Message:', msg);
             if (msg.event_type === 'task_updated' || msg.event_type === 'task_moved') {
                 var data = msg.data;
-                var statusLabel = data.status ? data.status.replace('_', ' ') : 'Updated';
-                showToast('Task #' + data.task_id + ': ' + statusLabel, 'info', {background: true});
+                var label = data.status ? statusLabel(data.status) : 'Updated';
+                showToast('Task #' + data.task_id + ': ' + label, 'info', {background: true});
                 var badge = document.getElementById('status-task-' + data.task_id);
                 if (badge && data.status) {
-                    badge.className = 'badge badge-' + data.status; badge.textContent = statusLabel;
+                    badge.className = 'badge badge-' + data.status; badge.textContent = label;
                     badge.closest('.kanban-task-revamp').dataset.status = data.status;
                 }
                 if (msg.event_type === 'task_moved' || data.status === 'completed') { setTimeout(refreshBoardFromServer, 500); }
