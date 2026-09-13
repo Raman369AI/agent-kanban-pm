@@ -144,8 +144,10 @@
               <span>Worker: <strong>{{ setup_checklist.worker_name }}</strong> ({{ setup_checklist.worker_agent }})</span>
               {% elif not setup_checklist.has_folder %}
               <span class="text-muted">Prerequisite: choose a project folder first.</span>
+              {% elif setup_checklist.worker_configured %}
+              <span class="text-warning">Configured worker CLI is not on PATH. Install it or choose an available agent.</span>
               {% else %}
-              <span class="text-warning">Missing prerequisite: No worker CLI installed on PATH.</span>
+              <span class="text-warning">Missing prerequisite: Assign an available CLI to the worker role.</span>
               {% endif %}
             </div>
           </div>
@@ -185,20 +187,48 @@
             <div class="step-title">Start work</div>
             <div class="step-detail">
               {% if setup_checklist.has_started %}
-              <span class="text-success">Work execution in progress</span>
+              <span class="{% if 'failed' in setup_checklist.execution_message or 'blocked' in setup_checklist.execution_message %}text-warning{% else %}text-success{% endif %}">{{ setup_checklist.execution_message }}</span>
+              {% elif setup_checklist.execution_message %}
+              <span class="text-warning">{{ setup_checklist.execution_message }}</span>
+              {% elif not setup_checklist.has_folder %}
+              <span class="text-muted">Prerequisite: choose a project folder first.</span>
+              {% elif not setup_checklist.has_worker %}
+              <span class="text-muted">Prerequisite: configure an available worker first.</span>
               {% elif not setup_checklist.has_tasks %}
               <span class="text-muted">Prerequisite: create a task first.</span>
+              {% elif setup_checklist.first_todo_unassigned_task_id %}
+              <span class="text-warning">A task is queued in To Do. Assign the configured worker to launch it.</span>
+              {% elif setup_checklist.first_todo_assigned_task_id %}
+              <span class="text-warning">Task assigned; waiting for an agent session. Check Activity for blockers.</span>
+              {% elif setup_checklist.first_backlog_task_id %}
+              <span class="text-warning">Move a Backlog task to To Do, then assign the worker.</span>
               {% else %}
-              <span class="text-warning">Move a task to To Do or In Progress to begin execution.</span>
+              <span class="text-warning">No agent session yet. Queue a task in To Do and assign the worker.</span>
               {% endif %}
             </div>
           </div>
         </div>
         <div class="step-action">
-          {% if not setup_checklist.has_started and setup_checklist.has_tasks and setup_checklist.first_backlog_task_id %}
-          <button class="btn btn-sm btn-primary" type="button" onclick="moveToTodo({{ setup_checklist.first_backlog_task_id }})">Move to To Do</button>
-          {% elif setup_checklist.has_started %}
-          <span class="step-done-tag">&#10003; Started</span>
+          {% if setup_checklist.has_started or setup_checklist.execution_message %}
+          <a class="btn btn-sm btn-secondary" href="/ui/projects/{{ project.id }}/workbench">View Activity</a>
+          {% elif not setup_checklist.has_folder %}
+          <button class="btn btn-sm btn-primary" type="button" onclick="openWorkspaceFolderPicker()">Choose folder</button>
+          {% elif not setup_checklist.has_worker %}
+          <button class="btn btn-sm btn-primary" type="button" onclick="openTeamModal()">Configure worker</button>
+          {% elif not setup_checklist.has_tasks %}
+          <button class="btn btn-sm btn-primary" type="button" onclick="openNewTaskModal()">New task</button>
+          {% elif setup_checklist.first_todo_unassigned_task_id %}
+          <button class="btn btn-sm btn-primary" type="button" onclick="assignRoleToTask({{ setup_checklist.first_todo_unassigned_task_id }},'worker',this)">Assign worker</button>
+          {% elif setup_checklist.first_todo_assigned_task_id %}
+          <a class="btn btn-sm btn-secondary" href="/ui/projects/{{ project.id }}/workbench">View Activity</a>
+          {% elif setup_checklist.first_backlog_task_id %}
+          <button class="btn btn-sm btn-primary" type="button" onclick="moveToTodo({{ setup_checklist.first_backlog_task_id }},this)">Move to To Do</button>
+          {% else %}
+          {% if setup_checklist.todo_stage_id %}
+          <button class="btn btn-sm btn-primary" type="button" onclick="openAddTaskModal({{ setup_checklist.todo_stage_id }},'To Do')">New task in To Do</button>
+          {% else %}
+          <button class="btn btn-sm btn-primary" type="button" onclick="openNewTaskModal()">New task</button>
+          {% endif %}
           {% endif %}
         </div>
       </div>

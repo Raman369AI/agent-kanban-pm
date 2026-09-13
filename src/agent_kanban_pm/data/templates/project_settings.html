@@ -28,7 +28,7 @@
     </div>
     <div class="form-group mb-3">
       <label for="settings-desc" style="font-weight:600; font-size:0.85rem; display:block; margin-bottom:0.4rem;">Description</label>
-      <textarea id="settings-desc" class="form-input" rows="3" style="width:100%; max-width:500px;">{{ project.description }}</textarea>
+      <textarea id="settings-desc" class="form-input" rows="3" style="width:100%; max-width:500px;">{{ project.description or '' }}</textarea>
     </div>
     <div class="form-group mb-3">
       <label for="settings-path" style="font-weight:600; font-size:0.85rem; display:block; margin-bottom:0.4rem;">Workspace Folder</label>
@@ -172,28 +172,54 @@
     var val = document.getElementById('folder-picker-current').value.trim();
     if (val) loadFolder(val);
   }
+  var folderRequestSequence = 0;
   function loadFolder(path) {
+    var requestId = ++folderRequestSequence;
+    var input = document.getElementById('folder-picker-current');
+    var inputAtRequest = input.value;
     var query = path ? '?path=' + encodeURIComponent(path) : '';
-    apiFetch('/ui/api/browse-folders' + query, {}, 'Failed to load folders').then(function(data) {
-      folderPickerCurrent = data.current;
+    apiFetch('/ui/api/folders' + query, {}, 'Failed to load folders').then(function(data) {
+      if (requestId !== folderRequestSequence || input.value !== inputAtRequest) return;
+      folderPickerCurrent = data.path;
       folderPickerParent = data.parent;
       folderPickerHome = data.home;
-      document.getElementById('folder-picker-current').value = data.current;
+      document.getElementById('folder-picker-current').value = data.path;
       var list = document.getElementById('folder-picker-list');
+      list.replaceChildren();
       if (!data.folders || !data.folders.length) {
-        list.innerHTML = '<p class="folder-empty">No subdirectories found.</p>';
+        var empty = document.createElement('p');
+        empty.className = 'folder-empty';
+        empty.textContent = 'No subdirectories found.';
+        list.append(empty);
         return;
       }
-      var html = '';
-      data.folders.forEach(function(f) {
-        html += '<button type="button" class="folder-row" onclick="loadFolder(\'' + f.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\')">' +
-          '<span class="folder-icon">&#128193;</span>' +
-          '<div><div class="folder-name">' + f.name + '</div><div class="folder-path">' + f.path + '</div></div>' +
-          '</button>';
+      data.folders.forEach(function(folder) {
+        var row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'folder-row';
+        var icon = document.createElement('span');
+        icon.className = 'folder-icon';
+        icon.textContent = '📁';
+        var details = document.createElement('div');
+        var name = document.createElement('div');
+        name.className = 'folder-name';
+        name.textContent = folder.name;
+        var folderPath = document.createElement('div');
+        folderPath.className = 'folder-path';
+        folderPath.textContent = folder.path;
+        details.append(name, folderPath);
+        row.append(icon, details);
+        row.addEventListener('click', function() { loadFolder(folder.path); });
+        list.append(row);
       });
-      list.innerHTML = html;
     }).catch(function(err) {
-      document.getElementById('folder-picker-list').innerHTML = '<p class="text-danger p-3">Error: ' + err.message + '</p>';
+      if (requestId !== folderRequestSequence) return;
+      var list = document.getElementById('folder-picker-list');
+      list.replaceChildren();
+      var error = document.createElement('p');
+      error.className = 'text-danger p-3';
+      error.textContent = 'Error: ' + err.message;
+      list.append(error);
     });
   }
 </script>

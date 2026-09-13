@@ -618,6 +618,77 @@ def test_phase2_setup_checklist_and_navigation_e2e(
     assert page.url.endswith(f"/ui/projects/{pid}/settings")
     expect(page.locator(".project-sub-nav .sub-nav-pill.active")).to_contain_text("Settings")
 
+    # Settings Browse uses the same live folder API as the board.
+    page.get_by_role("button", name="Browse").click()
+    folder_dialog = page.get_by_role("dialog", name="Select Folder")
+    expect(folder_dialog).to_be_visible()
+    expect(folder_dialog.locator("#folder-picker-current")).not_to_have_value("")
+    folder_dialog.get_by_role("button", name="Use This Folder").click()
+    expect(folder_dialog).to_be_hidden()
+    expect(page.locator("#settings-path")).not_to_have_value("")
+
+    page.goto(f"{live_server}/ui/users")
+    expect(page.get_by_role("heading", name="Agents & Roles")).to_be_visible()
+    expect(page.get_by_role("columnheader", name="Current work")).to_be_visible()
+    page.get_by_role("button", name="Configure roles").click()
+    expect(page.locator("#role-editor-container")).to_be_visible()
+    expect(page.locator("#team-list .role-settings-row").first).to_be_visible()
+
+
+
+def test_phase2_folder_picker_ignores_stale_browse_response(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    home_data = api.get("/ui/api/folders").json()
+    target_path = home_data["parent"]
+    assert target_path and target_path != home_data["path"]
+
+    def check_picker(url: str, trigger: str, dialog_name: str, release_before_go: bool):
+        page.goto(url)
+        page.evaluate("""homeData => {
+            const fetchOriginal = window.fetch.bind(window);
+            window.fetch = (input, options) => {
+                const url = typeof input === 'string' ? input : input.url;
+                if (url === '/ui/api/folders') {
+                    return new Promise(resolve => {
+                        window.releaseOldFolderResponse = () => resolve(
+                            new Response(JSON.stringify(homeData), {
+                                status: 200,
+                                headers: {'Content-Type': 'application/json'}
+                            })
+                        );
+                    });
+                }
+                return fetchOriginal(input, options);
+            };
+        }""", home_data)
+        page.locator(trigger).click()
+        picker = page.get_by_role("dialog", name=dialog_name)
+        expect(picker).to_be_visible()
+        page.wait_for_function("typeof window.releaseOldFolderResponse === 'function'")
+        picker.locator("#folder-picker-current").fill(target_path)
+        if release_before_go:
+            page.evaluate("window.releaseOldFolderResponse()")
+            expect(picker.locator("#folder-picker-current")).to_have_value(target_path)
+        picker.get_by_role("button", name="Go").click()
+        expect(picker.locator("#folder-picker-current")).to_have_value(target_path)
+        if not release_before_go:
+            page.evaluate("window.releaseOldFolderResponse()")
+            expect(picker.locator("#folder-picker-current")).to_have_value(target_path)
+
+    check_picker(
+        f"{live_server}/ui/projects/{board['project_id']}/board",
+        "#step-choose-folder button",
+        "Select Project Folder",
+        True,
+    )
+    check_picker(
+        f"{live_server}/ui/projects/{board['project_id']}/settings",
+        "button:has-text('Browse')",
+        "Select Folder",
+        False,
+    )
 
 
 def test_phase1_viewport_theme_walkthrough(

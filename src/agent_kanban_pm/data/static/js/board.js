@@ -499,11 +499,16 @@
         loadFolder(folderPickerTarget.value || '');
     }
     function loadFolderFromInput() { loadFolder(document.getElementById('folder-picker-current').value); }
+    var folderRequestSequence = 0;
     function loadFolder(path) {
+        var requestId = ++folderRequestSequence;
+        var input = document.getElementById('folder-picker-current');
+        var inputAtRequest = input.value;
         var url = '/ui/api/folders' + (path ? '?path=' + encodeURIComponent(path) : '');
         document.getElementById('folder-picker-list').innerHTML = '<p class="text-secondary">Loading...</p>';
         apiFetch(url, {}, 'Failed to load folders')
             .then(function(data) {
+                if (requestId !== folderRequestSequence || input.value !== inputAtRequest) return;
                 folderPickerCurrent = data.path;
                 folderPickerParent = data.parent;
                 folderPickerHome = data.home;
@@ -514,7 +519,10 @@
                     return '<button type="button" class="entity-item" style="width:100%;text-align:left;border:0;background:transparent;cursor:pointer;" onclick="loadFolder(' + escapeHtml(JSON.stringify(folder.path)) + ')"><strong>' + escapeHtml(folder.name) + '</strong><div class="text-secondary"><small>' + escapeHtml(folder.path) + '</small></div></button>';
                 }).join('');
             })
-            .catch(function(err) { document.getElementById('folder-picker-list').innerHTML = '<p class="text-danger">' + escapeHtml(err.message) + '</p>'; });
+            .catch(function(err) {
+                if (requestId !== folderRequestSequence) return;
+                document.getElementById('folder-picker-list').innerHTML = '<p class="text-danger">' + escapeHtml(err.message) + '</p>';
+            });
     }
     function selectCurrentFolder() { if (folderPickerTarget) folderPickerTarget.value = folderPickerCurrent; closeFolderPicker(); }
     function escapeHtml(value) {
@@ -681,26 +689,20 @@
         var todoZone = todoCol.querySelector('.kanban-drop-zone-revamp');
         var todoStageId = todoZone.dataset.stageId;
         var card = document.getElementById('task-card-' + taskId);
-        var oldZone = card.parentElement;
-        var oldStageId = card.dataset.currentStage;
-        if (oldStageId === todoStageId) return;
-        btn.disabled = true;
+        if (!card) { showToast('Task card not found', 'error'); return; }
+        if (card.dataset.currentStage === todoStageId) return;
+        if (btn) btn.disabled = true;
         apiFetch('/ui/tasks/' + taskId + '/move', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
             body: JSON.stringify({ stage_id: parseInt(todoStageId), status: 'pending', summary: 'Moved from Backlog to To Do' })
         }, 'Failed to move task').then(function() {
-            clearPlaceholder(todoZone);
-            todoZone.appendChild(card);
-            card.dataset.currentStage = todoStageId;
-            addPlaceholderIfEmpty(oldZone);
-            updateColumnCount(oldStageId, -1);
-            updateColumnCount(todoStageId, 1);
-            btn.remove();
-            showToast('Task moved to To Do', 'success');
+            showToast('Task moved to To Do. Assign a worker to start it.', 'success');
+            return refreshBoardFromServer();
         }).catch(function(err) {
-            btn.disabled = false;
             showToast('Failed: ' + err.message, 'error');
+        }).finally(function() {
+            if (btn && btn.isConnected) btn.disabled = false;
         });
     };
 
@@ -809,6 +811,18 @@
                 var scrollPositions = Array.from(board.querySelectorAll('.kanban-container-revamp, .kanban-drop-zone-revamp'))
                     .map(function(el) { return {stage: el.dataset.stageId, top: el.scrollTop, left: el.scrollLeft}; });
                 board.replaceWith(freshBoard);
+                var checklist = document.getElementById('project-setup-checklist');
+                var freshChecklist = doc.getElementById('project-setup-checklist');
+                if (checklist && freshChecklist) {
+                    var oldGrid = checklist.querySelector('#setup-steps-grid');
+                    var nextGrid = freshChecklist.querySelector('#setup-steps-grid');
+                    if (oldGrid && nextGrid && oldGrid.style.display === 'none') {
+                        nextGrid.style.display = 'none';
+                        var nextIcon = freshChecklist.querySelector('#checklist-toggle-icon');
+                        if (nextIcon) nextIcon.innerHTML = '&#9660;';
+                    }
+                    checklist.replaceWith(freshChecklist);
+                }
                 initDragDrop();
                 initExpandedCards();
                 fetchAgentApprovals();
@@ -834,6 +848,7 @@
             });
         return boardRefreshInFlight;
     }
+    window.refreshBoardFromServer = refreshBoardFromServer;
     var taskFormPending = false;
     window.submitTaskForm = function(btn) {
         if (taskFormPending) return;
@@ -904,8 +919,7 @@
     };
     window.openWorkspaceFolderPicker = function() {
         editProject();
-        var pathBtn = document.querySelector('#project-modal button[onclick*="openFolderPicker"]');
-        if (pathBtn) pathBtn.focus();
+        openFolderPicker('project-form-path');
     };
     window.assignRoleToTask = function(taskId, roleName, btn) {
         btn.disabled = true; btn.textContent = '...';

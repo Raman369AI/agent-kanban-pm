@@ -15,7 +15,8 @@ import re
 from agent_kanban_pm.db import get_db
 from agent_kanban_pm.models import (
     Project, Task, Entity, Stage, Comment, EntityType, TaskStatus, ApprovalStatus,
-    TaskLog, ProjectWorkspace, Role, OrchestrationDecision, DecisionType
+    TaskLog, ProjectWorkspace, Role, OrchestrationDecision, DecisionType,
+    AgentSession, AgentSessionStatus,
 )
 from agent_kanban_pm.schemas import ProjectResponse, ChatPlanRequest, TaskCreate, TaskUpdate
 from agent_kanban_pm.auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
@@ -70,6 +71,7 @@ def _role_to_entity_role(role_name: str) -> Role:
 
 
 async def _role_assignment_payload():
+    import shutil
     from agent_kanban_pm.runtime.preferences import load_preferences
     from agent_kanban_pm.runtime.adapter_loader import load_all_adapters, discover_popular_clis
 
@@ -94,7 +96,7 @@ async def _role_assignment_payload():
             "model": assignment.model or (models[0] if models else "default"),
             "models": models,
             "source": "adapter" if adapter else "standalone",
-            "installed": command in discovered and discovered[command].installed or bool(adapter and __import__("shutil").which(command)),
+            "installed": shutil.which(command) is not None,
         })
 
     candidates = []
@@ -105,7 +107,7 @@ async def _role_assignment_payload():
             "command": adapter.invoke.command,
             "source": "adapter",
             "models": [m.id for m in adapter.models],
-            "installed": __import__("shutil").which(adapter.invoke.command) is not None,
+            "installed": shutil.which(adapter.invoke.command) is not None,
         })
     for cli in discovered.values():
         if cli.command not in {adapter.invoke.command for adapter in adapters.values()}:
@@ -366,62 +368,78 @@ async def project_kanban_board(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Project setup checklist derivation:
-    # 1. Choose folder: project.path is set
-    # 2. Configure worker: at least one role is assigned and installed
-    # 3. Create task: at least one task exists
-    # 4. Start work: at least one task has started (in_progress, in_review, completed)
-    from agent_kanban_pm.runtime.preferences import load_preferences
-    from agent_kanban_pm.runtime.adapter_loader import load_all_adapters, discover_popular_clis
-    import shutil
-
-    prefs = load_preferences()
-    role_assignments = prefs.get_role_assignments() if prefs else {}
-    adapters = {a.name: a for a in load_all_adapters()}
-    discovered = {c.command: c for c in discover_popular_clis()}
-
+    # A worker is ready only when the configured worker CLI is available.
+    # Task stage alone cannot prove execution: use durable agent sessions.
+    role_data = await _role_assignment_payload()
+    worker_role = next((role for role in role_data["roles"] if role["role"] == "worker"), None)
     has_folder = bool(project.path and project.path.strip())
+    has_worker = bool(worker_role and worker_role["installed"])
 
-    worker_assignment = role_assignments.get("worker")
-    worker_installed = False
-    worker_agent = None
-    worker_name = None
-    if worker_assignment:
-        worker_agent = worker_assignment.agent
-        w_adapter = adapters.get(worker_agent)
-        w_cmd = w_adapter.invoke.command if w_adapter else (worker_assignment.command or worker_agent)
-        worker_name = w_adapter.display_name if w_adapter else (worker_assignment.display_name or worker_agent)
-        worker_installed = (w_cmd in discovered and discovered[w_cmd].installed) or bool(w_adapter and shutil.which(w_cmd)) or bool(shutil.which(w_cmd))
-    else:
-        for r_name, r_assign in role_assignments.items():
-            r_ad = adapters.get(r_assign.agent)
-            r_cmd = r_ad.invoke.command if r_ad else (r_assign.command or r_assign.agent)
-            if (r_cmd in discovered and discovered[r_cmd].installed) or bool(r_ad and shutil.which(r_cmd)) or bool(shutil.which(r_cmd)):
-                worker_installed = True
-                worker_agent = r_assign.agent
-                worker_name = r_ad.display_name if r_ad else r_assign.agent
-                break
+    all_tasks = [task for stage in project.stages for task in stage.tasks]
+    session_result = await db.execute(
+        select(AgentSession)
+        .where(AgentSession.project_id == project_id, AgentSession.task_id.is_not(None))
+        .order_by(AgentSession.started_at.desc(), AgentSession.id.desc())
+    )
+    sessions = session_result.scalars().all()
+    has_started = any(
+        session.status in (
+            AgentSessionStatus.ACTIVE,
+            AgentSessionStatus.IDLE,
+            AgentSessionStatus.BLOCKED,
+            AgentSessionStatus.DONE,
+        )
+        for session in sessions
+    )
+    execution_message = None
+    if sessions:
+        latest = sessions[0]
+        if latest.status == AgentSessionStatus.ERROR:
+            execution_message = f"Agent session failed for task #{latest.task_id}. Check Activity."
+        elif latest.status == AgentSessionStatus.BLOCKED:
+            execution_message = f"Agent session blocked on task #{latest.task_id}. Check Activity."
+        elif latest.status == AgentSessionStatus.DONE:
+            execution_message = f"Agent session finished for task #{latest.task_id}."
+        elif latest.status == AgentSessionStatus.STARTING:
+            execution_message = f"Agent starting task #{latest.task_id}."
+        else:
+            execution_message = f"Agent session active on task #{latest.task_id}."
 
-    all_tasks = [t for s in project.stages for t in s.tasks]
-    has_tasks = len(all_tasks) > 0
-    has_started = any(t.status.value in ("in_progress", "in_review", "completed") for t in all_tasks)
+    first_backlog_task_id = next(
+        (task.id for stage in project.stages if stage.key == "backlog" for task in stage.tasks),
+        None,
+    )
+    def has_worker_assignee(task: Task) -> bool:
+        return bool(worker_role and any(
+            assignee.entity_type == EntityType.AGENT and assignee.name == worker_role["agent"]
+            for assignee in task.assignees
+        ))
 
-    first_backlog_task_id = None
-    for s in project.stages:
-        if s.key == "backlog" and s.tasks:
-            first_backlog_task_id = s.tasks[0].id
-            break
-
-    completed_count = sum([has_folder, worker_installed, has_tasks, has_started])
+    first_todo_unassigned_task_id = next(
+        (task.id for stage in project.stages if stage.key == "to_do"
+         for task in stage.tasks if not has_worker_assignee(task)),
+        None,
+    )
+    first_todo_assigned_task_id = next(
+        (task.id for stage in project.stages if stage.key == "to_do"
+         for task in stage.tasks if has_worker_assignee(task)),
+        None,
+    )
+    completed_count = sum((has_folder, has_worker, bool(all_tasks), has_started))
     setup_checklist = {
         "has_folder": has_folder,
-        "has_worker": worker_installed,
-        "worker_agent": worker_agent or "None",
-        "worker_name": worker_name or "Not configured",
-        "has_tasks": has_tasks,
+        "has_worker": has_worker,
+        "worker_configured": worker_role is not None,
+        "worker_agent": worker_role["agent"] if worker_role else "None",
+        "worker_name": worker_role["display_name"] if worker_role else "Not configured",
+        "has_tasks": bool(all_tasks),
         "task_count": len(all_tasks),
         "has_started": has_started,
+        "execution_message": execution_message,
         "first_backlog_task_id": first_backlog_task_id,
+        "todo_stage_id": next((stage.id for stage in project.stages if stage.key == "to_do"), None),
+        "first_todo_unassigned_task_id": first_todo_unassigned_task_id,
+        "first_todo_assigned_task_id": first_todo_assigned_task_id,
         "completed_count": completed_count,
         "all_complete": completed_count == 4,
     }
@@ -1458,17 +1476,46 @@ async def ui_create_project(
 
 @router.get("/ui/users", response_class=HTMLResponse)
 async def ui_users(request: Request, db: AsyncSession = Depends(get_db)):
-    """List all registered users and agent roles"""
+    """Show configured roles, CLI availability, and current agent work."""
     result = await db.execute(select(Entity).order_by(Entity.created_at.desc()))
     users = result.scalars().all()
     role_payload = await _role_assignment_payload()
-    from agent_kanban_pm.runtime.preferences import load_preferences
-    prefs = load_preferences()
-    manager_agent = prefs.manager.agent if prefs and prefs.manager else None
+    from agent_kanban_pm.runtime.preferences import get_manager_agent_name
+    manager_agent = get_manager_agent_name()
+
+    active_result = await db.execute(
+        select(AgentSession)
+        .where(
+            AgentSession.ended_at.is_(None),
+            AgentSession.status.in_([
+                AgentSessionStatus.STARTING,
+                AgentSessionStatus.ACTIVE,
+                AgentSessionStatus.IDLE,
+                AgentSessionStatus.BLOCKED,
+            ]),
+        )
+        .options(
+            selectinload(AgentSession.agent),
+            selectinload(AgentSession.task),
+            selectinload(AgentSession.project),
+        )
+        .order_by(AgentSession.started_at.desc(), AgentSession.id.desc())
+    )
+    current_work = {}
+    for session in active_result.scalars():
+        if session.agent.name not in current_work:
+            current_work[session.agent.name] = {
+                "task_id": session.task_id,
+                "task_title": session.task.title if session.task else None,
+                "project_id": session.project_id,
+                "project_name": session.project.name if session.project else None,
+                "status": session.status.value,
+            }
 
     return templates.TemplateResponse(request, "users.html", {
         "request": request,
         "users": users,
         "role_payload": role_payload,
         "manager_agent": manager_agent,
+        "current_work": current_work,
     })

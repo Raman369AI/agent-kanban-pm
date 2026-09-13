@@ -32,6 +32,7 @@
                     <th>Model</th>
                     <th>Mode</th>
                     <th>Availability</th>
+                    <th>Current work</th>
                     <th>Role Type</th>
                 </tr>
             </thead>
@@ -52,7 +53,16 @@
                         {% endif %}
                     </td>
                     <td>
-                        {% if manager_agent and (r.agent == manager_agent or r.role == 'manager') %}
+                        {% set work = current_work.get(r.agent) %}
+                        {% if work %}
+                        <a href="/ui/projects/{{ work.project_id }}/workbench" title="{{ work.project_name }} · {{ work.status }}">{{ work.task_title or 'Project session' }}</a>
+                        <small class="text-secondary d-block">{{ work.status | capitalize }}</small>
+                        {% else %}
+                        <span class="text-secondary">Idle</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if r.role in ('orchestrator', 'manager') %}
                         <span class="badge badge-warning" style="font-size:0.68rem;">Manager</span>
                         {% else %}
                         <span class="text-secondary" style="font-size:0.82rem;">Worker</span>
@@ -62,7 +72,7 @@
                 {% endfor %}
                 {% else %}
                 <tr>
-                    <td colspan="7" class="text-center text-secondary py-3">No roles configured. Click Configure roles above to assign agent CLIs.</td>
+                    <td colspan="8" class="text-center text-secondary py-3">No roles configured. Click Configure roles above to assign agent CLIs.</td>
                 </tr>
                 {% endif %}
             </tbody>
@@ -94,7 +104,7 @@
                     <th>Type</th>
                     <th>Email / ID</th>
                     <th>Skills</th>
-                    <th>Status</th>
+                    <th>Registration</th>
                 </tr>
             </thead>
             <tbody>
@@ -102,7 +112,7 @@
                 <tr>
                     <td>
                         <strong>{{ user.name }}</strong>
-                        {% if (manager_agent and user.name == manager_agent) or user.role.value == 'manager' %}
+                        {% if manager_agent and user.name == manager_agent %}
                         <span class="badge badge-warning" style="font-size: 0.65rem; margin-left: 0.35rem;">MANAGER</span>
                         {% endif %}
                     </td>
@@ -123,8 +133,8 @@
                     </td>
                     <td>
                         <div style="display: flex; align-items: center; gap: 0.4rem;">
-                            <span class="status-indicator {% if user.is_active %}status-online{% else %}status-offline{% endif %}"></span>
-                            <span style="font-size: 0.85rem; font-weight: 500;">{{ 'Active' if user.is_active else 'Inactive' }}</span>
+                            <span class="status-indicator {% if user.is_active %}status-enabled{% else %}status-disabled{% endif %}"></span>
+                            <span style="font-size: 0.85rem; font-weight: 500;">{{ 'Enabled' if user.is_active else 'Disabled' }}</span>
                         </div>
                     </td>
                 </tr>
@@ -143,22 +153,8 @@
         transition: all 0.3s ease;
     }
 
-    .status-online {
-        background-color: var(--success);
-        box-shadow: 0 0 10px rgba(var(--success-rgb), 0.6);
-        animation: pulse-online 2s infinite;
-    }
-
-    @keyframes pulse-online {
-        0% { transform: scale(1); opacity: 1; }
-        50% { transform: scale(1.2); opacity: 0.8; }
-        100% { transform: scale(1); opacity: 1; }
-    }
-
-    .status-offline {
-        background-color: var(--danger);
-        box-shadow: 0 0 6px rgba(239, 68, 68, 0.3);
-    }
+    .status-enabled { background-color: var(--success); }
+    .status-disabled { background-color: var(--danger); }
 </style>
 {% endblock %}
 
@@ -167,6 +163,8 @@
 <script>
     var CURRENT_ENTITY_ID = {{ (current_entity.id if current_entity else 'null') }};
     var roleEditorLoaded = false;
+    var roleEditorDirty = false;
+    window.onRoleSettingsSaved = function() { roleEditorDirty = true; };
 
     function toggleRoleEditor() {
         var container = document.getElementById('role-editor-container');
@@ -188,6 +186,10 @@
                 });
             }
         } else {
+            if (roleEditorDirty) {
+                window.location.reload();
+                return;
+            }
             container.style.display = 'none';
             if (btnText) btnText.textContent = 'Configure roles';
         }

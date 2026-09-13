@@ -1,9 +1,10 @@
 # UI improvement plan
 
 Status: Phase 1 implementation and phase-specific browser validation complete
-(2026-09-12). Phase 2 implementation is in progress; Phases 3–5 have not started.
+and committed as `ff8c81b` (2026-09-12). Phase 2 implementation and
+validation are complete (2026-09-12); Phases 3–5 have not started.
 
-Phase 1 verification: 227 tests pass, including 17 Chromium browser tests.
+Phase 1 verification: 227 tests passed, including 17 Chromium browser tests.
 Navigation and creation controls were checked at 1440px, 1024px, 768px, and
 390px; 200% phone zoom was emulated with a 195px CSS viewport and device pixel
 ratio 2. Light, dark, blue, and rose themes, keyboard and touch actions, slow
@@ -82,6 +83,19 @@ Primary files: `data/templates/base.html`, `data/templates/kanban_board.html`,
 ## Phase 2 — Guide setup and unify navigation
 
 Priority: High. Depends on Phase 1 navigation work.
+
+Validation update (2026-09-12): Phase 2 acceptance criteria are met. The
+four-step setup guide, unified project navigation, Settings page, empty
+assignment action, and consolidated Agents & Roles page are implemented. The
+guide checks the configured worker CLI and durable agent sessions, queues a
+Backlog task before offering worker assignment, and links failed or blocked
+sessions to Activity. Folder pickers use the live API and preserve user input
+when browse responses arrive out of order. An isolated Chromium walkthrough
+used a throwaway database, HOME, workspace, CLI stub, and tmux socket to choose
+a folder, configure the worker, create and queue a task, assign the worker,
+and verify both an ACTIVE durable session and a running CLI marker. The full
+suite passes (230 tests, including 19 Chromium browser tests); JavaScript
+syntax and diff checks pass.
 
 - Add a project setup checklist: **Choose folder → Configure worker → Create
   task → Start work**. Derive completion from actual configuration and task
