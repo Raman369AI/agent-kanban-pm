@@ -2,7 +2,7 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
-Status: release candidate (`0.4.0rc8`) for local, single-user development.
+Status: release candidate (`0.4.0rc9`) for local, single-user development.
 The local runtime, board UI, per-task agent sessions, and MCP surface work and
 are covered by tests, including a database upgrade path. It is a single-operator
 tool by design: one shared token guards the local server, so do not expose it to
@@ -68,21 +68,46 @@ kanban run --no-supervisor    # server + UI only
 - UI: `http://localhost:8000/ui/projects`
 - API docs: `http://localhost:8000/docs`
 
+## Using the UI
+
+1. Open **Projects**, create a project, and choose its workspace folder in
+   the setup guide.
+2. Open **Agents & roles** to configure an available worker. Use **New task**
+   to create one card, then **Move to To Do** and assign the worker to start
+   execution. **Activity** shows whether the session is queued, running,
+   blocked, or failed.
+3. Open a task card to read its description, change its stage, inspect output,
+   or answer a pending approval. The dashboard's **Needs attention** list and
+   the board's **Needs me** filter take you directly to tasks waiting for a
+   decision.
+4. Use **Plan work** for a larger request. Review and edit the proposed cards,
+   remove or deselect any you do not want, then choose **Create selected
+   tasks**. Canceling the preview creates nothing.
+
 ## Board controls
 
-Cards can be moved with drag-and-drop or entirely from the keyboard. Press
-`Tab` until a card is focused, then use `Left Arrow` or `Right Arrow` to
-move it to the adjacent stage. Task and approval dialogs keep focus inside the
-dialog, close with `Escape`, and return focus to the control that opened them.
+Click a card to open its task panel. Its link includes the task ID, so it
+can be shared or bookmarked; browser Back closes the panel. Overview shows the
+current task and execution state, while the other tabs contain approvals,
+activity, terminal output, logs, and reviews. An edit draft stays intact
+during a live refresh; if someone else changes the task, saving reports the
+conflict.
 
-The layout toggle (columns or a stacked list) and the density selector are
-remembered across reloads. Live board refreshes keep the focused card, its
-expanded tab, and column scroll positions, and wait until an in-flight drag or
-move has settled.
+Search by task title, ID, or #ID. Filters for **Needs me**, **Blocked**,
+**Running**, **Unassigned**, agent, and priority use pending approvals and the
+latest durable agent session where relevant. Matching counts and **Clear
+filters** distinguish an empty project from a filter with no results. The
+connection label shows when data is refreshing or reconnecting and returns to
+**Live** after a successful refresh.
 
-Server validation and authorization details are shown in the UI toast instead
-of being replaced by a generic “Failed” message. A rejected move is rolled back
-to its original column.
+Cards can be moved by drag-and-drop, the stage selector in the task panel,
+or keyboard. Press `Tab` until a card is focused, then use `Left Arrow` or
+`Right Arrow` to move it to the adjacent stage. Dialogs keep focus inside,
+close with `Escape`, and restore focus to their opener.
+
+**Board view** and **List view** are remembered across reloads. Theme and
+density live under **Appearance**. A rejected move returns the card to its
+original stage and shows the server's reason.
 
 ## CLI
 
@@ -300,33 +325,11 @@ the packaged runtime.
 
 ## Roadmap
 
-See [PLAN.md](PLAN.md) for the full roadmap to a standalone, fully available
-release. Each phase is releasable on its own.
-
-- [x] **Phase 0 — Stabilize** (done): failing UI test fixed, CI installs the
-  package and smoke-tests the built wheel, single-sourced dependencies,
-  `.env.example` documents real env vars, dev-artifact name heuristics
-  replaced with a `Project.is_demo` flag.
-- [x] **Phase 1 — Packaging correctness**: `src/` layout, declared `mcp`
-  dependency, install-safe data home.
-- [x] **Phase 2 — Security hardening**: `/ui` mutations require the token,
-  HttpOnly cookie + CSRF header, Host-header validation, token file is
-  `0600`, supervised-by-default autonomy with explicit `auto` opt-in,
-  WebSocket token verification.
-- [ ] **Phase 3 — Runtime correctness**: async subprocess handling, atomic
-  launch admission, MCP identity freshness, endpoint discovery, shutdown
-  cleanup, and a shared task-mutation service have landed. Project, session,
-  and approval services, MCP tool modularization, launcher decomposition, and
-  Alembic migrations are still outstanding.
-- [ ] **Phase 4 — Product surface & docs**: the support matrix, community
-  scaffolding, browser workflow coverage, and extraction of the board's
-  scripts and styles have landed. Landing-page visuals, the mkdocs site,
-  coverage reporting, and extracting the remaining templates are still
-  outstanding.
-- [ ] **Phase 5 — Release & distribution**: `0.4.0rc8` is on PyPI and GitHub,
-  published from a git tag by a workflow that authenticates through PyPI
-  trusted publishing, with a weekly job that installs the released package to
-  catch breakage. A stable `0.4.0` is what remains.
+This release candidate completes the guided UI workflow and browser
+coverage for setup, execution, approvals, review, search, and planning
+preview. Before a stable 0.4.0 release, the remaining priorities are runtime
+service extraction and migrations, fuller documentation, and release
+validation across supported platforms.
 
 ## Security
 

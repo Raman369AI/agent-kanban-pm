@@ -9,16 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **Task creation has two explicit entry points** — the header mixed a single-task form and a multi-card planner into one "Add a task" input, and its inline `onkeydown` plus the script-level Enter handler each fired the same request, so one key press created the plan twice. The board now offers **New task** (a dialog with a visible destination-stage selector) and **Plan work** (labelled with the stage its proposed cards land in). Both submit through a pending guard, keep the entered text on failure, and show the server's error beside the field instead of only in a toast.
-- **Global navigation works at tablet and phone widths** — below 992px the stylesheet zeroed the sidebar width, including its internal toggle, leaving no way to reach Dashboard, Projects, or Team. A header menu button now opens the sidebar as a drawer with a backdrop, closable with Escape or a navigation click. The drawer keeps readable labels with a saved collapsed desktop sidebar, cannot take keyboard focus while closed, and clears its backdrop when the viewport grows to desktop width.
-- **Task creation controls fit tablet and zoomed phone layouts** — the Plan work field no longer shrinks to an unusable width at 1024px with the sidebar open; the shared header and board creation controls stay within a 200% phone zoom-equivalent viewport.
-- **Task actions are reachable by keyboard and touch** — the Edit/Delete buttons appeared only on pointer hover (opacity 0), so keyboard and touch users could not see them. Actions now also reveal on `:focus-within` and stay visible on touch screens, and Delete moved into an accessible overflow menu (`aria-haspopup`, Escape closes and restores focus).
+## [0.4.0rc9] — 2026-09-12
+
+### Added
+- **A guided first-project flow** shows the next step for choosing a folder, configuring an available worker, creating a task, and starting work. Project pages share Board, Activity, Changes, and Settings navigation; Agents & roles shows configured tools and availability.
+- **A task detail workspace** opens from a board card or direct task link. Overview shows description, owner, priority, stage, execution state, blockers, and the next action; secondary tabs show approvals, activity, terminal output, logs, and reviews.
+- **Board search and attention filters** find tasks by title or ID and isolate decisions, blocked work, running sessions, unassigned tasks, agents, and priority. The dashboard links pending approvals, failed sessions, and review-ready tasks to their cards; project cards show progress and attention counts.
+- **A Plan work preview** lets users edit, remove, or deselect proposed cards before creation. Preparing a preview does not create tasks or write workspace files, and confirmation creates only the selected cards.
 
 ### Changed
-- **The backlog "Approve" action is now "Move to To Do"** — the old label implied an approval decision; it only moves the card. Approval language is reserved for actual agent approval requests.
-- **Task cards show readable status labels** — badges render "In progress" or "In review" instead of the raw `in_progress`/`in_review` enum values, in both server-rendered markup and live WebSocket updates (`status_label` template filter, shared JS label map).
-- **The Stage Policy dialog describes the real handoff behavior** — it claimed "the server never auto-assigns or auto-moves cards", but the runtime does move cards when a session reports handoff ready (To Do/In Progress → Review, finished test/diff review → Done) and assigns the next stage's expected roles. The copy now matches the runtime.
+- **Board and List are labeled views**, with theme and density under Appearance. Task titles and supporting text are larger, shared cards use quieter surfaces, and dashboard status labels are readable.
+- **New task and Plan work are separate actions** with a visible destination stage. Moving a Backlog card to To Do is labeled as a move, leaving approval language for actual approval requests.
+
+### Fixed
+- **Task creation is guarded against repeat submission** and keeps input after a failed request. Mobile navigation, task actions, and creation controls remain reachable by keyboard, touch, and narrow or zoomed viewports.
+- **Live updates keep task context**: the open panel, selected tab, board position, filters, and unsaved edit draft survive refresh. Concurrent task edits report a conflict instead of silently overwriting newer work. Reconnecting is shown until the board refresh succeeds.
+- **Stage policy copy reflects execution handoff behavior**, and board and dashboard badges show human-readable task status.
 
 ## [0.4.0rc8] — 2026-09-11
 
