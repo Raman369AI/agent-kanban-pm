@@ -76,25 +76,6 @@
         color: var(--text-muted);
     }
 
-    .btn-sync {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.6rem 1.2rem;
-        background: var(--purple-main);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        cursor: pointer;
-        font-weight: 500;
-        transition: opacity 0.2s;
-    }
-
-    .btn-sync:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-    }
-
     .stats-row {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -283,18 +264,14 @@
 </style>
 
 <style>
-  .project-sub-nav{display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap;}
-  .sub-nav-pill{padding:0.4rem 1.1rem;border-radius:99px;text-decoration:none;font-size:0.82rem;font-weight:600;border:1px solid var(--glass-border);color:var(--text-secondary);background:var(--glass-bg);transition:all 0.2s;}
-  .sub-nav-pill:hover{background:rgba(var(--accent-primary-rgb),0.08);color:var(--text-primary);}
-  .sub-nav-pill.active{background:var(--accent-primary);color:#fff;border-color:var(--accent-primary);}
   .badge-merged{background:rgba(124,58,237,0.12);color:#7c3aed;border:1px solid rgba(124,58,237,0.25);}
   .badge-committed{background:rgba(var(--accent-primary-rgb),0.1);color:var(--accent-primary);}
 </style>
 <div class="project-sub-nav">
-  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">&#128203; Board</a>
-  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">&#9889; Activity</a>
-  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill active" aria-current="page">&#128260; Changes</a>
-  <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">&#9881;&#65039; Settings</a>
+  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">Board</a>
+  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">Activity</a>
+  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill active" aria-current="page">Changes</a>
+  <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">Settings</a>
 </div>
 
 <div class="git-header">
@@ -304,7 +281,7 @@
     </div>
     <div class="sync-controls">
         <span id="last-sync-time">Loading sync status...</span>
-        <button id="sync-btn" class="btn-sync">
+        <button id="sync-btn" class="btn btn-primary">
             <span class="icon">⇄</span>
             <span class="text">Sync Now</span>
         </button>

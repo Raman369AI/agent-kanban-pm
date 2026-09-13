@@ -210,33 +210,10 @@
     opacity: 1;
 }
 
-.btn-icon-sm {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    border: 1px solid var(--glass-border);
-    background: var(--glass-bg);
-    backdrop-filter: blur(8px);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
-    transition: all 0.2s;
-    font-size: 0.85rem;
-}
-
-.btn-icon-sm:hover {
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    color: white;
-    border-color: transparent;
-    transform: scale(1.1);
-    box-shadow: 0 4px 10px rgba(var(--accent-primary-rgb), 0.3);
-}
-
 .btn-danger-sm:hover {
-    background: linear-gradient(135deg, var(--danger), #dc2626);
-    border-color: transparent;
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+    border-color: var(--danger);
 }
 
 /* Badges & Meta */
@@ -306,60 +283,33 @@
     gap: 0.5rem;
 }
 
-.btn-link {
-    background: rgba(var(--accent-primary-rgb), 0.05);
-    border: 1px solid rgba(var(--accent-primary-rgb), 0.1);
-    color: var(--accent-primary);
-    font-size: 0.75rem;
-    font-weight: 700;
-    cursor: pointer;
-    padding: 0.4rem 0.85rem;
-    border-radius: var(--radius);
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-}
-
-.btn-link:hover {
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    color: white;
-    text-decoration: none;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 14px rgba(var(--accent-primary-rgb), 0.3);
-    border-color: transparent;
-}
-
 /* Create Button */
 .btn-add-task {
-    background: rgba(var(--accent-primary-rgb), 0.02);
-    border: 2px dashed rgba(var(--accent-primary-rgb), 0.2);
-    width: calc(100% - 2rem);
-    margin: 0 1rem 1rem 1rem;
-    padding: 0.85rem;
-    color: var(--text-secondary);
-    font-weight: 700;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-    border-radius: var(--radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
+    width: calc(100% - 2rem);
+    min-height: var(--control-height);
+    margin: 0 1rem 1rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--control-radius);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
 }
-
 .btn-add-task span {
-    font-size: 1.3rem;
+    font-size: 1rem;
     line-height: 1;
 }
-
 .btn-add-task:hover {
-    background: rgba(var(--accent-primary-rgb), 0.08);
+    background: rgba(var(--accent-primary-rgb), 0.06);
     border-color: var(--accent-primary);
     color: var(--accent-primary);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 20px -4px rgba(var(--accent-primary-rgb), 0.15);
 }
 
 /* Empty Placeholder */

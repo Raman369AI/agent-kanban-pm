@@ -16,7 +16,6 @@ The supervisor is started by `kanban run` and:
 import os
 import sys
 import json
-import re
 import shutil
 import signal
 import subprocess
@@ -25,7 +24,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
 from agent_kanban_pm.runtime.preferences import (
@@ -44,6 +43,7 @@ from agent_kanban_pm.runtime.process_launcher import (
     start_session,
     capture_pane,
     send_text,
+    send_prompt_reply,
 )
 from agent_kanban_pm.runtime.instance import get_tmux_prefix, get_mcp_config_dir
 
@@ -53,11 +53,7 @@ TMUX_SESSION_PREFIX = "kanban"
 
 # Prompt patterns are now loaded from agent_kanban_pm.runtime.prompt_patterns which
 # merges builtin, adapter YAML, and user-defined patterns.
-from agent_kanban_pm.runtime.prompt_patterns import (  # noqa: E402
-    PROMPT_PATTERNS,
-    detect_prompt,
-    load_patterns,
-)
+from agent_kanban_pm.runtime.prompt_patterns import approval_label, approval_message, detect_prompt  # noqa: E402
 
 
 @dataclass
@@ -85,25 +81,6 @@ def tmux_capture_pane(session_name: str, lines: int = 50) -> str:
 def tmux_send_text(session_name: str, text: str, press_enter: bool = True) -> None:
     """Send literal text to a session, optionally followed by Enter."""
     send_text(session_name, text, press_enter)
-
-
-def detect_prompt(pane_text: str) -> Optional[Tuple[str, str, str, str]]:
-    """Return (matched_line, approval_type, approve_reply, reject_reply) or None.
-
-    We only consider the last few non-empty lines so that an old prompt
-    earlier in the scrollback doesn't keep firing.
-    """
-    if not pane_text:
-        return None
-    lines = [ln.rstrip() for ln in pane_text.splitlines() if ln.strip()]
-    if not lines:
-        return None
-    tail = "\n".join(lines[-12:])
-    for pattern, approval_type, yes_reply, no_reply in PROMPT_PATTERNS:
-        match = pattern.search(tail)
-        if match:
-            return tail[-1000:], approval_type, yes_reply, no_reply
-    return None
 
 
 def tmux_available() -> bool:
@@ -499,8 +476,8 @@ class RoleSupervisor:
             "session_id": session.agent_session_id,
             "agent_id": session.entity_id,
             "approval_type": approval_type,
-            "title": f"{session.role}: {approval_type.replace('_', ' ')}",
-            "message": prompt_line,
+            "title": f"{session.role}: {approval_label(prompt_line, approval_type)}",
+            "message": approval_message(prompt_line, approval_type),
             "command": prompt_line,
         }
         result = self._api_request("POST", "/agents/approvals", body, entity_id=session.entity_id)
@@ -538,16 +515,24 @@ class RoleSupervisor:
                     continue
                 # Resolved — replay the appropriate stdin reply.
                 response_message = approval.get("response_message") or ""
-                detection = detect_prompt(tmux_capture_pane(session.tmux_session, lines=10))
-                yes_reply = detection[2] if detection else "y"
-                no_reply = detection[3] if detection else "n"
+                detection = detect_prompt(tmux_capture_pane(session.tmux_session, lines=40))
+                if not detection:
+                    logger.warning(
+                        "Approval #%s resolved after the CLI prompt disappeared; skipping stale reply",
+                        session.pending_approval_id,
+                    )
+                    session.pending_approval_id = None
+                    session.last_pane_signature = None
+                    continue
+                yes_reply, no_reply = detection[2], detection[3]
+                menu_reply = yes_reply.startswith("keys:") or no_reply.startswith("keys:")
                 if status_value == "approved":
-                    reply = response_message.strip() or yes_reply
+                    reply = yes_reply if menu_reply else response_message.strip() or yes_reply
                 elif status_value == "rejected":
-                    reply = response_message.strip() or no_reply
+                    reply = no_reply if menu_reply else response_message.strip() or no_reply
                 else:  # cancelled / expired
                     reply = no_reply
-                tmux_send_text(session.tmux_session, reply)
+                send_prompt_reply(session.tmux_session, reply)
                 logger.info(
                     f"Resumed role '{role_name}' after approval #{approval.get('id')} "
                     f"(decision={status_value}, reply={reply!r})"

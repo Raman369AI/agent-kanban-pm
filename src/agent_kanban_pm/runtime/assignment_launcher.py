@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -52,6 +53,8 @@ from agent_kanban_pm.runtime.handoff_protocol import (
     ensure_instruction_aliases,
     initialize_status_file,
     read_status_file,
+    status_path_for_workspace,
+    status_matches_session,
 )
 from agent_kanban_pm.runtime.process_launcher import (
     shell_command,
@@ -232,23 +235,29 @@ def _sync_worktree_with_base(worktree_path: str, base_ref: Optional[str]) -> tup
 
 
 def prune_git_worktree(project_path: str, worktree_path: str | Path) -> bool:
-    """Safely remove a git worktree using `git worktree remove --force`."""
+    """Remove only a clean worktree; never discard agent or user changes."""
     git = shutil.which("git")
     if not git:
         logger.warning("Cannot prune git worktree: git is not installed")
         return False
+    wt_str = str(worktree_path)
     try:
-        wt_str = str(worktree_path)
-        logger.info("Pruning git worktree at %s (project: %s)", wt_str, project_path)
+        status = subprocess.run(
+            [git, "-C", wt_str, "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if status.returncode != 0:
+            logger.warning("Cannot inspect git worktree %s: %s", wt_str, status.stderr.strip())
+            return False
+        if status.stdout.strip():
+            logger.info("Preserving dirty git worktree %s for review", wt_str)
+            return False
         result = subprocess.run(
-            [git, "-C", project_path, "worktree", "remove", "--force", wt_str],
-            capture_output=True,
-            text=True,
-            timeout=30,
+            [git, "-C", project_path, "worktree", "remove", wt_str],
+            capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             logger.warning("git worktree remove failed for %s: %s", wt_str, result.stderr.strip())
-            subprocess.run([git, "-C", project_path, "worktree", "prune"], capture_output=True, timeout=10)
             return False
         return True
     except Exception as exc:
@@ -586,18 +595,31 @@ class AssignmentLauncher:
                     _sync_worktree_with_base, workspace_path, base_ref
                 )
 
+            if not isolated_workspace:
+                other_sessions = (await db.execute(
+                    select(AgentSession).filter(
+                        AgentSession.workspace_path == workspace_path,
+                        AgentSession.ended_at.is_(None),
+                        AgentSession.status.in_([
+                            AgentSessionStatus.STARTING,
+                            AgentSessionStatus.ACTIVE,
+                            AgentSessionStatus.BLOCKED,
+                        ]),
+                    )
+                )).scalars().all()
+                if any(s.task_id != task.id or s.agent_id != agent.id for s in other_sessions):
+                    db.add(TaskLog(
+                        task_id=task.id,
+                        log_type="info",
+                        message="Assignment queued: this non-Git workspace already has an active agent session.",
+                    ))
+                    await db.commit()
+                    return None
+
             alias_results = await asyncio.to_thread(
                 ensure_instruction_aliases, workspace_path
             )
-            status_path = await asyncio.to_thread(
-                initialize_status_file,
-                workspace_path,
-                task_id=task.id,
-                project_id=project.id,
-                current_agent=agent.name,
-                assigned_role=matching_role_name,
-                task_title=task.title,
-            )
+            status_path = status_path_for_workspace(workspace_path)
 
             adapter = adapters.get(agent.name)
             if not adapter:
@@ -625,6 +647,19 @@ class AssignmentLauncher:
             )
             if existing_sessions and runner_is_active:
                 existing_session = existing_sessions[0]
+                if not existing_session.run_token:
+                    existing_session.run_token = uuid.uuid4().hex
+                if not existing_session.assigned_role:
+                    existing_session.assigned_role = matching_role_name
+                await asyncio.to_thread(
+                    initialize_status_file, workspace_path,
+                    task_id=task.id, project_id=project.id,
+                    current_agent=agent.name,
+                    assigned_role=existing_session.assigned_role,
+                    task_title=task.title,
+                    session_id=existing_session.id,
+                    run_token=existing_session.run_token,
+                )
                 now = datetime.now(UTC)
                 for stale_session in existing_sessions[1:]:
                     stale_session.status = AgentSessionStatus.DONE
@@ -668,6 +703,8 @@ class AssignmentLauncher:
                 project_id=project.id,
                 task_id=task.id,
                 workspace_path=workspace_path,
+                assigned_role=matching_role_name,
+                run_token=uuid.uuid4().hex,
                 status=AgentSessionStatus.STARTING,
                 command=command_text,
                 model=model,
@@ -694,6 +731,16 @@ class AssignmentLauncher:
                     )
                     return existing.id
                 raise
+
+            status_path = await asyncio.to_thread(
+                initialize_status_file, workspace_path,
+                task_id=task.id, project_id=project.id,
+                current_agent=agent.name,
+                assigned_role=matching_role_name,
+                task_title=task.title,
+                session_id=db_session.id,
+                run_token=db_session.run_token,
+            )
 
             now = datetime.now(UTC)
             older_leases = await db.execute(
@@ -771,6 +818,8 @@ class AssignmentLauncher:
         env = os.environ.copy()
         env["KANBAN_AGENT_NAME"] = agent.name
         env["KANBAN_AGENT_ROLE"] = matching_role_name
+        env["KANBAN_SESSION_ID"] = str(session_id)
+        env["KANBAN_RUN_TOKEN"] = db_session.run_token
         env["KANBAN_API_BASE"] = self.api_base
         if await asyncio.to_thread(_tmux_has_session, session_name):
             await asyncio.to_thread(kill_session, session_name)
@@ -968,19 +1017,25 @@ class AssignmentLauncher:
                 except Exception as exc:
                     logger.warning("Failed to read STATUS.md at %s: %s", session.workspace_path, exc)
                     continue
-                if not status_data.get("handoff_ready"):
+                if not status_matches_session(status_data, session):
                     continue
                 state = (status_data.get("state") or "").lower()
-                if state not in ("done", "completed", "review"):
-                    continue
 
+                existing_report = await db.scalar(
+                    select(AgentActivity.id).filter(
+                        AgentActivity.session_id == session.id,
+                        AgentActivity.source == "handoff_scan",
+                    )
+                )
+                if existing_report:
+                    continue
                 db.add(AgentActivity(
                     agent_id=session.agent_id,
                     session_id=session.id,
                     project_id=session.project_id,
                     task_id=session.task_id,
                     activity_type=ActivityType.HANDOFF,
-                    source="session_streamer",
+                    source="handoff_scan",
                     message=(
                         f"Task #{task.id} appears ready for review: STATUS.md handoff_ready=true "
                         f"(state={state}, agent={status_data.get('current_agent', '?')}). "

@@ -243,6 +243,52 @@ class TestDiffReviewAPI:
             assert approved["review_notes"] == "LGTM"
 
 
+@pytest.mark.asyncio
+async def test_task_git_diff_route_scopes_task_and_returns_snapshot(db_session, client, tmp_path, monkeypatch):
+    from agent_kanban_pm.routers import agent_activity
+
+    project = Project(name="Git diff project", path=str(tmp_path))
+    agent = Entity(name="diff-test-agent", entity_type=EntityType.AGENT, role=Role.WORKER)
+    db_session.add_all([project, agent])
+    await db_session.flush()
+    task = Task(title="Review changes", project_id=project.id)
+    db_session.add(task)
+    await db_session.flush()
+    db_session.add(AgentSession(
+        agent_id=agent.id,
+        project_id=project.id,
+        task_id=task.id,
+        workspace_path=str(tmp_path / "worktree"),
+        status=AgentSessionStatus.DONE,
+    ))
+    await db_session.commit()
+
+    snapshot = {"source": "worktree", "base_ref": "main", "diff": "diff --git a/x b/x\n+change\n"}
+    monkeypatch.setattr(agent_activity, "read_task_git_diff", lambda *_: snapshot.copy())
+    response = await client.get(f"/agents/projects/{project.id}/tasks/{task.id}/git-diff")
+    assert response.status_code == 200
+    assert response.json()["diff"] == snapshot["diff"]
+    assert response.json()["session_id"] is not None
+
+    other = Project(name="Other project")
+    db_session.add(other)
+    await db_session.commit()
+    wrong_project = await client.get(f"/agents/projects/{other.id}/tasks/{task.id}/git-diff")
+    assert wrong_project.status_code == 404
+
+    db_session.add(DiffReview(
+        project_id=project.id,
+        task_id=task.id,
+        diff_content="diff --git a/saved b/saved\n+snapshot\n",
+    ))
+    project.path = None
+    await db_session.commit()
+    saved = await client.get(f"/agents/projects/{project.id}/tasks/{task.id}/git-diff")
+    assert saved.status_code == 200
+    assert saved.json()["source"] == "review"
+    assert "+snapshot" in saved.json()["diff"]
+
+
 class TestApprovalQueueAPI:
     def test_approval_queue_requires_auth_and_manager_resolution(self):
         from fastapi.testclient import TestClient

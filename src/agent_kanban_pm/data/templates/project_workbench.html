@@ -3,15 +3,11 @@
 
 {% block content %}
 <style>
-  .project-sub-nav{display:flex;gap:0.5rem;margin-bottom:1.25rem;flex-wrap:wrap;}
-  .sub-nav-pill{padding:0.4rem 1.1rem;border-radius:99px;text-decoration:none;font-size:0.82rem;font-weight:600;border:1px solid var(--glass-border);color:var(--text-secondary);background:var(--glass-bg);transition:all 0.2s;}
-  .sub-nav-pill:hover{background:rgba(var(--accent-primary-rgb),0.08);color:var(--text-primary);}
-  .sub-nav-pill.active{background:var(--accent-primary);color:#fff;border-color:var(--accent-primary);}
 
   .wb-tabs{display:flex;gap:0.25rem;padding:0.25rem;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--radius);margin-bottom:1rem;}
   .wb-tab{flex:1;border:0;border-radius:var(--radius-sm);padding:0.5rem 0.5rem;background:transparent;color:var(--text-secondary);cursor:pointer;font-size:0.8rem;font-weight:700;transition:all 0.2s;position:relative;}
   .wb-tab:hover{color:var(--text-primary);background:rgba(var(--accent-primary-rgb),0.06);}
-  .wb-tab.active{background:linear-gradient(135deg,var(--accent-primary),var(--accent-secondary));color:#fff;box-shadow:0 3px 10px rgba(var(--accent-primary-rgb),0.3);}
+  .wb-tab.active{background:rgba(var(--accent-primary-rgb),0.11);color:var(--accent-primary);}
   .wb-tab .tab-badge{background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;border-radius:0.65rem;margin-left:0.2rem;}
   .wb-pane{display:none;} .wb-pane.active{display:block;}
 
@@ -39,7 +35,7 @@
   .s-idle{background:rgba(148,163,184,0.12);color:#64748b;}
 
   /* Terminal */
-  .terminal-layout{display:grid;grid-template-columns:240px 1fr;gap:0;border:1px solid var(--glass-border);border-radius:var(--radius-lg);overflow:hidden;min-height:600px;}
+  .terminal-layout{display:grid;grid-template-columns:240px 1fr;gap:0;border:1px solid var(--glass-border);border-radius:var(--radius-lg);overflow:hidden;height:min(75vh,760px);min-height:480px;}
   .terminal-sidebar{background:var(--glass-bg);border-right:1px solid var(--glass-border);display:flex;flex-direction:column;}
   .terminal-filter{padding:0.5rem;border-bottom:1px solid var(--glass-border);}
   .terminal-filter input{width:100%;padding:0.35rem 0.6rem;border-radius:var(--radius-sm);border:1px solid var(--glass-border);background:var(--bg-secondary);color:var(--text-primary);font-size:0.78rem;}
@@ -51,15 +47,20 @@
   .terminal-session-item .si-agent{font-weight:700;}
   .terminal-session-item .si-task{color:var(--accent-primary);font-size:0.72rem;}
   .terminal-session-item .si-time{color:var(--text-muted);font-size:0.68rem;}
-  .terminal-viewer{display:flex;flex-direction:column;background:#020617;}
-  .terminal-viewer-header{display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.85rem;border-bottom:1px solid #1e293b;background:#0d1117;}
-  .terminal-viewer-header #wb-terminal-info{font-size:0.78rem;color:#64748b;font-family:monospace;}
-  .wb-terminal-pre{flex:1;overflow:auto;margin:0;padding:0.85rem;background:#020617;color:#d1fae5;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.76rem;line-height:1.5;white-space:pre-wrap;}
+  .terminal-viewer{display:flex;flex-direction:column;min-height:0;min-width:0;background:#020617;}
+  .terminal-viewer-header{display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;padding:0.65rem 0.85rem;border-bottom:1px solid #1e293b;background:#0d1117;}
+  .terminal-viewer-header #wb-terminal-info{font-size:0.78rem;color:#cbd5e1;}
+  .terminal-viewer-tools{display:flex;align-items:center;gap:0.4rem;}
+  .terminal-mode-btn{border:1px solid #334155;border-radius:var(--radius-sm);padding:0.3rem 0.6rem;background:transparent;color:#94a3b8;font-size:0.72rem;font-weight:700;cursor:pointer;}
+  .terminal-mode-btn:hover,.terminal-mode-btn[aria-pressed="true"]{background:#1e293b;color:#f8fafc;}
+  .terminal-mode-btn:focus-visible{outline:2px solid var(--accent-primary);outline-offset:2px;}
+  .terminal-viewer-hint{padding:0.4rem 0.85rem;background:#0d1117;color:#94a3b8;font-size:0.72rem;}
+  .wb-terminal-pre{flex:1;min-height:0;overflow:auto;margin:0;padding:0.85rem;background:#020617;color:#dbeafe;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.78rem;line-height:1.6;white-space:pre-wrap;}
   .wb-terminal-pre .t-cmd{color:#4ade80;}
   .wb-terminal-pre .t-file{color:#60a5fa;}
   .wb-terminal-pre .t-time{color:#475569;}
   .wb-terminal-pre .t-err{color:#f87171;}
-  @media(max-width:768px){.terminal-layout{grid-template-columns:1fr;grid-template-rows:200px 1fr;}}
+  @media(max-width:768px){.terminal-layout{grid-template-columns:1fr;grid-template-rows:160px minmax(0,1fr);}}
 
   /* Handoff */
   .handoff-layout{display:grid;grid-template-columns:280px 1fr;gap:1rem;}
@@ -121,10 +122,10 @@
 </style>
 
 <div class="project-sub-nav">
-  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">&#128203; Board</a>
-  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill active" aria-current="page">&#9889; Activity</a>
-  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Changes</a>
-  <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">&#9881;&#65039; Settings</a>
+  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">Board</a>
+  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill active" aria-current="page">Activity</a>
+  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">Changes</a>
+  <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">Settings</a>
 </div>
 
 <div class="d-flex align-items-center gap-3 mb-4">
@@ -134,13 +135,13 @@
 </div>
 
 <div class="wb-tabs" role="tablist">
-  <button class="wb-tab active" data-tab="live" onclick="switchWbTab('live')">&#9654; Live</button>
-  <button class="wb-tab" data-tab="terminal" onclick="switchWbTab('terminal')">&#128187; Terminal</button>
-  <button class="wb-tab" data-tab="handoff" onclick="switchWbTab('handoff')">&#128221; Handoff</button>
+  <button class="wb-tab active" data-tab="live" onclick="switchWbTab('live')">Live</button>
+  <button class="wb-tab" data-tab="terminal" onclick="switchWbTab('terminal')">Terminal</button>
+  <button class="wb-tab" data-tab="handoff" onclick="switchWbTab('handoff')">Handoff</button>
   <button class="wb-tab" data-tab="approvals" onclick="switchWbTab('approvals')">
-    &#9888; Approvals <span class="tab-badge" id="wb-approvals-badge" style="display:none;">0</span>
+    Approvals <span class="tab-badge" id="wb-approvals-badge" style="display:none;">0</span>
   </button>
-  <button class="wb-tab" data-tab="decisions" onclick="switchWbTab('decisions')">&#128196; Decisions</button>
+  <button class="wb-tab" data-tab="decisions" onclick="switchWbTab('decisions')">Decisions</button>
 </div>
 
 <!-- LIVE TAB -->
@@ -176,11 +177,16 @@
         <div style="padding:1rem;font-size:0.8rem;color:var(--text-muted);">No sessions loaded yet.</div>
       </div>
     </div>
-    <div class="terminal-viewer" style="min-height:600px;display:flex;flex-direction:column;">
+    <div class="terminal-viewer">
       <div class="terminal-viewer-header">
         <span id="wb-terminal-info">Select a session from the left</span>
-        <button class="btn-icon-sm" style="color:#64748b;" onclick="refreshWbTerminal()">&#8635;</button>
+        <div class="terminal-viewer-tools" role="group" aria-label="Terminal output view">
+          <button class="terminal-mode-btn" id="wb-terminal-focused" type="button" aria-pressed="true" onclick="setWbTerminalMode('focused')">Focused</button>
+          <button class="terminal-mode-btn" id="wb-terminal-raw" type="button" aria-pressed="false" onclick="setWbTerminalMode('raw')">Raw output</button>
+          <button class="terminal-mode-btn" type="button" aria-label="Refresh output" onclick="refreshWbTerminal()">Refresh</button>
+        </div>
       </div>
+      <div class="terminal-viewer-hint" id="wb-terminal-hint">Focused shows recent useful output and key events. Raw output shows recent captured entries.</div>
       <pre class="wb-terminal-pre" id="wb-terminal-pre" style="flex:1;">Select a session to view output.</pre>
     </div>
   </div>
@@ -199,7 +205,7 @@
       </div>
     </div>
     <div class="handoff-summary" id="wb-handoff-view">
-      <div class="handoff-empty">Select a session to view its worktree STATUS.md.</div>
+      <div class="handoff-empty">Select a session to view its recorded handoff.</div>
     </div>
   </div>
 </div>
@@ -232,11 +238,19 @@
 
 <div id="wb-toast"></div>
 
+<script src="/static/js/terminal-feed.js"></script>
 <script>
 const PROJECT_ID = {{ project.id }};
 const CURRENT_ENTITY_ID = {{ current_entity.id if current_entity else 'null' }};
 let wbSelectedSessionId = null;
 let wbAllSessions = [];
+let wbSessionsLoaded = false;
+let wbHashHandled = false;
+let wbTerminalData = null;
+let wbTerminalRequestSerial = 0;
+let wbTerminalRefreshTimer = null;
+let wbTerminalMode = 'focused';
+try { if (localStorage.getItem('kanban.terminal.mode') === 'raw') wbTerminalMode = 'raw'; } catch(e) {}
 let wbWs = null;
 
 function esc(s){ if(!s)return''; const d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
@@ -266,7 +280,10 @@ function workbenchFetch(url,opts={}){
 function switchWbTab(tab){
   document.querySelectorAll('.wb-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
   document.querySelectorAll('.wb-pane').forEach(p=>p.classList.toggle('active',p.id==='wb-pane-'+tab));
-  if(tab==='terminal')renderTerminalSessionList();
+  if(tab==='terminal'){
+    renderTerminalSessionList();
+    if(wbSelectedSessionId&&(!wbTerminalData||wbTerminalData.session.id!==wbSelectedSessionId))loadWbTerminal(wbSelectedSessionId);
+  }
   if(tab==='handoff')renderHandoffSessionList();
 }
 
@@ -280,8 +297,10 @@ async function loadLive(){
     renderAgentGrid(heartbeats);
     renderSessionsTable(sessions);
     wbAllSessions=sessions;
+    wbSessionsLoaded=true;
     renderTerminalSessionList();
     renderHandoffSessionList();
+    if(!wbHashHandled)selectTerminalFromHash();
     document.getElementById('wb-sessions-count').textContent=sessions.filter(s=>!s.ended_at).length;
     const working=(heartbeats||[]).filter(h=>h.status_type&&h.status_type!=='idle'&&h.status_type!=='done').length;
     document.getElementById('wb-working-count').textContent=working;
@@ -349,37 +368,72 @@ function filterToTask(taskId){
 }
 function openSessionFromTable(sessionId){switchWbTab('terminal');loadWbTerminal(sessionId);}
 
+function renderWbTerminal(forceBottom=false){
+  if(!wbTerminalData)return;
+  const pre=document.getElementById('wb-terminal-pre');
+  const hint=document.getElementById('wb-terminal-hint');
+  const wasAtBottom=pre.scrollHeight-pre.scrollTop-pre.clientHeight<40;
+  const oldScrollTop=pre.scrollTop;
+  pre.textContent=wbTerminalMode==='raw'
+    ?window.KanbanTerminalFeed.raw(wbTerminalData.activities,wbTerminalData.session)
+    :window.KanbanTerminalFeed.focused(wbTerminalData.activities,18);
+  hint.textContent=wbTerminalMode==='raw'
+    ?'Recent captured entries, including unfiltered tmux output. Switch to Focused to reduce repetition.'
+    :'Recent useful output and key events. Raw output keeps every captured entry in this feed.';
+  pre.scrollTop=forceBottom||wasAtBottom?pre.scrollHeight:oldScrollTop;
+}
+function setWbTerminalMode(mode){
+  if(mode!=='focused'&&mode!=='raw')return;
+  wbTerminalMode=mode;
+  document.getElementById('wb-terminal-focused').setAttribute('aria-pressed',String(mode==='focused'));
+  document.getElementById('wb-terminal-raw').setAttribute('aria-pressed',String(mode==='raw'));
+  try{localStorage.setItem('kanban.terminal.mode',mode);}catch(e){}
+  renderWbTerminal(true);
+}
 async function loadWbTerminal(sessionId){
+  const changing=wbSelectedSessionId!==sessionId;
   wbSelectedSessionId=sessionId;
   renderTerminalSessionList();
   const pre=document.getElementById('wb-terminal-pre');
   const info=document.getElementById('wb-terminal-info');
-  pre.textContent='Loading session #'+sessionId+'…';
+  if(changing)pre.textContent='Loading session #'+sessionId+'…';
+  const requestSerial=++wbTerminalRequestSerial;
   try{
     const data=await workbenchFetch('/agents/sessions/'+sessionId+'/terminal?limit=200');
+    if(requestSerial!==wbTerminalRequestSerial||wbSelectedSessionId!==sessionId)return;
+    wbTerminalData=data;
     const s=data.session;
-    info.textContent='Agent '+(s.agent_name||s.agent_id)+' · Task #'+(s.task_id||'–')+' · '+esc(s.status)+' · '+(s.mode||'');
-    const lines=[];
-    lines.push('<span class="t-cmd">$ '+esc(s.command||'session started')+'</span>');
-    lines.push('<span class="t-time"># workspace: '+esc(s.workspace_path)+'</span>');
-    if(s.task_id)lines.push('<span class="t-time"># task: #'+s.task_id+'</span>');
-    lines.push('');
-    (data.activities||[]).forEach(e=>{
-      const stamp=e.created_at?new Date(e.created_at).toLocaleTimeString():'';
-      const typeLabel=e.activity_type||e.source||'event';
-      const isErr=typeLabel==='error'||typeLabel==='ERROR';
-      const msgCls=isErr?'t-err':'';
-      lines.push(`<span class="t-time">[${stamp}] ${esc(typeLabel)}</span> <span class="${msgCls}">${esc(e.message||'')}</span>`);
-      if(e.command)lines.push(`  <span class="t-cmd">$ ${esc(e.command)}</span>`);
-      if(e.file_path)lines.push(`  <span class="t-file">file: ${esc(e.file_path)}</span>`);
-      lines.push('');
-    });
-    pre.innerHTML=lines.join('\n').trim()||'No activity recorded for this session.';
-    pre.scrollTop=pre.scrollHeight;
-    loadWbHandoff(sessionId, false);
-  }catch(e){pre.textContent='Failed to load terminal: '+e.message;}
+    info.textContent='Agent '+(s.agent_name||s.agent_id)+' · Task #'+(s.task_id||'–')+' · '+s.status+' · '+(s.mode||'');
+    renderWbTerminal(changing);
+    if(changing)loadWbHandoff(sessionId,false);
+  }catch(e){
+    if(requestSerial===wbTerminalRequestSerial)pre.textContent='Failed to load output: '+e.message;
+  }
 }
-async function refreshWbTerminal(){if(wbSelectedSessionId)loadWbTerminal(wbSelectedSessionId);}
+function refreshWbTerminal(){if(wbSelectedSessionId)loadWbTerminal(wbSelectedSessionId);}
+function scheduleWbTerminalRefresh(){
+  if(wbTerminalRefreshTimer)return;
+  wbTerminalRefreshTimer=setTimeout(()=>{
+    wbTerminalRefreshTimer=null;
+    refreshWbTerminal();
+  },300);
+}
+function selectTerminalFromHash(){
+  if(!wbSessionsLoaded)return;
+  wbHashHandled=true;
+  const match=location.hash.match(/^#terminal:task:(\d+)$/);
+  if(!match)return;
+  const taskId=Number(match[1]);
+  document.getElementById('wb-task-filter').value=String(taskId);
+  switchWbTab('terminal');
+  const session=wbAllSessions.find(s=>Number(s.task_id)===taskId);
+  if(session)loadWbTerminal(session.id);
+  else{
+    document.getElementById('wb-terminal-info').textContent='Task #'+taskId;
+    document.getElementById('wb-terminal-pre').textContent='No recent session found for this task.';
+  }
+}
+window.addEventListener('hashchange',()=>{wbHashHandled=false;selectTerminalFromHash();});
 
 /* ── HANDOFF ── */
 function renderHandoffSessionList(){
@@ -397,13 +451,27 @@ function renderHandoffSessionList(){
 function renderHandoff(data){
   const el=document.getElementById('wb-handoff-view');
   if(!el)return;
-  if(!data||!data.exists){
-    el.innerHTML='<div class="handoff-empty">No STATUS.md found for this session worktree.</div>';
+  const durable=data&&data.durable||{};
+  if(!data||(!data.exists&&!durable.summary)){
+    el.innerHTML='<div class="handoff-empty">No handoff has been submitted for this session.</div>';
+    return;
+  }
+  const durableBlock=durable.summary?`
+    <div class="handoff-summary">
+      <div class="section-hdr"><h5>Recorded handoff</h5><span class="text-secondary">${esc(durable.state||'done')}</span></div>
+      <pre class="handoff-pre">${esc(durable.summary)}</pre>
+    </div>`:'';
+  if(!data.exists){
+    el.innerHTML=durableBlock;
+    return;
+  }
+  if(data.identity_matches_session===false){
+    el.innerHTML=durableBlock+'<div class="handoff-empty">This workspace STATUS.md belongs to a different session or run.</div>';
     return;
   }
   const fm=data.frontmatter||{};
   const outputs=Array.isArray(fm.outputs)?fm.outputs.join('\n'):String(fm.outputs||'');
-  el.innerHTML=`
+  el.innerHTML=durableBlock+`
     <div class="section-hdr"><h5>STATUS.md</h5><code style="font-size:0.72rem;color:var(--text-muted);">${esc(data.path)}</code></div>
     <dl class="handoff-kv">
       <dt>State</dt><dd>${esc(data.state||'-')}</dd>
@@ -427,12 +495,12 @@ async function loadWbHandoff(sessionId, switchTab){
   renderHandoffSessionList();
   if(switchTab)switchWbTab('handoff');
   const el=document.getElementById('wb-handoff-view');
-  if(el)el.innerHTML='<div class="handoff-empty">Loading STATUS.md for session #'+sessionId+'…</div>';
+  if(el)el.innerHTML='<div class="handoff-empty">Loading handoff for session #'+sessionId+'…</div>';
   try{
     const data=await workbenchFetch('/agents/sessions/'+sessionId+'/handoff');
     renderHandoff(data);
   }catch(e){
-    if(el)el.innerHTML='<div class="handoff-empty">Failed to load STATUS.md: '+esc(e.message)+'</div>';
+    if(el)el.innerHTML='<div class="handoff-empty">Failed to load handoff: '+esc(e.message)+'</div>';
   }
 }
 
@@ -539,7 +607,7 @@ function connectWbWs(){
       if(et==='agent_status_updated')loadLive();
       if(et==='agent_approval_requested'){showToast('&#9888; Approval: '+(msg.data&&msg.data.title||'new request'),'warning');loadApprovals();}
       if(et==='agent_approval_resolved'){showToast('Approval resolved','info');loadApprovals();}
-      if(et==='agent_activity_logged'&&wbSelectedSessionId&&msg.data&&msg.data.session_id===wbSelectedSessionId)refreshWbTerminal();
+      if(et==='agent_activity_logged'&&wbSelectedSessionId&&msg.data&&msg.data.session_id===wbSelectedSessionId)scheduleWbTerminalRefresh();
     }catch(e){}
   };
   wbWs.onclose=()=>{setTimeout(connectWbWs,wbWsBackoff);wbWsBackoff=Math.min(wbWsBackoff*2,WB_WS_MAX_BACKOFF);};
@@ -547,6 +615,7 @@ function connectWbWs(){
 
 /* ── Init ── */
 document.addEventListener('DOMContentLoaded',function(){
+  setWbTerminalMode(wbTerminalMode);
   loadLive();
   loadApprovals();
   loadDecisions();

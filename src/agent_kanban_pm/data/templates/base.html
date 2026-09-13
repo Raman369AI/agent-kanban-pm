@@ -111,7 +111,11 @@
                             <details class="appearance-menu">
                                 <summary class="btn btn-secondary">Appearance</summary>
                                 <div class="appearance-menu-content">
-                                    <button id="theme-toggle" class="btn" type="button" title="Change theme">Change theme <span class="icon" aria-hidden="true">🌙</span></button>
+                                    <span class="appearance-setting-label">Theme</span>
+                                    <div class="theme-choice" role="group" aria-label="Theme">
+                                        <button type="button" data-set-theme="light" aria-pressed="true">White</button>
+                                        <button type="button" data-set-theme="dark" aria-pressed="false">Night</button>
+                                    </div>
                                     <label for="density-select">Density</label>
                                     <select id="density-select" class="select-small">
                                         <option value="comfortable">Comfortable</option>

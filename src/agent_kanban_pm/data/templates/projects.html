@@ -324,18 +324,18 @@
         </div>
     </div>
     <div style="display:flex;gap:0.75rem;margin-top:2rem; border-top: 1px solid var(--glass-border); padding-top: 1.5rem; flex-wrap: wrap;">
-        <a href="/ui/projects/{{ project.id }}/board" class="btn btn-primary" style="border-radius: 2rem; padding: 0.55rem 1.5rem; font-weight: 700; font-size: 0.85rem;">Board</a>
-        <a href="/ui/projects/{{ project.id }}/workbench" class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.15rem; font-size: 0.85rem;">
+        <a href="/ui/projects/{{ project.id }}/board" class="btn btn-secondary btn-sm">Board</a>
+        <a href="/ui/projects/{{ project.id }}/workbench" class="btn btn-link btn-sm">
             <span style="margin-right: 0.3rem;">&#9889;</span> Activity
         </a>
-        <a href="/ui/projects/{{ project.id }}/git" class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.15rem; font-size: 0.85rem;">
+        <a href="/ui/projects/{{ project.id }}/git" class="btn btn-link btn-sm">
             <span style="margin-right: 0.3rem;">&#128260;</span> Changes
         </a>
-        <a href="/ui/projects/{{ project.id }}/settings" class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.15rem; font-size: 0.85rem;">
+        <a href="/ui/projects/{{ project.id }}/settings" class="btn btn-link btn-sm">
             <span style="margin-right: 0.3rem;">&#9881;&#65039;</span> Settings
         </a>
         {% if project.path %}
-        <button class="btn btn-secondary" style="border-radius: 2rem; padding: 0.55rem 1.25rem; font-size: 0.85rem;" data-path="{{ project.path|e }}" onclick="openProjectFolder(this.dataset.path)">
+        <button class="btn btn-link btn-sm" data-path="{{ project.path|e }}" onclick="openProjectFolder(this.dataset.path)">
             <span style="margin-right: 0.4rem;">📂</span> Open Folder
         </button>
         {% endif %}

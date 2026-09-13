@@ -102,29 +102,21 @@ document.addEventListener('keydown', function(event) {
 document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
-    // Theme cycle: light → dark → blue → rose → light
-    const themeCycle = ['light', 'dark', 'blue', 'rose'];
-    const themeIcons = { light: '🌙', dark: '☀️', blue: '🌊', rose: '🌹' };
-
-    const themeToggle = document.getElementById('theme-toggle');
-    const themeIcon = themeToggle?.querySelector('.icon');
-    
-    if (themeToggle) {
-        themeToggle.addEventListener('click', function() {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const currentIndex = themeCycle.indexOf(currentTheme);
-            const nextIndex = (currentIndex + 1) % themeCycle.length;
-            const newTheme = themeCycle[nextIndex];
-            
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
-            if (themeIcon) themeIcon.textContent = themeIcons[newTheme] || '🌙';
+    // White and Night are the only selectable themes. Older saved Blue and
+    // Rose values are normalized by theme.js before this script runs.
+    const themeButtons = document.querySelectorAll('[data-set-theme]');
+    function setTheme(theme) {
+        if (theme !== 'light' && theme !== 'dark') return;
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('theme', theme);
+        themeButtons.forEach(function(button) {
+            button.setAttribute('aria-pressed', String(button.dataset.setTheme === theme));
         });
-
-        // Set initial icon
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        if (themeIcon) themeIcon.textContent = themeIcons[savedTheme] || '🌙';
     }
+    themeButtons.forEach(function(button) {
+        button.addEventListener('click', function() { setTheme(button.dataset.setTheme); });
+    });
+    setTheme(document.documentElement.getAttribute('data-theme') || 'light');
 
     // View toggle
     const viewToggle = document.getElementById('view-toggle');

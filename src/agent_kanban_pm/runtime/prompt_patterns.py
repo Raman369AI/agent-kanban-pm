@@ -46,6 +46,18 @@ class PromptPattern:
 # ---------------------------------------------------------------------------
 
 BUILTIN_PATTERNS: List[PromptPattern] = [
+    # Claude in Chrome setup is an interactive menu, not a y/n permission prompt.
+    # The default selection is "Not now"; only an explicit approval selects
+    # "Install extension". Reply strings beginning with keys: are sent as keys.
+    PromptPattern(
+        regex=re.compile(
+            r"Claude wants to use your browser.*Install extension.*Not now.*Don't ask again",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        approval_type="external_access",
+        approve_reply="keys:Up,Enter",
+        reject_reply="keys:Enter",
+    ),
     # Claude Code security disclaimer (Bypass Permissions mode)
     PromptPattern(
         regex=re.compile(
@@ -190,6 +202,42 @@ def load_patterns() -> List[PromptPattern]:
     return patterns
 
 
+def prompt_identity(prompt_line: str) -> str:
+    """Ignore cursor movement when comparing the same on-screen menu."""
+    if "Claude wants to use your browser" in prompt_line:
+        return "claude-browser-extension-setup"
+    if "❯" in prompt_line:
+        return "\n".join(
+            line.strip().removeprefix("❯").strip()
+            for line in prompt_line.splitlines()
+        )
+    return prompt_line
+
+
+def approval_label(prompt_line: str, approval_type: str) -> str:
+    if approval_type == "external_access" and "Claude wants to use your browser" in prompt_line:
+        return "browser access setup"
+    if approval_type == "other" and "❯" in prompt_line:
+        return "interactive CLI menu"
+    return approval_type.replace("_", " ")
+
+
+def approval_message(prompt_line: str, approval_type: str) -> str:
+    """Explain menu decisions that cannot be inferred from Approve/Reject."""
+    if approval_type == "external_access" and "Claude wants to use your browser" in prompt_line:
+        return (
+            "Approve opens the browser extension installation page; Reject "
+            "continues without browser tools.\n\n" + prompt_line
+        )
+    if approval_type == "other" and "❯" in prompt_line:
+        return (
+            "Unrecognized interactive menu. Approve selects the highlighted "
+            "choice; Reject sends Escape. Review the highlighted choice below.\n\n"
+            + prompt_line
+        )
+    return prompt_line
+
+
 def detect_prompt(pane_text: str) -> Optional[Tuple[str, str, str, str]]:
     """Return (matched_line, approval_type, approve_reply, reject_reply) or None.
 
@@ -205,7 +253,30 @@ def detect_prompt(pane_text: str) -> Optional[Tuple[str, str, str, str]]:
     for pattern in load_patterns():
         match = pattern.regex.search(tail)
         if match:
-            return tail[-1000:], pattern.approval_type, pattern.approve_reply, pattern.reject_reply
+            approve_reply, reject_reply = pattern.approve_reply, pattern.reject_reply
+            if pattern.approval_type == "external_access" and "Claude wants to use your browser" in tail:
+                selected = re.search(r"(?m)^\s*❯\s*(Install extension|Not now|Don't ask again)", tail)
+                if selected:
+                    approve_reply, reject_reply = {
+                        "install extension": ("keys:Enter", "keys:Down,Enter"),
+                        "not now": ("keys:Up,Enter", "keys:Enter"),
+                        "don't ask again": ("keys:Up,Up,Enter", "keys:Up,Enter"),
+                    }[selected.group(1).lower()]
+            return tail[-1000:], pattern.approval_type, approve_reply, reject_reply
+
+    # Catch new CLI menus with a highlighted choice even if the wording is
+    # unknown. A plain, empty input prompt (❯) is deliberately excluded.
+    for index, line in enumerate(lines[-12:]):
+        if not re.match(r"^\s*❯\s+\S", line):
+            continue
+        nearby = lines[-12:][max(0, index - 2):index + 3]
+        choices = [
+            item for item in nearby
+            if re.match(r"^\s{2,}(?:❯\s+)?[^\s─●⎿]", item)
+            and len(item.strip()) < 140
+        ]
+        if len(choices) >= 2:
+            return tail[-1000:], "other", "keys:Enter", "keys:Escape"
     return None
 
 
