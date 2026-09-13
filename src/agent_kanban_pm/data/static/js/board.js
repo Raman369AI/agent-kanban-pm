@@ -68,6 +68,7 @@
     var panelReturnFocus = null;
     var panelHistoryEntry = false;
     var panelLoadSerial = 0;
+    var boardTerminalRefreshTimer = null;
 
     function getExpandedCardTabs() {
         try {
@@ -212,6 +213,7 @@
         fetchTaskApprovals(taskId);
         fetchTaskActivity(taskId);
         fetchTaskReviews(taskId);
+        fetchTaskGitDiff(taskId);
         fetchTaskTerminal(taskId);
     }
     function priorityName(value) {
@@ -346,26 +348,23 @@
             var resp = await fetch('/agents/tasks/' + taskId + '/active-session', {
                 headers: {'X-Entity-ID': CURRENT_ENTITY_ID || ''}
             });
-            if (!resp.ok) { pre.textContent = 'No active session for this task.'; return; }
+            if (!resp.ok) throw new Error('Could not load task session');
             var session = await resp.json();
-            if (!session || !session.id) { pre.textContent = 'No active session for this task.'; return; }
+            if (!session || !session.id) {
+                var recentResp = await fetch('/agents/sessions?task_id=' + taskId + '&limit=1');
+                if (!recentResp.ok) throw new Error('Could not load recent task session');
+                var recentSessions = await recentResp.json();
+                session = recentSessions[0];
+            }
+            if (!session || !session.id) { pre.textContent = 'No session output for this task.'; return; }
             pre.dataset.sessionId = session.id;
             var termResp = await fetch('/agents/sessions/' + session.id + '/terminal?limit=50');
             if (!termResp.ok) { pre.textContent = 'Failed to load terminal.'; return; }
             var data = await termResp.json();
-            var lines = [];
-            lines.push('$ ' + escapeHtml(data.session.command || 'session started'));
-            lines.push('# workspace: ' + escapeHtml(data.session.workspace_path || ''));
-            lines.push('');
-            (data.activities || []).forEach(function(e) {
-                var stamp = e.created_at ? new Date(e.created_at).toLocaleTimeString() : '';
-                var type = e.activity_type || e.source || 'event';
-                lines.push('[' + stamp + '] ' + type + ' ' + escapeHtml(e.message || ''));
-                if (e.command) lines.push('  $ ' + escapeHtml(e.command));
-                if (e.file_path) lines.push('  file: ' + escapeHtml(e.file_path));
-            });
-            pre.textContent = lines.join('\n').trim() || 'No activity recorded.';
-            pre.scrollTop = pre.scrollHeight;
+            var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+            var scrollTop = pre.scrollTop;
+            pre.textContent = window.KanbanTerminalFeed.focused(data.activities, 12);
+            pre.scrollTop = atBottom ? pre.scrollHeight : scrollTop;
         } catch(e) { pre.textContent = 'Error: ' + e.message; }
     }
     function popOutTerminal(taskId) {
@@ -571,28 +570,137 @@
         resolveApproval(currentApprovalId, decision);
     }
 
-    // --- Task reviews in card ---
-    async function fetchTaskReviews(taskId) {
+    // --- Git changes in task review ---
+    function renderTaskDiffLines(patch) {
+        return patch.split('\n').map(function(line) {
+            var kind = line.startsWith('+++') || line.startsWith('---') ? 'file' :
+                line.startsWith('+') ? 'added' :
+                line.startsWith('-') ? 'removed' :
+                line.startsWith('@@') ? 'hunk' :
+                line.startsWith('diff --git ') ? 'file' : '';
+            return '<span class="task-diff-line ' + kind + '">' + escapeHtml(line) + '</span>';
+        }).join('');
+    }
+    function renderTaskDiffFiles(patch) {
+        var chunks = patch.split(/(?=^diff --git )/m).filter(Boolean);
+        if (!chunks.length) chunks = [patch];
+        return {
+            count: chunks.length,
+            html: chunks.map(function(chunk, index) {
+                var match = chunk.match(/^\+\+\+ b\/(.*)$/m) || chunk.match(/^--- a\/(.*)$/m);
+                var title = match ? match[1] : 'Patch ' + (index + 1);
+                return '<details class="task-diff-file"' + (index === 0 ? ' open' : '') + '>' +
+                    '<summary><span>' + escapeHtml(title) + '</span></summary>' +
+                    '<pre class="task-diff-patch">' + renderTaskDiffLines(chunk) + '</pre></details>';
+            }).join('')
+        };
+    }
+    function renderTaskGitDiff(taskId, data) {
+        var el = document.getElementById('task-git-diff-' + taskId);
+        var source = document.getElementById('task-git-diff-source-' + taskId);
+        if (!el || !source) return;
+        var sourceLabel = {worktree: 'Live task worktree', branch: 'Committed task branch', review: 'Saved review snapshot'};
+        source.textContent = sourceLabel[data.source] || 'Unavailable';
+        if (data.branch) source.textContent += ' · ' + data.branch;
+        if (!data.diff) {
+            el.innerHTML = '<p class="text-secondary task-diff-empty">' +
+                escapeHtml(data.message || 'No changes from the task base.') + '</p>';
+            return;
+        }
+        var rendered = renderTaskDiffFiles(data.diff);
+        el.innerHTML = (data.message ? '<p class="text-secondary task-diff-note">' + escapeHtml(data.message) + '</p>' : '') +
+            '<div class="task-diff-meta">' + rendered.count + ' file' + (rendered.count === 1 ? '' : 's') +
+            (data.base_ref ? ' · compared with ' + escapeHtml(data.base_ref) : '') +
+            (data.truncated ? ' · preview truncated' : '') + '</div>' + rendered.html;
+    }
+    async function fetchTaskGitDiff(taskId) {
+        var source = document.getElementById('task-git-diff-source-' + taskId);
+        if (source) source.textContent = 'Loading…';
         try {
-            var resp = await fetch('/agents/projects/' + PROJECT_ID + '/diff-reviews?limit=20');
-            if (!resp.ok) return;
-            var reviews = await resp.json();
-            var el = document.getElementById('task-reviews-list-' + taskId);
-            if (!el) return;
+            var resp = await fetch('/agents/projects/' + PROJECT_ID + '/tasks/' + taskId + '/git-diff');
+            if (!resp.ok) throw new Error('Could not load Git diff (' + resp.status + ')');
+            renderTaskGitDiff(taskId, await resp.json());
+        } catch(e) {
+            renderTaskGitDiff(taskId, {source: 'none', diff: '', message: e.message});
+        }
+    }
+    function refreshTaskGitDiff(taskId) {
+        fetchTaskGitDiff(taskId);
+    }
+
+    // --- Review decisions and their immutable patch snapshots ---
+    var taskReviewRecords = {};
+    function showTaskReviewSnapshot(reviewId, details) {
+        if (!details.open) return;
+        var body = details.querySelector('.task-review-snapshot-body');
+        var review = taskReviewRecords[reviewId];
+        if (!body || !review || body.dataset.loaded) return;
+        if (review.diff_content) {
+            var rendered = renderTaskDiffFiles(review.diff_content);
+            body.innerHTML = '<div class="task-diff-meta">' + rendered.count + ' file' +
+                (rendered.count === 1 ? '' : 's') + ' in this review snapshot</div>' + rendered.html;
+        } else {
+            body.innerHTML = '<p class="text-secondary">This review has no saved patch.</p>';
+        }
+        body.dataset.loaded = 'true';
+    }
+    async function decideTaskReview(taskId, reviewId, decision) {
+        var review = taskReviewRecords[reviewId];
+        if (!review || review.task_id !== taskId || review.status !== 'pending') return;
+        if (decision !== 'approved' && decision !== 'rejected') return;
+        var card = document.getElementById('task-review-' + reviewId);
+        var note = card && card.querySelector('.task-review-note');
+        var buttons = card ? card.querySelectorAll('.task-review-actions button') : [];
+        buttons.forEach(function(button) { button.disabled = true; });
+        try {
+            await apiFetch('/agents/diff-reviews/' + reviewId, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json', 'X-Entity-ID': CURRENT_ENTITY_ID},
+                body: JSON.stringify({status: decision, review_notes: note ? note.value.trim() : ''})
+            }, 'Could not save review decision');
+            showToast(decision === 'approved' ? 'Review approved. Git is unchanged.' : 'Review rejected. Git is unchanged.', 'success');
+            await fetchTaskReviews(taskId);
+        } catch (error) {
+            buttons.forEach(function(button) { button.disabled = false; });
+            showToast(error.message, 'error');
+        }
+    }
+    async function fetchTaskReviews(taskId) {
+        var el = document.getElementById('task-reviews-list-' + taskId);
+        if (!el) return;
+        try {
+            var reviews = await apiFetch(
+                '/agents/projects/' + PROJECT_ID + '/diff-reviews?task_id=' + taskId + '&limit=20',
+                {}, 'Could not load reviews'
+            );
             var taskReviews = reviews.filter(function(r) { return r.task_id === taskId; });
             if (!taskReviews.length) {
-                el.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">No diff reviews for this task.</p>';
+                el.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">No reviews for this task yet.</p>';
                 return;
             }
             var statusColors = {pending:'#fbbf24', approved:'#34d399', rejected:'#f87171', changes_requested:'#60a5fa'};
             el.innerHTML = taskReviews.map(function(r) {
+                var reviewId = Number(r.id);
+                taskReviewRecords[reviewId] = r;
                 var color = statusColors[r.status] || '#9ca3af';
-                return '<div class="insight-item"><div style="display:flex;justify-content:space-between;align-items:center;"><span class="insight-title">Review #' + r.id + '</span><span style="background:' + color + ';color:#111;padding:0.1rem 0.5rem;border-radius:1rem;font-size:0.7rem;font-weight:700;">' + r.status + '</span></div>' +
-                    (r.summary ? '<p style="font-size:0.78rem;margin:0.3rem 0;">' + escapeHtml(r.summary.substring(0,120)) + '</p>' : '') +
-                    (r.is_critical ? '<span style="color:#ef4444;font-size:0.75rem;">Critical path</span>' : '') +
+                var actions = r.status === 'pending'
+                    ? '<textarea class="task-review-note" aria-label="Review note for review ' + reviewId + '" placeholder="Optional review note"></textarea>' +
+                      '<div class="task-review-actions">' +
+                      '<button type="button" class="btn btn-sm btn-primary" onclick="decideTaskReview(' + taskId + ',' + reviewId + ',\'approved\')">Approve</button>' +
+                      '<button type="button" class="btn btn-sm task-review-reject" onclick="decideTaskReview(' + taskId + ',' + reviewId + ',\'rejected\')">Reject</button></div>'
+                    : (r.review_notes ? '<p class="task-review-existing-note">' + escapeHtml(r.review_notes) + '</p>' : '');
+                return '<div class="insight-item task-review-card" id="task-review-' + reviewId + '">' +
+                    '<div class="task-review-card-title"><strong>Review #' + reviewId + '</strong>' +
+                    '<span class="task-review-status" style="--review-status-color:' + color + '">' + escapeHtml(r.status.replace(/_/g, ' ')) + '</span></div>' +
+                    (r.summary ? '<p class="task-review-summary">' + escapeHtml(r.summary) + '</p>' : '') +
+                    '<details class="task-review-snapshot" ontoggle="showTaskReviewSnapshot(' + reviewId + ',this)">' +
+                    '<summary>View this review’s saved patch</summary><div class="task-review-snapshot-body"></div></details>' +
+                    actions +
                     '<div class="insight-meta">' + timeAgo(r.created_at) + '</div></div>';
             }).join('');
-        } catch(e) { console.error('fetchTaskReviews', e); }
+        } catch(error) {
+            el.innerHTML = '<p class="text-danger">' + escapeHtml(error.message) + '</p>';
+        }
     }
 
     function updateCardSessionIndicator(taskId, session) {
@@ -1601,6 +1709,13 @@
                             dot.title = 'Recent activity';
                             indicators.appendChild(dot);
                         }
+                    }
+                    if (activeTaskId === Number(data.task_id) &&
+                        expandedCardTabs[activeTaskId] === 'terminal' && !boardTerminalRefreshTimer) {
+                        boardTerminalRefreshTimer = setTimeout(function() {
+                            boardTerminalRefreshTimer = null;
+                            if (activeTaskId === Number(data.task_id)) fetchTaskTerminal(activeTaskId);
+                        }, 300);
                     }
                 }
             }

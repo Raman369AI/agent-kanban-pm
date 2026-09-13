@@ -53,13 +53,15 @@ from agent_kanban_pm.models import (
 )
 from agent_kanban_pm.runtime.assignment_launcher import _tmux_session_name
 from agent_kanban_pm.runtime.handoff_protocol import read_status_file, status_matches_session
-from agent_kanban_pm.runtime.prompt_patterns import detect_prompt
+from agent_kanban_pm.runtime.prompt_patterns import (
+    approval_label, approval_message, detect_prompt, prompt_identity,
+)
 from agent_kanban_pm.runtime.process_launcher import (
     runner_available,
     has_session,
     kill_session,
     capture_pane,
-    send_text,
+    send_prompt_reply,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,8 @@ logger = logging.getLogger(__name__)
 _pane_cursor: Dict[int, str] = {}
 # Per-session pending approval id, so we don't re-file the same prompt.
 _pending_approvals: Dict[int, int] = {}
+_last_prompt: Dict[int, str] = {}
+_delivered_approvals: Dict[int, int] = {}
 _checkpoint_cursor: Dict[int, str] = {}
 
 
@@ -77,6 +81,8 @@ def reset_streamer():
     """Clear module-level state for test isolation."""
     _pane_cursor.clear()
     _pending_approvals.clear()
+    _last_prompt.clear()
+    _delivered_approvals.clear()
     _checkpoint_cursor.clear()
 
 
@@ -480,31 +486,8 @@ async def _get_latest_session_approval(session_id: int) -> Optional[AgentApprova
         return result.scalar_one_or_none()
 
 
-async def _cleanup_worktree_for_session(session_id: int) -> None:
-    try:
-        from agent_kanban_pm.runtime.assignment_launcher import prune_git_worktree
-        from agent_kanban_pm.models import Project
-        async with async_session_maker() as db:
-            row = (await db.execute(
-                select(AgentSession).filter(AgentSession.id == session_id)
-            )).scalar_one_or_none()
-            if not row or not row.workspace_path or not row.project_id:
-                return
-            project = (await db.execute(
-                select(Project).filter(Project.id == row.project_id)
-            )).scalar_one_or_none()
-            if not project or not project.path:
-                return
-
-            if row.workspace_path != project.path:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, prune_git_worktree, project.path, row.workspace_path)
-    except Exception as exc:
-        logger.warning("Failed to clean up worktree for session %s: %s", session_id, exc)
-
-
 async def gc_leak_worktrees() -> None:
-    """Scan all projects for registered git worktrees and prune those with no active sessions."""
+    """Prune only worktrees never referenced by a session, and only if clean."""
     try:
         from agent_kanban_pm.runtime.assignment_launcher import prune_git_worktree
         from agent_kanban_pm.models import Project
@@ -520,15 +503,15 @@ async def gc_leak_worktrees() -> None:
             projects_result = await db.execute(select(Project))
             projects = projects_result.scalars().all()
 
-            active_sessions_result = await db.execute(
-                select(AgentSession).filter(
-                    AgentSession.ended_at.is_(None),
+            sessions_result = await db.execute(
+                select(AgentSession.workspace_path).filter(
                     AgentSession.workspace_path.is_not(None)
                 )
             )
-            active_worktree_paths = {
-                Path(s.workspace_path).resolve()
-                for s in active_sessions_result.scalars().all()
+            # A finished session's files still need review and Git integration.
+            # Retain every recorded task workspace until explicit cleanup.
+            recorded_worktree_paths = {
+                Path(path).resolve() for path in sessions_result.scalars().all()
             }
 
         for project in projects:
@@ -555,7 +538,7 @@ async def gc_leak_worktrees() -> None:
                         wt_path = Path(wt_path_str).resolve()
                         project_path_resolved = Path(project.path).resolve()
 
-                        if wt_path != project_path_resolved and wt_path not in active_worktree_paths:
+                        if wt_path != project_path_resolved and wt_path not in recorded_worktree_paths:
                             logger.info("GC pruning orphaned worktree: %s", wt_path_str)
                             await loop.run_in_executor(None, prune_git_worktree, project.path, wt_path_str)
             except Exception as e:
@@ -573,7 +556,6 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
     if early_summary and await _finalize_completed_session(session, "", early_summary):
         if _tmux_has_session(tmux_session):
             kill_session(tmux_session)
-        await _cleanup_worktree_for_session(session.id)
         _pane_cursor.pop(session.id, None)
         _pending_approvals.pop(session.id, None)
         return
@@ -603,7 +585,6 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
                     project_id=row.project_id,
                     entity_id=row.agent_id,
                 )
-        await _cleanup_worktree_for_session(session.id)
         _pane_cursor.pop(session.id, None)
         _pending_approvals.pop(session.id, None)
         return
@@ -654,7 +635,6 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
     summary = await _completion_for_session(session)
     if summary and await _finalize_completed_session(session, pane, summary):
         kill_session(tmux_session)
-        await _cleanup_worktree_for_session(session.id)
         _pane_cursor.pop(session.id, None)
         _pending_approvals.pop(session.id, None)
         return
@@ -701,29 +681,43 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
     # --- Approval queue capture (per-task tmux) -----------------------------
     detection = detect_prompt(pane)
     if not detection:
+        _last_prompt.pop(session.id, None)
         return
     prompt_line, approval_type, yes_reply, no_reply = detection
+    identity = prompt_identity(prompt_line)
+    continuous_prompt = _last_prompt.get(session.id) == identity
+    _last_prompt[session.id] = identity
 
     latest_approval = await _get_latest_session_approval(session.id)
     pending_id = _pending_approvals.get(session.id)
-    same_prompt = bool(latest_approval and latest_approval.message == prompt_line)
+    same_prompt = bool(
+        latest_approval and prompt_identity(latest_approval.command or "") == identity
+    )
     if same_prompt and latest_approval.status == AgentApprovalStatus.PENDING:
         _pending_approvals[session.id] = latest_approval.id
         return
-    if same_prompt and (pending_id is not None or latest_approval):
-        approval_id = pending_id or latest_approval.id
-        resolved = await _resolve_session_id_for_approval(approval_id)
-        if resolved is not None:
-            decision, response_message = resolved
-            if decision == "approved":
-                reply = response_message.strip() or yes_reply
-            elif decision == "rejected":
-                reply = response_message.strip() or no_reply
-            else:
-                reply = no_reply
-            send_text(tmux_session, reply)
-            _pending_approvals.pop(session.id, None)
-        return
+    if same_prompt and latest_approval.status != AgentApprovalStatus.PENDING:
+        if _delivered_approvals.get(session.id) == latest_approval.id and continuous_prompt:
+            return  # Do not replay the same resolved decision every poll.
+        if pending_id == latest_approval.id:
+            resolved = await _resolve_session_id_for_approval(pending_id)
+            if resolved is not None:
+                decision, response_message = resolved
+                # An approval note is for the audit trail, not a keystroke in a
+                # menu. Menu replies are fixed so the requested choice is honored.
+                menu_reply = yes_reply.startswith("keys:") or no_reply.startswith("keys:")
+                if decision == "approved":
+                    reply = yes_reply if menu_reply else response_message.strip() or yes_reply
+                elif decision == "rejected":
+                    reply = no_reply if menu_reply else response_message.strip() or no_reply
+                else:
+                    reply = no_reply
+                send_prompt_reply(tmux_session, reply)
+                _delivered_approvals[session.id] = pending_id
+                _pending_approvals.pop(session.id, None)
+            return
+        # A previous approval was already consumed, or the process restarted
+        # after resolution. Require a fresh decision instead of reusing it.
 
     async with async_session_maker() as db:
         approval = AgentApproval(
@@ -732,8 +726,8 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
             session_id=session.id,
             agent_id=session.agent_id,
             approval_type=ApprovalType(approval_type),
-            title=f"task #{session.task_id}: {approval_type.replace('_', ' ')}",
-            message=prompt_line,
+            title=f"task #{session.task_id}: {approval_label(prompt_line, approval_type)}",
+            message=approval_message(prompt_line, approval_type),
             command=prompt_line,
             status=AgentApprovalStatus.PENDING,
         )

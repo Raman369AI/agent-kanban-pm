@@ -9,6 +9,10 @@ tool by design: one shared token guards the local server, so do not expose it to
 an untrusted network or share an instance with people you would not give shell
 access.
 
+The version in this checkout can be newer than the latest published package.
+`pip install --pre` installs the latest candidate available on PyPI; use the
+matching Git tag when you need to reproduce a particular release.
+
 The server stores state, starts assigned local agents, streams terminal output,
 and advances cards through the standard execution/review handoff. The selected
 orchestrator agent still owns planning, task splitting, assignment strategy,
@@ -89,9 +93,12 @@ kanban run --no-supervisor    # server + UI only
 Click a card to open its task panel. Its link includes the task ID, so it
 can be shared or bookmarked; browser Back closes the panel. Overview shows the
 current task and execution state, while the other tabs contain approvals,
-activity, terminal output, logs, and reviews. An edit draft stays intact
-during a live refresh; if someone else changes the task, saving reports the
-conflict.
+activity, terminal output, logs, and reviews. The task's terminal preview and
+the Activity workbench show a short, de-duplicated Focused view by default;
+the workbench's **Raw output** button reveals the recent captured entries.
+Live output keeps your scroll position while you read. An edit draft stays
+intact during a live refresh; if someone else changes the task, saving reports
+the conflict.
 
 Search by task title, ID, or #ID. Filters for **Needs me**, **Blocked**,
 **Running**, **Unassigned**, agent, and priority use pending approvals and the
@@ -105,9 +112,9 @@ or keyboard. Press `Tab` until a card is focused, then use `Left Arrow` or
 `Right Arrow` to move it to the adjacent stage. Dialogs keep focus inside,
 close with `Escape`, and restore focus to their opener.
 
-**Board view** and **List view** are remembered across reloads. Theme and
-density live under **Appearance**. A rejected move returns the card to its
-original stage and shows the server's reason.
+**Board view** and **List view** are remembered across reloads. Choose
+**White** or **Night** and set density under **Appearance**. A rejected move
+returns the card to its original stage and shows the server's reason.
 
 ## CLI
 
@@ -159,10 +166,23 @@ standard role handoff moving once an assigned session finishes:
    project, task, session, and run token match the active session. It records
    the handoff on that session before moving the card to Review.
 3. Review-stage policy roles, normally `test` and `diff_review`, are assigned
-   and launched from Review when configured in `~/.kanban/preferences.yaml`.
+   and launched only when both a stage policy and role assignments in
+   `~/.kanban/preferences.yaml` are configured.
 4. When review/test sessions complete, the card moves to Done.
-5. Done-stage policy roles, normally `git_pr`, may launch from Done to prepare
-   PR or git contribution work.
+5. A Done-stage policy can launch `git_pr` to prepare Git or PR work. Moving a
+   card to Review alone does not commit, merge, or publish code.
+
+Task worktrees remain available after a session ends so reviewers and Git
+handoffs can inspect uncommitted changes. Automatic cleanup never removes a
+dirty worktree.
+
+Open a task's **Reviews** tab to inspect its Git changes file by file. The
+preview includes committed, staged, unstaged, and untracked text changes from
+the task worktree. If the worktree is gone, it shows committed task-branch
+changes or a saved review snapshot when available. An empty task branch cannot
+reconstruct uncommitted changes from a removed worktree. Pending saved reviews
+have **Approve** and **Reject** actions with optional notes. A decision closes
+the review record; it does not apply the patch, move the task, commit, or merge.
 
 Handoff follows each stage's `workflow_key` (`backlog`, `to_do`,
 `in_progress`, `review`, `done`), not its label, so stages can be renamed
@@ -175,8 +195,10 @@ The database session is the durable handoff source of truth. `STATUS.md` is
 an agent-readable input and can be deleted with the worktree after its verified
 contents are recorded. The streamer checks for a submitted handoff before it
 handles an exited process. If the agent neither submits a handoff nor updates
-the file, the card stays in its current stage for review. The assignment launcher runs one agent session at a time in a non-Git
-workspace so tasks cannot overwrite a shared handoff.
+the file, the card stays in its current stage for review. The assignment
+launcher runs one agent session at a time in a non-Git workspace so tasks
+cannot overwrite a shared handoff.
+
 Chat planning records its decisions and cards in the database without writing
 to `STATUS.md`.
 
@@ -218,17 +240,21 @@ already unaffected, since they run under tmux or a PTY.
 
 Agents run **supervised** by default: the CLI keeps its approval prompts, and
 risky actions (file writes, shell commands, git, network) surface in the
-Kanban approval queue for a human or the orchestrator.
+Kanban approval queue for a human or the orchestrator. Selectable CLI menus
+also enter the queue. For Claude's optional browser setup, **Approve** opens
+the extension installation page; **Reject** continues without browser tools.
+The agent stays blocked until the request is resolved.
 
 Auto mode is an explicit per-role opt-in. Set `autonomy: auto` on a role in
 `~/.kanban/preferences.yaml` (or answer `y` at the autonomy prompt in
 `kanban init`, or pass `--autonomy auto` to `kanban roles assign`). The
 launcher then appends the adapter's bypass flags — `claude
 --permission-mode bypassPermissions`, `agy --dangerously-skip-permissions`,
-`codex --full-auto`, `opencode --auto`, `aider --yes-always`, declared as
-`task_command.auto_args` in the adapter YAML — so the agent never pauses to
-ask. Combined with the per-task worktree, the blast radius is scoped to that
-worktree, and risky actions are expected to be recorded in `STATUS.md`.
+`codex --dangerously-bypass-approvals-and-sandbox`, `opencode --auto`,
+`aider --yes-always`, declared as `task_command.auto_args` in the adapter YAML
+— so the agent never pauses to ask. A per-task worktree isolates the task's
+repository files; the database activity log records the launched command and
+session, while a verified `STATUS.md` can supply a handoff summary.
 Critical review and approval records can still be created through the
 REST/MCP surfaces when an agent or human needs an explicit audit gate.
 
@@ -336,11 +362,24 @@ the packaged runtime.
 
 ## Roadmap
 
-This release candidate completes the guided UI workflow and browser
-coverage for setup, execution, approvals, review, search, and planning
-preview. Before a stable 0.4.0 release, the remaining priorities are runtime
-service extraction and migrations, fuller documentation, and release
-validation across supported platforms.
+The guided UI workflow and its browser coverage are complete. Before a stable
+`0.4.0` release, the remaining work is:
+
+1. Integrate the durable session-handoff and consistent-control changes into
+   `main`, with their changelog entries. They are present in this checkout but
+   are not part of the published package yet.
+2. Review the remaining runtime boundaries and database migration strategy.
+   Task mutations already share a service; project, session, approval, and
+   transition rules still need a deliberate service-boundary decision. The
+   current versioned SQLite upgrades are tested, but an Alembic migration path
+   remains an architectural follow-up unless it is chosen as a stable-release
+   gate.
+3. Pass the full release checks on the integrated commit: Linux Python
+   3.11–3.13, macOS Python 3.12, Chromium workflows, existing-database upgrade,
+   locked dependencies, wheel build, and clean-install smoke test.
+4. Finalize the `0.4.0` changelog and version, merge the release commit, tag
+   it, and verify the published PyPI package and GitHub Release. See
+   [RELEASING.md](RELEASING.md) for the procedure.
 
 ## Security
 

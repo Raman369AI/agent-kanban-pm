@@ -235,23 +235,29 @@ def _sync_worktree_with_base(worktree_path: str, base_ref: Optional[str]) -> tup
 
 
 def prune_git_worktree(project_path: str, worktree_path: str | Path) -> bool:
-    """Safely remove a git worktree using `git worktree remove --force`."""
+    """Remove only a clean worktree; never discard agent or user changes."""
     git = shutil.which("git")
     if not git:
         logger.warning("Cannot prune git worktree: git is not installed")
         return False
+    wt_str = str(worktree_path)
     try:
-        wt_str = str(worktree_path)
-        logger.info("Pruning git worktree at %s (project: %s)", wt_str, project_path)
+        status = subprocess.run(
+            [git, "-C", wt_str, "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if status.returncode != 0:
+            logger.warning("Cannot inspect git worktree %s: %s", wt_str, status.stderr.strip())
+            return False
+        if status.stdout.strip():
+            logger.info("Preserving dirty git worktree %s for review", wt_str)
+            return False
         result = subprocess.run(
-            [git, "-C", project_path, "worktree", "remove", "--force", wt_str],
-            capture_output=True,
-            text=True,
-            timeout=30,
+            [git, "-C", project_path, "worktree", "remove", wt_str],
+            capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             logger.warning("git worktree remove failed for %s: %s", wt_str, result.stderr.strip())
-            subprocess.run([git, "-C", project_path, "worktree", "prune"], capture_output=True, timeout=10)
             return False
         return True
     except Exception as exc:

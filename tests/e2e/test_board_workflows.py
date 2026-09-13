@@ -730,13 +730,65 @@ def test_phase1_viewport_theme_walkthrough(
             expect(page.locator(".sidebar-nav")).to_be_visible()
 
     page.set_viewport_size({"width": 390, "height": 844})
-    for theme in ("light", "dark", "blue", "rose"):
+    for theme in ("light", "dark"):
         page.evaluate("(value) => localStorage.setItem('theme', value)", theme)
         page.goto(url)
         expect(page.locator("html")).to_have_attribute("data-theme", theme)
         expect(page.locator("#new-task-btn")).to_be_visible()
         expect(page.locator("#chat-plan-btn")).to_be_visible()
         expect(page.locator(f"#task-card-{board['task']['id']}")).to_be_visible()
+
+
+def test_white_night_choices_keep_sidebar_readable(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    url = f"{live_server}/ui/projects/{board['project_id']}/board"
+    page.set_viewport_size({"width": 1280, "height": 800})
+    page.add_init_script(
+        "if (!sessionStorage.getItem('seeded-theme')) { "
+        "localStorage.setItem('theme', 'blue'); sessionStorage.setItem('seeded-theme', '1'); }"
+    )
+    page.goto(url)
+    expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+    assert page.evaluate("localStorage.getItem('theme')") == "dark"
+    page.locator(".appearance-menu summary").click()
+    choices = page.locator("[data-set-theme]")
+    expect(choices).to_have_count(2)
+    white = page.locator('[data-set-theme="light"]')
+    night = page.locator('[data-set-theme="dark"]')
+    expect(night).to_have_attribute("aria-pressed", "true")
+
+    for button, theme, background in ((white, "light", [255, 255, 255]),
+                                       (night, "dark", [11, 17, 32])):
+        button.click()
+        expect(page.locator("html")).to_have_attribute("data-theme", theme)
+        expect(button).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#app-sidebar")).to_have_css("width", "260px")
+        expect(page.locator(".content-area")).to_have_css("margin-left", "260px")
+        expect(page.locator(".board-header-section")).to_have_css("border-radius", "24px")
+        nav_link = page.locator(".sidebar-nav .nav-link:not(.active)").first
+        expected_color = "rgb(51, 65, 85)" if theme == "light" else "rgb(203, 213, 225)"
+        expect(nav_link).to_have_css("color", expected_color)
+        ratio = nav_link.evaluate(
+            r"""(link, background) => {
+                const values = getComputedStyle(link).color.match(/[\d.]+/g).slice(0, 3).map(Number);
+                const lum = channels => channels.map(value => {
+                    const channel = value / 255;
+                    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+                }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+                const text = lum(values), surface = lum(background);
+                return (Math.max(text, surface) + 0.05) / (Math.min(text, surface) + 0.05);
+            }""",
+            background,
+        )
+        assert ratio >= 4.5, f"{theme} sidebar labels have contrast {ratio:.2f}:1"
+
+    page.reload()
+    expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+    page.evaluate("localStorage.setItem('theme', 'rose')")
+    page.reload()
+    expect(page.locator("html")).to_have_attribute("data-theme", "light")
 
 
 def test_phase1_controls_at_200_percent_phone_zoom_equivalent(
@@ -1015,3 +1067,198 @@ def test_phase5_plan_preview_cancel_and_selected_commit_once(
     expect(page.locator(".kanban-task-revamp")).to_have_count(2)
     expect(page.locator(".kanban-task-revamp").filter(has_text="Only selected proposal")).to_have_count(1)
     expect(input_box).to_have_value("")
+
+
+def test_terminal_focus_keeps_raw_output_and_task_link(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    agent_response = api.post(
+        "/entities/register/agent",
+        json={"name": f"terminal-agent-{uuid.uuid4().hex[:8]}", "entity_type": "agent"},
+        headers=board["headers"],
+    )
+    agent_response.raise_for_status()
+    agent_id = agent_response.json()["id"]
+    agent_headers = {"X-Entity-ID": str(agent_id)}
+    session_response = api.post(
+        f"/agents/{agent_id}/sessions",
+        json={
+            "project_id": board["project_id"],
+            "task_id": board["task"]["id"],
+            "workspace_path": "/tmp/terminal-browser-test",
+            "command": "agent --work",
+        },
+        headers=agent_headers,
+    )
+    session_response.raise_for_status()
+    session_id = session_response.json()["id"]
+    pane = "\n".join(
+        ["╭─────────╮", "│ Implementing parser │", "╰─────────╯", "Type your message"]
+        + [f"Output line {number}" for number in range(80)]
+        + ["Implementing parser", "Tests passed"]
+    )
+    activity_response = api.post(
+        f"/agents/{agent_id}/activity",
+        json={
+            "project_id": board["project_id"],
+            "task_id": board["task"]["id"],
+            "session_id": session_id,
+            "activity_type": "observation",
+            "source": "tmux_pane",
+            "message": pane,
+        },
+        headers=agent_headers,
+    )
+    activity_response.raise_for_status()
+
+    task_id = board["task"]["id"]
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/workbench#terminal:task:{task_id}")
+    viewer = page.locator("#wb-terminal-pre")
+    expect(page.locator("#wb-pane-terminal")).to_have_class("wb-pane active")
+    expect(page.locator("#wb-terminal-info")).to_contain_text(f"Task #{task_id}")
+    expect(viewer).to_contain_text("Tests passed")
+    expect(viewer).not_to_contain_text("Type your message")
+    expect(viewer).not_to_contain_text("╭─────────╮")
+    assert viewer.text_content().count("Implementing parser") == 1
+    expect(page.locator("#wb-terminal-focused")).to_have_attribute("aria-pressed", "true")
+
+    page.locator("#wb-terminal-raw").click()
+    expect(viewer).to_contain_text("Type your message")
+    expect(viewer).to_contain_text("╭─────────╮")
+    expect(page.locator("#wb-terminal-raw")).to_have_attribute("aria-pressed", "true")
+    page.evaluate("document.getElementById('wb-terminal-pre').scrollTop = 100")
+    before = page.evaluate("document.getElementById('wb-terminal-pre').scrollTop")
+    assert before > 0
+
+    update = api.post(
+        f"/agents/{agent_id}/activity",
+        json={
+            "project_id": board["project_id"],
+            "task_id": task_id,
+            "session_id": session_id,
+            "activity_type": "observation",
+            "source": "tmux_pane",
+            "message": "New output after refresh",
+        },
+        headers=agent_headers,
+    )
+    update.raise_for_status()
+    page.evaluate("refreshWbTerminal()")
+    expect(viewer).to_contain_text("New output after refresh")
+    after = page.evaluate("document.getElementById('wb-terminal-pre').scrollTop")
+    assert abs(after - before) < 2
+
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    card = page.locator(f"#task-card-{task_id}")
+    card.focus()
+    card.press("Enter")
+    panel = page.locator("#task-detail-panel")
+    panel.get_by_role("tab", name="Terminal").click()
+    preview = panel.locator(f"#task-terminal-pre-{task_id}")
+    expect(preview).to_contain_text("Tests passed")
+    expect(preview).not_to_contain_text("Type your message")
+    live_update = api.post(
+        f"/agents/{agent_id}/activity",
+        json={
+            "project_id": board["project_id"],
+            "task_id": task_id,
+            "session_id": session_id,
+            "activity_type": "observation",
+            "source": "tmux_pane",
+            "message": "Live agent update",
+        },
+        headers=agent_headers,
+    )
+    live_update.raise_for_status()
+    expect(preview).to_contain_text("Live agent update")
+
+
+
+def test_reviews_tab_displays_task_git_diff_by_file(page: Page, live_server: str, api: httpx.Client):
+    board = _prepare_board(api)
+    task_id = board["task"]["id"]
+    project_id = board["project_id"]
+    patch = (
+        "diff --git a/README.md b/README.md\n"
+        "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n"
+        "-old\n+new\n"
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n+++ b/src/app.py\n@@ -0,0 +1 @@\n"
+        "+<img src=x onerror=alert(1)>\n"
+    )
+    page.route(
+        f"**/agents/projects/{project_id}/tasks/{task_id}/git-diff",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"source": "worktree", "base_ref": "main", "branch": "kanban/task",
+                             "diff": patch, "truncated": False}),
+        ),
+    )
+    page.goto(f"{live_server}/ui/projects/{project_id}/board")
+    card = page.locator(f"#task-card-{task_id}")
+    card.focus()
+    card.press("Enter")
+    panel = page.locator("#task-detail-panel")
+    panel.get_by_role("tab", name="Reviews").click()
+    expect(panel.locator(".task-diff-file")).to_have_count(2)
+    expect(panel.locator(".task-diff-file").first).to_contain_text("README.md")
+    expect(panel.locator(".task-diff-line.added").first).to_have_text("+new")
+    assert panel.locator("img[src=x]").count() == 0
+    panel.locator(".task-diff-file").nth(1).locator("summary").click()
+    expect(panel.locator(".task-diff-file").nth(1)).to_contain_text("<img src=x onerror=alert(1)>")
+
+
+
+def test_reviews_tab_can_approve_and_reject_saved_patches(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    task_id = board["task"]["id"]
+    project_id = board["project_id"]
+
+    def create_review(label: str) -> int:
+        response = api.post(
+            f"/agents/projects/{project_id}/diff-reviews",
+            json={
+                "project_id": project_id,
+                "task_id": task_id,
+                "diff_content": f"diff --git a/{label}.txt b/{label}.txt\n+++ b/{label}.txt\n+{label}\n",
+                "summary": f"{label} patch",
+            },
+            headers=board["headers"],
+        )
+        response.raise_for_status()
+        return response.json()["id"]
+
+    approve_id = create_review("approve")
+    page.goto(f"{live_server}/ui/projects/{project_id}/board?task={task_id}")
+    panel = page.locator("#task-detail-panel")
+    panel.get_by_role("tab", name="Reviews").click()
+    approved_card = panel.locator(f"#task-review-{approve_id}")
+    expect(approved_card.get_by_role("button", name="Approve")).to_be_visible()
+    approved_card.locator(".task-review-snapshot > summary").click()
+    expect(approved_card.locator(".task-diff-line.added")).to_have_text("+approve")
+    approved_card.locator(".task-review-note").fill("Looks ready")
+    approved_card.get_by_role("button", name="Approve").click()
+    expect(approved_card.locator(".task-review-status")).to_have_text("approved")
+    expect(approved_card.get_by_role("button", name="Approve")).to_have_count(0)
+
+    reject_id = create_review("reject")
+    page.evaluate(f"fetchTaskReviews({task_id})")
+    rejected_card = panel.locator(f"#task-review-{reject_id}")
+    expect(rejected_card.get_by_role("button", name="Reject")).to_be_visible()
+    rejected_card.locator(".task-review-note").fill("Needs revision")
+    rejected_card.get_by_role("button", name="Reject").click()
+    expect(rejected_card.locator(".task-review-status")).to_have_text("rejected")
+    expect(rejected_card).to_contain_text("Needs revision")
+
+    reviews = api.get(
+        f"/agents/projects/{project_id}/diff-reviews?task_id={task_id}",
+        headers=board["headers"],
+    )
+    reviews.raise_for_status()
+    statuses = {review["id"]: review["status"] for review in reviews.json()}
+    assert statuses[approve_id] == "approved"
+    assert statuses[reject_id] == "rejected"

@@ -38,6 +38,8 @@ from agent_kanban_pm.schemas import (
 from agent_kanban_pm.auth import get_current_entity, is_owner_or_manager
 from agent_kanban_pm.events import event_bus, EventType
 from agent_kanban_pm.runtime.handoff_protocol import read_status_file, status_matches_session, status_identity_matches_session
+from agent_kanban_pm.runtime.assignment_launcher import _task_branch_name
+from agent_kanban_pm.services.git_diff import read_task_git_diff
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agents", tags=["agent-activity"])
@@ -610,10 +612,13 @@ async def get_agent_terminal(
     activity_result = await db.execute(
         select(AgentActivity)
         .filter(AgentActivity.session_id == session_id)
-        .order_by(AgentActivity.created_at.asc())
+        .order_by(AgentActivity.id.desc())
         .limit(limit)
     )
-    return {"session": session, "activities": activity_result.scalars().all()}
+    # Fetch the newest entries, then display them in reading order. Taking the
+    # oldest rows made a busy agent's terminal appear to stop updating.
+    activities = list(reversed(activity_result.scalars().all()))
+    return {"session": session, "activities": activities}
 
 
 class SessionHandoffSubmit(BaseModel):
@@ -1263,10 +1268,66 @@ async def log_agent_activity(
     return db_activity
 
 
+@router.get("/projects/{project_id}/tasks/{task_id}/git-diff")
+async def get_task_git_diff(
+    project_id: int,
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Show task changes from a surviving worktree or committed task branch."""
+    task = (await db.execute(select(Task).filter(
+        Task.id == task_id, Task.project_id == project_id,
+    ))).scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found in project")
+    project = (await db.execute(select(Project).filter(Project.id == project_id))).scalar_one_or_none()
+    sessions = []
+    if project is not None and project.path:
+        sessions = (await db.execute(
+            select(AgentSession, Entity).join(Entity, AgentSession.agent_id == Entity.id)
+            .filter(AgentSession.project_id == project_id, AgentSession.task_id == task_id)
+            .order_by(desc(AgentSession.started_at), desc(AgentSession.id))
+        )).all()
+    empty_snapshot = None
+    for session, agent in sessions:
+        branch = _task_branch_name(task, agent)
+        snapshot = await asyncio.to_thread(
+            read_task_git_diff, project.path, session.workspace_path, branch,
+        )
+        if snapshot is not None:
+            snapshot["session_id"] = session.id
+            if snapshot["diff"]:
+                return snapshot
+            if empty_snapshot is None:
+                empty_snapshot = snapshot
+
+    review = (await db.execute(
+        select(DiffReview)
+        .filter(DiffReview.project_id == project_id, DiffReview.task_id == task_id)
+        .order_by(desc(DiffReview.created_at), desc(DiffReview.id))
+        .limit(1)
+    )).scalar_one_or_none()
+    if review is not None:
+        return {
+            "source": "review", "diff": review.diff_content,
+            "message": "Saved review snapshot; the task workspace is unavailable.",
+            "review_id": review.id,
+        }
+    if empty_snapshot is not None:
+        return empty_snapshot
+    if project is None or not project.path:
+        return {"source": "none", "diff": "", "message": "This project has no Git workspace."}
+    return {
+        "source": "none", "diff": "",
+        "message": "No task Git changes are available. The worktree may have been removed before its changes were saved.",
+    }
+
+
 @router.get("/projects/{project_id}/diff-reviews", response_model=List[DiffReviewResponse])
 async def get_project_diff_reviews(
     project_id: int,
     status: Optional[str] = None,
+    task_id: Optional[int] = None,
     limit: int = 50,
     db: AsyncSession = Depends(get_db)
 ):
@@ -1278,6 +1339,8 @@ async def get_project_diff_reviews(
     )
     if status:
         query = query.filter(DiffReview.status == status)
+    if task_id is not None:
+        query = query.filter(DiffReview.task_id == task_id)
     result = await db.execute(query)
     return result.scalars().all()
 

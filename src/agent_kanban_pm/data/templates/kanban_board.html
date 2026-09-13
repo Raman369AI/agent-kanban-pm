@@ -350,7 +350,8 @@
                 <div class="task-overview" id="task-overview-{{ task.id }}">Loading task details…</div>
               </div>
               <div class="expansion-pane" role="tabpanel" id="expansion-pane-terminal-{{ task.id }}">
-                <div style="display:flex;justify-content:flex-end;margin-bottom:0.35rem;">
+                <div class="in-card-activity-header" style="justify-content:space-between;align-items:center;">
+                  <span class="text-secondary" style="font-size:0.72rem;">Recent agent output</span>
                   <button class="btn-link" style="font-size:0.72rem;" onclick="event.stopPropagation();popOutTerminal({{ task.id }})">&#8599; Open in Workbench</button>
                 </div>
                 <pre class="in-card-terminal" id="task-terminal-pre-{{ task.id }}" style="background:#020617;color:#d1fae5;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.72rem;line-height:1.4;padding:0.6rem;border-radius:var(--radius-sm);max-height:220px;overflow:auto;white-space:pre-wrap;margin:0;">No active session.</pre>
@@ -372,6 +373,16 @@
                 <div id="task-logs-{{ task.id }}" class="task-logs-list">Loading task logs…</div>
               </div>
               <div class="expansion-pane" role="tabpanel" id="expansion-pane-reviews-{{ task.id }}">
+                <div class="task-diff-heading">
+                  <div>
+                    <strong>Git changes</strong>
+                    <span id="task-git-diff-source-{{ task.id }}" class="text-secondary">Loading&hellip;</span>
+                  </div>
+                  <button type="button" class="btn-link" onclick="refreshTaskGitDiff({{ task.id }})">Refresh diff</button>
+                </div>
+                <div id="task-git-diff-{{ task.id }}" class="task-git-diff" aria-live="polite"></div>
+                <h4 class="task-review-heading">Review decisions</h4>
+                <p class="task-review-guidance">Approve or reject the saved patch. Agent runs finish separately; this does not move the task or merge code.</p>
                 <div id="task-reviews-list-{{ task.id }}">
                   <p class="text-secondary" style="font-size:0.8rem;">Loading&hellip;</p>
                 </div>
@@ -687,5 +698,6 @@
     var PLAN_STAGE_ID = {{ new_task_default_stage.id if new_task_default_stage else 'null' }};
 </script>
 <script src="/static/js/role-settings.js"></script>
+<script src="/static/js/terminal-feed.js"></script>
 <script src="/static/js/board.js"></script>
 {% endblock %}

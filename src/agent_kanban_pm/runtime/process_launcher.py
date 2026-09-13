@@ -230,6 +230,28 @@ def capture_pane(session_name: str, lines: int = 50) -> str:
     return pty_manager.capture_pane(session_name, lines)
 
 
+def send_prompt_reply(session_name: str, reply: str) -> None:
+    """Send a literal reply or a whitelisted sequence of menu keys."""
+    if not reply.startswith("keys:"):
+        send_text(session_name, reply)
+        return
+    keys = reply.removeprefix("keys:").split(",")
+    if not keys or any(key not in {"Up", "Down", "Enter", "Escape"} for key in keys):
+        raise ValueError("Unsupported interactive prompt key sequence")
+    if tmux_available():
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, *keys],
+            capture_output=True,
+            check=True,
+            timeout=3,
+        )
+    else:
+        sequences = {"Up": "\x1b[A", "Down": "\x1b[B", "Enter": "\r", "Escape": "\x1b"}
+        pty_manager.send_text(
+            session_name, "".join(sequences[key] for key in keys), press_enter=False
+        )
+
+
 def send_text(session_name: str, text: str, press_enter: bool = True) -> None:
     """Sends keystrokes / text inputs to a session's stdin."""
     if tmux_available():
