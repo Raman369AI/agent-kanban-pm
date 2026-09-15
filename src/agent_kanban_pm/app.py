@@ -229,7 +229,7 @@ async def _orphaned_session_sweeper(staleness_seconds: int = 300, interval_secon
     A session is considered orphaned if:
       - ended_at is NULL (still marked active)
       - last_seen_at is older than staleness_seconds
-      - The tmux session no longer exists (if command was set)
+      - Its runner no longer exists (if command was set)
     """
     from agent_kanban_pm.runtime.assignment_launcher import _tmux_session_name
     from agent_kanban_pm.runtime.process_launcher import session_state
