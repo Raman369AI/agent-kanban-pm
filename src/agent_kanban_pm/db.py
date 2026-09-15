@@ -268,6 +268,11 @@ async def _migrate_db_schema():
                     await conn.execute(text(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}"))
             await _record_migration(11, "session_handoff_identity")
 
+        if not await _migration_applied(12):
+            if not await _column_exists(conn, "agent_sessions", "exit_code"):
+                await conn.execute(text("ALTER TABLE agent_sessions ADD COLUMN exit_code INTEGER"))
+            await _record_migration(12, "session_process_exit_code")
+
     # Backfill default roles
     async with async_session_maker() as session:
         from agent_kanban_pm.models import Entity

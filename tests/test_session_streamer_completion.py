@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agent_kanban_pm.db import async_session_maker, init_db
 from agent_kanban_pm.runtime.handoff_protocol import update_status_file
 from agent_kanban_pm.runtime.preferences import RoleAssignment
+from agent_kanban_pm.runtime.process_launcher import RunnerState
 from agent_kanban_pm.runtime.session_streamer import (
     _completion_for_session,
     _stream_one_session,
@@ -330,3 +331,118 @@ async def test_handoff_submission_rejects_wrong_run_and_is_idempotent(tmp_path):
         assert session.handoff_summary == "Ready"
         assert session.handoff_received_at is not None
         assert task.status == TaskStatus.IN_PROGRESS
+
+
+async def _create_exit_driven_session(tmp_path, suffix):
+    await init_db()
+    workspace = tmp_path / suffix
+    workspace.mkdir()
+    async with async_session_maker() as db:
+        owner = Entity(
+            name=f"exit-owner-{suffix}", entity_type=EntityType.HUMAN,
+            role=Role.OWNER, is_active=True,
+        )
+        agent = Entity(
+            name=f"exit-agent-{suffix}", entity_type=EntityType.AGENT,
+            role=Role.WORKER, is_active=True,
+        )
+        db.add_all([owner, agent])
+        await db.flush()
+        project = Project(
+            name=f"exit-project-{suffix}", creator_id=owner.id,
+            approval_status=ApprovalStatus.APPROVED, path=str(workspace),
+        )
+        db.add(project)
+        await db.flush()
+        progress = Stage(project_id=project.id, name="In Progress", order=3)
+        review = Stage(project_id=project.id, name="Review", order=4)
+        db.add_all([progress, review])
+        await db.flush()
+        task = Task(
+            title=f"Exit task {suffix}", project_id=project.id,
+            stage_id=progress.id, status=TaskStatus.IN_PROGRESS,
+            created_by=owner.id,
+        )
+        db.add(task)
+        await db.flush()
+        session = AgentSession(
+            agent_id=agent.id, project_id=project.id, task_id=task.id,
+            workspace_path=str(workspace), assigned_role="worker",
+            run_token=f"run-{suffix}", status=AgentSessionStatus.ACTIVE,
+            command="agent-cli",
+        )
+        db.add(session)
+        await db.commit()
+        session_id, task_id, stage_id = session.id, task.id, progress.id
+
+    async with async_session_maker() as db:
+        session = await db.get(AgentSession, session_id)
+    return session, task_id, stage_id
+
+
+@pytest.mark.asyncio
+async def test_zero_exit_completes_without_status_file(tmp_path, monkeypatch):
+    session, task_id, _ = await _create_exit_driven_session(tmp_path, "success")
+
+    async def publish_noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.session_streamer.event_bus.publish", publish_noop
+    )
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.session_streamer._runner_state",
+        lambda _: RunnerState("exited", 0),
+    )
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.session_streamer.capture_pane",
+        lambda *args, **kwargs: "Tests passed\nImplementation ready",
+    )
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.session_streamer.kill_session", lambda _: True
+    )
+
+    await _stream_one_session(session, "exit-agent-success")
+
+    async with async_session_maker() as db:
+        saved_session = await db.get(AgentSession, session.id)
+        task = await db.get(Task, task_id)
+    assert saved_session.status == AgentSessionStatus.DONE
+    assert saved_session.exit_code == 0
+    assert saved_session.handoff_summary.startswith("CLI exited successfully.")
+    assert task.status == TaskStatus.IN_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_nonzero_exit_is_error_and_does_not_advance_task(tmp_path, monkeypatch):
+    session, task_id, progress_stage_id = await _create_exit_driven_session(
+        tmp_path, "failure"
+    )
+
+    async def publish_noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.session_streamer.event_bus.publish", publish_noop
+    )
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.session_streamer._runner_state",
+        lambda _: RunnerState("exited", 9),
+    )
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.session_streamer.capture_pane",
+        lambda *args, **kwargs: "fatal error",
+    )
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.session_streamer.kill_session", lambda _: True
+    )
+
+    await _stream_one_session(session, "exit-agent-failure")
+
+    async with async_session_maker() as db:
+        saved_session = await db.get(AgentSession, session.id)
+        task = await db.get(Task, task_id)
+    assert saved_session.status == AgentSessionStatus.ERROR
+    assert saved_session.exit_code == 9
+    assert task.stage_id == progress_stage_id
+    assert task.status == TaskStatus.IN_PROGRESS

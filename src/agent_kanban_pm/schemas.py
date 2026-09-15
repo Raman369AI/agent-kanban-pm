@@ -268,6 +268,7 @@ class AgentSessionResponse(BaseModel):
     mode: Optional[str] = None
     started_at: datetime
     ended_at: Optional[datetime] = None
+    exit_code: Optional[int] = None
     last_seen_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
