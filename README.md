@@ -157,11 +157,11 @@ The server does not choose which agent should do new work, but it does keep the
 standard role handoff moving once an assigned session finishes:
 
 1. A worker assignment starts from To Do or In Progress.
-2. The agent submits a handoff through `POST /agents/sessions/{id}/handoff` or
-   marks its worktree `STATUS.md` with `handoff_ready: true` and `state: done`,
-   `completed`, or `review`. The streamer accepts a file only when its
-   project, task, session, and run token match the active session. It records
-   the handoff on that session before moving the card to Review.
+2. The agent session finishes successfully. A handoff submitted through
+   `POST /agents/sessions/{id}/handoff` or a verified `STATUS.md` can provide
+   the summary. The streamer also accepts a zero process exit without either
+   handoff and builds the summary from the terminal output before moving the
+   card to Review.
 3. Review-stage policy roles, normally `test` and `diff_review`, are assigned
    and launched only when both a stage policy and role assignments in
    `~/.kanban/preferences.yaml` are configured.
@@ -189,12 +189,12 @@ is renamed; pass `workflow_key` when creating a custom stage to give it workflow
 meaning. Stages with no recognised key leave a moved task's status unchanged.
 
 The database session is the durable handoff source of truth. `STATUS.md` is
-an agent-readable input and can be deleted with the worktree after its verified
-contents are recorded. The streamer checks for a submitted handoff before it
-handles an exited process. If the agent neither submits a handoff nor updates
-the file, the card stays in its current stage for review. The assignment
-launcher runs one agent session at a time in a non-Git workspace so tasks
-cannot overwrite a shared handoff.
+an optional, agent-readable input and can be deleted with the worktree after
+its verified contents are recorded. The streamer checks for a submitted
+handoff before it handles an exited process. A zero exit advances the card;
+a nonzero exit or a missing runner records an error and leaves the card in its
+current stage. The assignment launcher runs one agent session at a time in a
+non-Git workspace so tasks cannot overwrite a shared handoff.
 
 Chat planning records its decisions and cards in the database without writing
 to `STATUS.md`.
