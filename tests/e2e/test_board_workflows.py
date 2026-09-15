@@ -521,6 +521,9 @@ def test_card_overflow_menu_focus_visibility_and_move_to_todo(
 
     # Deleting from the menu removes the card after confirmation.
     more.click()
+    # The local task_moved WebSocket echo must not replace the open menu.
+    page.wait_for_timeout(700)
+    expect(menu_item).to_be_visible()
     page.once("dialog", lambda dialog: dialog.accept())
     menu_item.click()
     expect(page.locator(f"#task-card-{task_id}")).to_have_count(0)

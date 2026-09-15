@@ -5,6 +5,7 @@
     var expandedCards = {};
     var expandedCardTabs = {};
     var draggedTask = null;
+    var expectedLocalMoves = {};
 
 
     // --- Notification settings ---
@@ -867,6 +868,22 @@
     });
 
     // --- Drag and Drop ---
+    function expectLocalMove(taskId, stageId) {
+        var key = String(taskId);
+        var expectedStage = String(stageId);
+        expectedLocalMoves[key] = expectedStage;
+        setTimeout(function() {
+            if (expectedLocalMoves[key] === expectedStage) delete expectedLocalMoves[key];
+        }, 2000);
+    }
+    function forgetLocalMove(taskId, stageId) {
+        var key = String(taskId);
+        if (expectedLocalMoves[key] === String(stageId)) delete expectedLocalMoves[key];
+    }
+    function consumeLocalMoveEvent(data) {
+        var key = String(data.task_id);
+        return expectedLocalMoves[key] === String(data.to_stage_id);
+    }
     function initDragDrop() {
         document.querySelectorAll('.kanban-task-revamp').forEach(function(task) { bindDragEvents(task); });
         document.querySelectorAll('.kanban-drop-zone-revamp').forEach(function(zone) { bindDropZone(zone); });
@@ -914,6 +931,7 @@
         addPlaceholderIfEmpty(oldZone);
         updateColumnCount(oldStageId, -1);
         updateColumnCount(newStageId, 1);
+        expectLocalMove(taskId, newStageId);
         return apiFetch('/ui/tasks/' + taskId + '/move', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
@@ -927,6 +945,7 @@
             applyBoardFilters(true);
             return true;
         }).catch(function(err) {
+            forgetLocalMove(taskId, newStageId);
             clearPlaceholder(oldZone);
             oldZone.appendChild(card);
             card.dataset.currentStage = oldStageId;
@@ -984,14 +1003,17 @@
         if (!card) { showToast('Task card not found', 'error'); return; }
         if (card.dataset.currentStage === todoStageId) return;
         if (btn) btn.disabled = true;
+        expectLocalMove(taskId, todoStageId);
         apiFetch('/ui/tasks/' + taskId + '/move', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
             body: JSON.stringify({ stage_id: parseInt(todoStageId), status: 'pending', summary: 'Moved from Backlog to To Do' })
         }, 'Failed to move task').then(function() {
-            showToast('Task moved to To Do. Assign a worker to start it.', 'success');
             return refreshBoardFromServer();
+        }).then(function() {
+            showToast('Task moved to To Do. Assign a worker to start it.', 'success');
         }).catch(function(err) {
+            forgetLocalMove(taskId, todoStageId);
             showToast('Failed: ' + err.message, 'error');
         }).finally(function() {
             if (btn && btn.isConnected) btn.disabled = false;
@@ -1678,7 +1700,10 @@
                     badge.closest('.kanban-task-revamp').dataset.status = data.status;
                 }
                 if (activeTaskId === Number(data.task_id)) fetchTaskOverview(activeTaskId);
-                if (msg.event_type === 'task_moved' || data.status === 'completed') { setTimeout(refreshBoardFromServer, 500); }
+                var isExpectedLocalMove = msg.event_type === 'task_moved' && consumeLocalMoveEvent(data);
+                if (!isExpectedLocalMove && (msg.event_type === 'task_moved' || data.status === 'completed')) {
+                    setTimeout(refreshBoardFromServer, 500);
+                }
             } else if (msg.event_type === 'task_commented') {
                 showToast('\u{1F4AC} Task #' + msg.data.task_id + ': ' + msg.data.comment.substring(0, 30) + '...', 'info', {background: true});
             } else if (msg.event_type === 'task_assigned') {

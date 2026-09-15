@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **CLI completion comes from the runner process state.** Tmux retains finished panes long enough to capture the real exit code; successful exits advance the task without requiring `STATUS.md`, while failed or vanished runners become errors and leave the card in place. The native PTY fallback uses the same lifecycle.
+- **Card menus stay open after local task moves.** The board waits for its own refresh before showing success and ignores duplicate WebSocket echoes of that move, preventing a delayed rerender from detaching an active menu.
 
 
 ## [0.4.0] — 2026-09-13
