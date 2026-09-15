@@ -7,8 +7,9 @@ import os
 import shlex
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Literal, Mapping, Optional
 
 from agent_kanban_pm.runtime.pty_manager import pty_manager
 
@@ -17,6 +18,18 @@ logger = logging.getLogger(__name__)
 # tmux rejects send-keys arguments above roughly 4-8 KiB ("command too long"),
 # so long payloads are typed into the pane in literal chunks well under that.
 TMUX_SEND_KEYS_CHUNK_SIZE = 2000
+
+
+@dataclass(frozen=True)
+class RunnerState:
+    """Observed process state, kept separate from task completion state."""
+
+    status: Literal["running", "exited", "missing", "unknown"]
+    exit_code: Optional[int] = None
+
+    @property
+    def running(self) -> bool:
+        return self.status == "running"
 
 
 def tmux_available() -> bool:
@@ -90,16 +103,44 @@ def _tmux_paste_text(session_name: str, text: str, *, check: bool) -> bool:
 
 
 def tmux_has_session(session_name: str) -> bool:
+    return tmux_session_state(session_name).running
+
+
+def tmux_session_state(session_name: str) -> RunnerState:
+    """Read the pane process state and exit code without parsing terminal text."""
     try:
         result = subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
+            [
+                "tmux", "display-message", "-p", "-t", session_name,
+                "#{pane_dead}:#{pane_dead_status}",
+            ],
             capture_output=True,
+            text=True,
             timeout=3,
         )
-        return result.returncode == 0
+        if result.returncode != 0:
+            error = (result.stderr or "").lower()
+            missing_markers = ("can't find session", "no server running", "no sessions")
+            if any(marker in error for marker in missing_markers):
+                return RunnerState("missing")
+            logger.warning("tmux state query failed for %s: %s", session_name, error.strip())
+            return RunnerState("unknown")
+        dead, _, raw_exit_code = result.stdout.strip().partition(":")
+        if dead == "0":
+            return RunnerState("running")
+        if dead == "1":
+            if raw_exit_code == "":
+                return RunnerState("exited", 0)
+            try:
+                return RunnerState("exited", int(raw_exit_code))
+            except ValueError:
+                logger.warning("tmux returned an invalid exit status for %s: %r", session_name, raw_exit_code)
+                return RunnerState("unknown")
+        logger.warning("tmux returned an invalid pane state for %s: %r", session_name, result.stdout)
+        return RunnerState("unknown")
     except Exception as exc:
-        logger.debug("tmux has-session check failed for %s: %s", session_name, exc)
-        return False
+        logger.warning("tmux state check failed for %s: %s", session_name, exc)
+        return RunnerState("unknown")
 
 
 def tmux_kill_session(session_name: str) -> bool:
@@ -138,7 +179,7 @@ def start_tmux_session(
     """Start a detached tmux session and run a shell-escaped command in it."""
     if not tmux_available():
         raise RuntimeError("tmux is required for headless agent execution")
-    if kill_existing and tmux_has_session(session_name):
+    if kill_existing and tmux_session_state(session_name).status != "missing":
         tmux_kill_session(session_name)
 
     subprocess.run(
@@ -147,8 +188,18 @@ def start_tmux_session(
         check=True,
         timeout=10,
     )
+    # Keep the pane after the CLI exits so the streamer can capture its final
+    # output and read pane_dead_status. Set this before starting the CLI.
+    subprocess.run(
+        ["tmux", "set-option", "-t", session_name, "remain-on-exit", "on"],
+        capture_output=True,
+        check=True,
+        timeout=10,
+    )
     env_prefix = shell_env_prefix(env or os.environ)
     command = shell_command(args)
+    # Replace the bootstrap shell so tmux observes the CLI process exit.
+    command = f"exec {command}"
     if env_prefix:
         command = f"{env_prefix} {command}"
     tmux_send_literal(session_name, command, check=True)
@@ -174,6 +225,19 @@ def has_session(session_name: str) -> bool:
     if tmux_available():
         return tmux_has_session(session_name)
     return pty_manager.exists(session_name)
+
+
+def session_state(session_name: str) -> RunnerState:
+    """Return the process state for either the tmux or native PTY runner."""
+    if tmux_available():
+        return tmux_session_state(session_name)
+    process = pty_manager.get_session_process(session_name)
+    if process is None:
+        return RunnerState("missing")
+    exit_code = pty_manager.exit_code(session_name)
+    if exit_code is None:
+        return RunnerState("running")
+    return RunnerState("exited", exit_code)
 
 
 def kill_session(session_name: str) -> bool:

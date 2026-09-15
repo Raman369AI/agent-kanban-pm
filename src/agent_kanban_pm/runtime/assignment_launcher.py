@@ -61,6 +61,7 @@ from agent_kanban_pm.runtime.process_launcher import (
     runner_available,
     has_session,
     kill_session,
+    session_state,
     start_session,
 )
 from agent_kanban_pm.runtime.preferences import (
@@ -821,7 +822,8 @@ class AssignmentLauncher:
         env["KANBAN_SESSION_ID"] = str(session_id)
         env["KANBAN_RUN_TOKEN"] = db_session.run_token
         env["KANBAN_API_BASE"] = self.api_base
-        if await asyncio.to_thread(_tmux_has_session, session_name):
+        existing_runner = await asyncio.to_thread(session_state, session_name)
+        if existing_runner.status != "missing":
             await asyncio.to_thread(kill_session, session_name)
         try:
             await asyncio.to_thread(

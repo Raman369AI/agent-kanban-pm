@@ -16,7 +16,7 @@ This module periodically:
      project_id so the UI's Terminal feed reflects live progress.
   4. Detects known approval-style prompts (same regex set as the role
      supervisor) and files an AgentApproval, marking the session BLOCKED.
-  5. Marks the session DONE when the tmux session has gone away.
+  5. Finalizes on a captured process exit code; missing runners become errors.
 """
 
 from __future__ import annotations
@@ -48,6 +48,8 @@ from agent_kanban_pm.models import (
     Stage,
     Task,
     TaskLog,
+    TaskLease,
+    LeaseStatus,
     TaskStatus,
     task_assignments,
 )
@@ -62,6 +64,8 @@ from agent_kanban_pm.runtime.process_launcher import (
     kill_session,
     capture_pane,
     send_prompt_reply,
+    session_state,
+    RunnerState,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +92,13 @@ def reset_streamer():
 
 def _tmux_available() -> bool:
     return runner_available()
+
+
+def _runner_state(session_name: str) -> RunnerState:
+    """Preserve the mockable running check while exposing terminal exit state."""
+    if _tmux_has_session(session_name):
+        return RunnerState("running")
+    return session_state(session_name)
 
 
 def _tmux_has_session(session_name: str) -> bool:
@@ -310,7 +321,9 @@ async def _advance_task_after_session(db, session: AgentSession, task: Task) -> 
     }, assigned
 
 
-async def _finalize_completed_session(session: AgentSession, pane: str, summary: str) -> bool:
+async def _finalize_completed_session(
+    session: AgentSession, pane: str, summary: str, exit_code: Optional[int] = None
+) -> bool:
     """Mark the session DONE, record handoff, and advance the card to the next collaboration stage."""
     now = datetime.now(UTC)
     async with async_session_maker() as db:
@@ -329,6 +342,7 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
                 status=AgentSessionStatus.DONE,
                 ended_at=now,
                 last_seen_at=now,
+                exit_code=exit_code,
                 handoff_summary=summary,
                 handoff_state=func.coalesce(AgentSession.handoff_state, "done"),
                 handoff_received_at=func.coalesce(AgentSession.handoff_received_at, now),
@@ -343,6 +357,16 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
             return False
 
         transition_event, assigned_stage_roles = await _advance_task_after_session(db, row, task)
+
+        leases = (await db.execute(
+            select(TaskLease).filter(
+                TaskLease.session_id == session.id,
+                TaskLease.status == LeaseStatus.ACTIVE,
+            )
+        )).scalars().all()
+        for lease in leases:
+            lease.status = LeaseStatus.RELEASED
+            lease.released_at = now
 
         pending = (await db.execute(
             select(AgentApproval).filter(
@@ -464,6 +488,93 @@ async def _finalize_completed_session(session: AgentSession, pane: str, summary:
     return True
 
 
+async def _finalize_failed_session(
+    session: AgentSession, pane: str, exit_code: Optional[int], reason: str
+) -> bool:
+    """Record a runner failure without advancing the task."""
+    now = datetime.now(UTC)
+    async with async_session_maker() as db:
+        claimed = await db.execute(
+            sa_update(AgentSession)
+            .where(
+                AgentSession.id == session.id,
+                AgentSession.ended_at.is_(None),
+                AgentSession.status.in_([
+                    AgentSessionStatus.STARTING,
+                    AgentSessionStatus.ACTIVE,
+                    AgentSessionStatus.BLOCKED,
+                ]),
+            )
+            .values(
+                status=AgentSessionStatus.ERROR,
+                ended_at=now,
+                last_seen_at=now,
+                exit_code=exit_code,
+            )
+        )
+        if claimed.rowcount != 1:
+            return False
+
+        leases = (await db.execute(
+            select(TaskLease).filter(
+                TaskLease.session_id == session.id,
+                TaskLease.status == LeaseStatus.ACTIVE,
+            )
+        )).scalars().all()
+        for lease in leases:
+            lease.status = LeaseStatus.RELEASED
+            lease.released_at = now
+
+        pending = (await db.execute(
+            select(AgentApproval).filter(
+                AgentApproval.session_id == session.id,
+                AgentApproval.status == AgentApprovalStatus.PENDING,
+            )
+        )).scalars().all()
+        for approval in pending:
+            approval.status = AgentApprovalStatus.CANCELLED
+            approval.resolved_at = now
+            approval.response_message = reason
+            approval.update_version += 1
+
+        if session.task_id:
+            db.add(TaskLog(
+                task_id=session.task_id,
+                message=f"Agent session #{session.id} failed: {reason}",
+                log_type="error",
+                created_at=now,
+            ))
+        db.add(AgentActivity(
+            agent_id=session.agent_id,
+            session_id=session.id,
+            project_id=session.project_id,
+            task_id=session.task_id,
+            activity_type=ActivityType.ERROR,
+            source="session_streamer",
+            message=reason,
+            workspace_path=session.workspace_path,
+            payload_json=json.dumps({"exit_code": exit_code, "terminal_tail": pane[-2000:]}),
+            created_at=now,
+        ))
+        await db.commit()
+
+    await event_bus.publish(
+        EventType.AGENT_STATUS_UPDATED.value,
+        {
+            "agent_id": session.agent_id,
+            "session_id": session.id,
+            "project_id": session.project_id,
+            "task_id": session.task_id,
+            "status_type": "error",
+            "message": reason,
+            "exit_code": exit_code,
+        },
+        project_id=session.project_id,
+        entity_id=session.agent_id,
+    )
+    return True
+
+
 async def _resolve_session_id_for_approval(approval_id: int) -> Optional[str]:
     async with async_session_maker() as db:
         result = await db.execute(
@@ -560,31 +671,36 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
         _pending_approvals.pop(session.id, None)
         return
 
-    if not _tmux_has_session(tmux_session):
-        # tmux session is gone → wrap up the AgentSession so the UI stops
-        # showing it as Active forever.
-        async with async_session_maker() as db:
-            row = (await db.execute(
-                select(AgentSession).filter(AgentSession.id == session.id)
-            )).scalar_one_or_none()
-            if row and row.ended_at is None:
-                row.status = AgentSessionStatus.DONE
-                row.ended_at = datetime.now(UTC)
-                row.last_seen_at = datetime.now(UTC)
-                await db.commit()
-                await event_bus.publish(
-                    EventType.AGENT_STATUS_UPDATED.value,
-                    {
-                        "agent_id": row.agent_id,
-                        "session_id": row.id,
-                        "project_id": row.project_id,
-                        "task_id": row.task_id,
-                        "status_type": "done",
-                        "message": "tmux session ended",
-                    },
-                    project_id=row.project_id,
-                    entity_id=row.agent_id,
-                )
+    runner = _runner_state(tmux_session)
+    if runner.status != "running":
+        pane = capture_pane(tmux_session, lines=200)
+        if runner.status == "exited" and runner.exit_code == 0:
+            summary = _checkpoint_summary(pane)
+            if summary.startswith("Session is active;"):
+                summary = "CLI exited successfully."
+            else:
+                summary = f"CLI exited successfully.\n{summary}"
+            await _finalize_completed_session(
+                session, pane, summary, exit_code=runner.exit_code
+            )
+            kill_session(tmux_session)
+        elif runner.status == "exited":
+            await _finalize_failed_session(
+                session, pane, runner.exit_code,
+                f"CLI exited with status {runner.exit_code}.",
+            )
+            kill_session(tmux_session)
+        elif runner.status == "missing":
+            await _finalize_failed_session(
+                session, pane, None,
+                "CLI runner disappeared before an exit status could be captured.",
+            )
+        else:
+            logger.warning(
+                "Could not determine runner state for session #%s; leaving it active",
+                session.id,
+            )
+            return
         _pane_cursor.pop(session.id, None)
         _pending_approvals.pop(session.id, None)
         return

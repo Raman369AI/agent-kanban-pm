@@ -55,6 +55,7 @@ def test_release_docs_and_changelog_are_present_and_ordered():
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert (
         changelog.index("## [Unreleased]")
+        < changelog.index("## [0.5.0]")
         < changelog.index("## [0.4.0]")
         < changelog.index("## [0.4.0rc9]")
         < changelog.index("## [0.4.0rc1]")

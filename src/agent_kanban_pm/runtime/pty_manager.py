@@ -69,14 +69,15 @@ class PtySessionManager:
     def exists(self, session_name: str) -> bool:
         with self.lock:
             session = self.sessions.get(session_name)
+            return bool(session and session.process.poll() is None)
+
+    def exit_code(self, session_name: str) -> Optional[int]:
+        """Return a finished process's exit code, retaining its buffered output."""
+        with self.lock:
+            session = self.sessions.get(session_name)
             if not session:
-                return False
-            alive = session.process.poll() is None
-            if not alive:
-                self._cleanup_session(session)
-                self.sessions.pop(session_name, None)
-                return False
-            return True
+                return None
+            return session.process.poll()
 
     def start_pty_session(
         self,

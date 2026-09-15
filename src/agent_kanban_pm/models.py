@@ -268,6 +268,7 @@ class AgentSession(Base):
     mode = Column(String(50), nullable=True)
     started_at = Column(DateTime, default=lambda: datetime.now(UTC))
     ended_at = Column(DateTime, nullable=True)
+    exit_code = Column(Integer, nullable=True)
     last_seen_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     agent = relationship("Entity")
