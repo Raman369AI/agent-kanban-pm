@@ -51,7 +51,7 @@ async def review_evidence(db, project_id, task_id):
     """Capture the current implementation diff from Git and bind it to its revision."""
     revision = await review_work_revision(db, project_id, task_id)
     if task_id is None or revision is None:
-        return {"work_revision": revision, "diff": None, "diff_sha256": None, "file_paths": None, "is_critical": False}
+        return {"work_revision": revision, "base_revision": None, "diff": None, "diff_sha256": None, "file_paths": None, "is_critical": False}
     from agent_kanban_pm.runtime.review_gate import implementation_for_task
     from agent_kanban_pm.runtime.workspaces import git_revision, WorkspacePreparationError
     from agent_kanban_pm.runtime.assignment_launcher import _task_branch_name
@@ -69,9 +69,17 @@ async def review_evidence(db, project_id, task_id):
     if current_revision != revision:
         raise TaskReferenceError("Implementation changed after handoff")
     branch = _task_branch_name(await db.get(Task, task_id), agent) if agent else None
-    snapshot = await asyncio.to_thread(read_task_git_diff, project.path, source.workspace_path, branch)
+    snapshot = await asyncio.to_thread(
+        read_task_git_diff,
+        project.path,
+        source.workspace_path,
+        branch,
+        source.review_base_revision,
+    )
     if snapshot is None or snapshot.get("truncated"):
         raise TaskReferenceError("A complete server-generated Git diff is required for review")
+    if source.review_base_revision is None:
+        source.review_base_revision = snapshot["base_revision"]
     patch = snapshot.get("diff", "")
     paths = []
     for line in patch.splitlines():
@@ -81,6 +89,7 @@ async def review_evidence(db, project_id, task_id):
                 paths.append(path)
     return {
         "work_revision": revision,
+        "base_revision": source.review_base_revision,
         "diff": patch,
         "diff_sha256": hashlib.sha256(patch.encode("utf-8")).hexdigest(),
         "file_paths": json.dumps(paths),

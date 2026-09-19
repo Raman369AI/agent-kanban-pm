@@ -80,6 +80,7 @@ from agent_kanban_pm.events import EventBus, EventType
 from agent_kanban_pm.models import AgentSession, LaunchRequest, Task, Project, Entity, ApprovalStatus, AgentSessionStatus
 from agent_kanban_pm.runtime.assignment_launcher import AssignmentLauncher
 from agent_kanban_pm.runtime.scheduler import dispatch_launches, request_launch
+from agent_kanban_pm.runtime.scheduler import recover_legacy_assignments
 
 
 class SimulatedCrash(BaseException):
@@ -147,6 +148,36 @@ async def test_revoked_project_cannot_launch_queued_work(chain):
         request = await db.get(LaunchRequest, request_id)
         assert request.status == 'blocked'
         assert request.session_id is None
+
+
+@pytest.mark.asyncio
+async def test_restart_reconciles_assignment_event_without_launch_request(chain):
+    task_id, agent_id, agent_name, stages, launches = chain
+    async with async_session_maker() as db:
+        task = await db.get(Task, task_id)
+        project = await db.get(Project, task.project_id)
+        event = EventBus().enqueue(
+            db, EventType.TASK_ASSIGNED.value,
+            {"task_id": task.id, "entity_id": agent_id, "role": "worker", "stage_id": task.stage_id},
+            project_id=task.project_id, entity_id=task.created_by,
+        )
+        await db.flush()
+        event.delivered_at = datetime.now(UTC)
+        await db.commit()
+        event_id = event.id
+        workspace = project.path
+
+    await recover_legacy_assignments(workspace)
+    await recover_legacy_assignments(workspace)
+
+    async with async_session_maker() as db:
+        requests = list((await db.execute(select(LaunchRequest).where(
+            LaunchRequest.event_id == event_id,
+        ))).scalars())
+        assert len(requests) == 1
+        assert requests[0].task_id == task_id
+        assert requests[0].agent_id == agent_id
+        assert requests[0].status == "queued"
 
 
 @pytest.mark.asyncio
@@ -237,6 +268,68 @@ async def test_revocation_after_reservation_still_prevents_execution(chain, monk
         request = await db.get(LaunchRequest, request_id)
         assert request.status == 'blocked'
         assert 'approved' in request.last_error
+        assert request.session_id is not None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_failed_reservation_cannot_revive(chain, monkeypatch):
+    from agent_kanban_pm.runtime import assignment_launcher as module
+    from agent_kanban_pm.routers.agent_activity import (
+        LaunchQueueAction, cancel_launch_request, retry_launch_request,
+    )
+
+    task_id, agent_id, agent_name, stages, launches = chain
+    request_id = await queued_worker(task_id, agent_id)
+    original_start = module.start_session
+
+    def crash_before_spawn(**kwargs):
+        raise SimulatedCrash()
+
+    monkeypatch.setattr(module, "start_session", crash_before_spawn)
+    with pytest.raises(SimulatedCrash):
+        await dispatch_launches(AssignmentLauncher())
+
+    async with async_session_maker() as db:
+        request = await db.get(LaunchRequest, request_id)
+        original_session_id = request.session_id
+        task = await db.get(Task, task_id)
+        project = await db.get(Project, task.project_id)
+        owner = await db.get(Entity, task.created_by)
+        project.approval_status = ApprovalStatus.REJECTED
+        await db.commit()
+
+    monkeypatch.setattr(module, "start_session", original_start)
+    await dispatch_launches(AssignmentLauncher())
+
+    async with async_session_maker() as db:
+        owner = await db.get(Entity, owner.id)
+        cancelled = await cancel_launch_request(
+            request_id, LaunchQueueAction(reason="cancel failed reservation"),
+            db=db, current_entity=owner,
+        )
+        assert cancelled["status"] == "cancelled"
+        original_session = await db.get(AgentSession, original_session_id)
+        assert original_session.status == AgentSessionStatus.ERROR
+        assert original_session.ended_at is not None
+        task = await db.get(Task, task_id)
+        project = await db.get(Project, task.project_id)
+        project.approval_status = ApprovalStatus.APPROVED
+        await db.commit()
+        retried = await retry_launch_request(
+            request_id, LaunchQueueAction(reason="new approved attempt"),
+            db=db, current_entity=owner,
+        )
+        retry_id = retried["id"]
+
+    await dispatch_launches(AssignmentLauncher())
+    assert len(launches) == 1
+    async with async_session_maker() as db:
+        original = await db.get(LaunchRequest, request_id)
+        retried = await db.get(LaunchRequest, retry_id)
+        assert original.status == "cancelled"
+        assert original.session_id == original_session_id
+        assert retried.status == "started"
+        assert retried.session_id != original_session_id
 
 
 @pytest.mark.asyncio

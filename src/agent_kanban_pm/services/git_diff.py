@@ -47,7 +47,12 @@ def _untracked_patch(workspace: Path, relative_path: str) -> str:
     return f"diff --git a/{relative_path} b/{relative_path}\nnew file mode 100644\n{patch}"
 
 
-def read_task_git_diff(project_path: str, workspace_path: str, branch: str | None = None) -> dict | None:
+def read_task_git_diff(
+    project_path: str,
+    workspace_path: str,
+    branch: str | None = None,
+    base_revision: str | None = None,
+) -> dict | None:
     """Return changes from the task base, including staged, unstaged and untracked files.
 
     A missing worktree can still expose committed task changes through its branch.
@@ -71,13 +76,20 @@ def read_task_git_diff(project_path: str, workspace_path: str, branch: str | Non
         verified = _git(project, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
         if verified.returncode != 0:
             return None
-    base_ref = _detect_base_ref(str(project), "git")
     head = "HEAD" if live_worktree else f"refs/heads/{branch}"
-    base = head
-    if base_ref:
+    base_ref = _detect_base_ref(str(project), "git")
+    base = base_revision
+    if base is not None:
+        verified_base = _git(repo, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}")
+        if verified_base.returncode != 0:
+            return None
+        base = verified_base.stdout.strip()
+    elif base_ref:
         merge_base = _git(repo, "merge-base", base_ref, head)
         if merge_base.returncode == 0 and merge_base.stdout.strip():
             base = merge_base.stdout.strip()
+    else:
+        base = head
     target = None if live_worktree else head
     command = ["diff", "--no-ext-diff", "--no-color", "--find-renames", base]
     if target:
@@ -102,6 +114,7 @@ def read_task_git_diff(project_path: str, workspace_path: str, branch: str | Non
     return {
         "source": source,
         "base_ref": base_ref or "HEAD",
+        "base_revision": base,
         "branch": branch if source == "branch" else _git(repo, "branch", "--show-current").stdout.strip(),
         "diff": patch,
         "truncated": truncated,

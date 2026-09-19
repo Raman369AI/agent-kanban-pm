@@ -935,8 +935,18 @@
         });
     }
     var pendingDoneOverrideResolve = null;
+    var pendingDoneOverrideParent = null;
+
+    function restoreDoneOverrideParent() {
+        var parent = pendingDoneOverrideParent;
+        pendingDoneOverrideParent = null;
+        if (!parent) return;
+        parent.classList.remove('modal-suspended');
+        parent.setAttribute('aria-hidden', 'false');
+    }
 
     function closeDoneOverrideModal(result) {
+        restoreDoneOverrideParent();
         closeModal('done-override-modal');
         var resolve = pendingDoneOverrideResolve;
         pendingDoneOverrideResolve = null;
@@ -960,6 +970,12 @@
 
     function requestPolicyOverride(options) {
         options = options || {};
+        var parent = options.parentModalId && document.getElementById(options.parentModalId);
+        if (parent && parent.style.display !== 'none') {
+            pendingDoneOverrideParent = parent;
+            parent.classList.add('modal-suspended');
+            parent.setAttribute('aria-hidden', 'true');
+        }
         document.getElementById('done-override-title').textContent =
             options.title || 'Override workflow gate?';
         document.getElementById('done-override-submit').textContent =
@@ -997,7 +1013,7 @@
         });
     }
 
-    function requestDoneTransition(taskId) {
+    function requestDoneTransition(taskId, parentModalId) {
         return apiFetch(
             '/ui/tasks/' + taskId + '/completion-gates',
             {},
@@ -1008,6 +1024,7 @@
                 return {proceed: true, reason: ''};
             }
             return requestPolicyOverride({
+                parentModalId: parentModalId,
                 title: 'Move to Done anyway?',
                 actionLabel: 'Move to Done anyway',
                 blocker: completion.blocker || 'Required completion evidence is missing.',
@@ -1391,8 +1408,9 @@
                     return editError(err);
                 }
                 var decisionRequest = data.status === 'completed'
-                    ? requestDoneTransition(taskId)
+                    ? requestDoneTransition(taskId, 'task-modal')
                     : requestPolicyOverride({
+                        parentModalId: 'task-modal',
                         title: 'Override workflow gate?',
                         actionLabel: 'Save transition anyway',
                         blocker: err.message.replace(/\.? A human override reason is required to continue$/i, ''),
@@ -1479,6 +1497,7 @@
                 if (!overrideReason && err.message.toLowerCase().indexOf('override reason is required') !== -1) {
                     btn.disabled = false; btn.textContent = 'Assign';
                     return requestPolicyOverride({
+                        parentModalId: 'assign-modal',
                         title: 'Start work anyway?',
                         actionLabel: 'Assign and start anyway',
                         blocker: err.message.replace(/\.? A human override reason is required to start work$/i, ''),

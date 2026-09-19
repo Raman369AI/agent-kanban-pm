@@ -341,6 +341,17 @@ async def _migrate_db_schema():
                 await conn.execute(text("ALTER TABLE launch_requests ADD COLUMN override_reason TEXT"))
             await _record_migration(18, "launch_override_reasons")
 
+        if not await _migration_applied(19):
+            for table, column in (
+                ("agent_sessions", "review_base_revision"),
+                ("diff_reviews", "base_revision"),
+            ):
+                if not await _column_exists(conn, table, column):
+                    await conn.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR(64)"
+                    ))
+            await _record_migration(19, "immutable_review_base")
+
     # Backfill default roles
     async with async_session_maker() as session:
         from agent_kanban_pm.models import Entity

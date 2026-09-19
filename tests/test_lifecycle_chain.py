@@ -356,3 +356,33 @@ async def test_review_request_records_implementation_revision(chain, interface):
             review_id = result['review_id']
     async with async_session_maker() as db:
         assert (await db.get(DiffReview, review_id)).work_revision == worker.work_revision
+
+
+@pytest.mark.asyncio
+async def test_rest_review_request_cannot_spoof_requester_for_self_approval(chain):
+    from fastapi import HTTPException
+    from agent_kanban_pm.routers.agent_activity import create_diff_review
+    from agent_kanban_pm.schemas import DiffReviewCreate
+
+    task_id, agent_id, agent_name, stages, launches = chain
+    worker = await finish(await AssignmentLauncher().launch_for_assignment(task_id, agent_id, 'worker'), agent_name)
+    async with async_session_maker() as db:
+        agent = await db.get(Entity, agent_id)
+        owner = await db.get(Entity, (await db.get(Project, worker.project_id)).creator_id)
+        with pytest.raises(HTTPException, match="authenticated caller") as error:
+            await create_diff_review(
+                worker.project_id,
+                DiffReviewCreate(
+                    project_id=worker.project_id,
+                    task_id=task_id,
+                    reviewer_id=agent.id,
+                    requester_id=owner.id,
+                    diff_content="ignored client patch",
+                ),
+                db=db,
+                current_entity=agent,
+            )
+        assert error.value.status_code == 422
+        assert not list((await db.execute(select(DiffReview).where(
+            DiffReview.project_id == worker.project_id,
+        ))).scalars())

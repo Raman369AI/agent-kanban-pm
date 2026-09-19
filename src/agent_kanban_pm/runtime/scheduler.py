@@ -116,7 +116,11 @@ async def dispatch_launches(launcher):
             if not row or row.claim_token != token:
                 continue
             row.attempts += 1
-            row.session_id = session_id
+            # Recovery failures must not detach an already-reserved session.
+            # Queue controls use this link to cancel or retry the reservation
+            # without leaving an open STARTING session behind.
+            if session_id is not None:
+                row.session_id = session_id
             row.status = 'started' if session_id else ('blocked' if error else 'queued')
             if session_id:
                 session = await db.get(AgentSession, session_id)
@@ -143,16 +147,30 @@ async def scheduler_loop(launcher):
 
 
 async def recover_legacy_assignments(workspace_path):
-    """Give pre-outbox assignments durable intent without starting processes."""
+    """Reconcile runnable assignments with durable launch intent.
+
+    An outbox row alone is not proof that the scheduler subscriber handled the
+    assignment. Reuse a matching event when it has no LaunchRequest so a
+    shutdown between commit and delivery cannot lose work or create a second
+    intent when the original event is later drained.
+    """
     import json
     from agent_kanban_pm.models import OutboxEvent, Project, Stage, TaskStatus, ApprovalStatus
     from agent_kanban_pm.events import event_bus, EventType
     async with async_session_maker() as db:
-        known = set((await db.execute(select(LaunchRequest.task_id))).scalars())
-        for payload in (await db.execute(select(OutboxEvent.payload))).scalars():
+        launches = list((await db.execute(select(LaunchRequest))).scalars())
+        known = {(row.task_id, row.agent_id, row.stage_id) for row in launches}
+        used_event_ids = {row.event_id for row in launches}
+        assignment_events = {}
+        for event_id, payload in (await db.execute(
+            select(OutboxEvent.id, OutboxEvent.payload).order_by(OutboxEvent.id.desc())
+        )).all():
             event = json.loads(payload)
-            if event.get('event_type') == EventType.TASK_ASSIGNED.value:
-                known.add(event.get('data', {}).get('task_id'))
+            data = event.get('data', {})
+            if event.get('event_type') != EventType.TASK_ASSIGNED.value or event_id in used_event_ids:
+                continue
+            key = (data.get('task_id'), data.get('entity_id'), data.get('stage_id'))
+            assignment_events.setdefault(key, (event_id, event, data))
         rows = (await db.execute(select(Task, task_assignments.c.entity_id).join(
             task_assignments, Task.id == task_assignments.c.task_id
         ).join(Project, Project.id == Task.project_id).join(Stage, Stage.id == Task.stage_id).where(
@@ -162,7 +180,8 @@ async def recover_legacy_assignments(workspace_path):
             Stage.workflow_key.in_(['to_do', 'in_progress']),
         ))).all()
         for task, agent_id in rows:
-            if task.id in known:
+            key = (task.id, agent_id, task.stage_id)
+            if key in known:
                 continue
             active = await db.scalar(select(AgentSession.id).where(
                 AgentSession.task_id == task.id, AgentSession.agent_id == agent_id,
@@ -170,7 +189,27 @@ async def recover_legacy_assignments(workspace_path):
             ).limit(1))
             if active:
                 continue
-            event_bus.enqueue(db, EventType.TASK_ASSIGNED.value,
-                              {'task_id': task.id, 'entity_id': agent_id, 'stage_id': task.stage_id},
-                              project_id=task.project_id)
+            existing_event = assignment_events.get(key)
+            if existing_event is None:
+                # Older events may predate stage_id in their payload. They are
+                # still reusable when task and assignee identify one intent.
+                existing_event = next((value for event_key, value in assignment_events.items()
+                                       if event_key[:2] == key[:2]), None)
+            if existing_event:
+                event_id, event, data = existing_event
+                db.add(LaunchRequest(
+                    event_id=event_id,
+                    actor_id=event.get('entity_id'),
+                    task_id=task.id,
+                    agent_id=agent_id,
+                    role=data.get('role'),
+                    stage_id=task.stage_id,
+                    source_session_id=data.get('source_session_id'),
+                    override_reason=data.get('override_reason'),
+                ))
+            else:
+                event_bus.enqueue(db, EventType.TASK_ASSIGNED.value,
+                                  {'task_id': task.id, 'entity_id': agent_id, 'stage_id': task.stage_id},
+                                  project_id=task.project_id)
+            known.add(key)
         await db.commit()

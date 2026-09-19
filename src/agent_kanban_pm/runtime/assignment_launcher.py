@@ -208,12 +208,22 @@ def _sync_worktree_with_base(worktree_path: str, base_ref: Optional[str]) -> tup
 
     try:
         status = subprocess.run(
-            [git, "-C", worktree_path, "status", "--porcelain"],
+            [git, "-C", worktree_path, "status", "--porcelain", "-z"],
             capture_output=True, text=True, timeout=10,
         )
         if status.returncode != 0:
             return False, f"git status failed before sync: {status.stderr.strip()}"
-        if status.stdout.strip():
+        runtime_files = {"STATUS.md"}
+        workspace = Path(worktree_path)
+        for alias in ("CLAUDE.md", "CODEX.md"):
+            alias_path = workspace / alias
+            try:
+                if alias_path.is_symlink() and alias_path.resolve() == (workspace / "AGENTS.md").resolve():
+                    runtime_files.add(alias)
+            except OSError:
+                pass
+        changed_paths = [entry[3:] for entry in status.stdout.split("\0") if len(entry) > 3]
+        if any(path not in runtime_files for path in changed_paths):
             return False, "worktree has uncommitted changes; skipped rebase onto base"
 
         if base_ref.startswith("origin/"):
@@ -574,11 +584,16 @@ class AssignmentLauncher:
                     transition_actor = await db.get(Entity, intent.actor_id)
                 if intent and intent.override_reason:
                     override_reason = intent.override_reason
-            reserved = await db.scalar(select(AgentSession).where(
+            reserved_query = select(AgentSession).where(
                 AgentSession.task_id == task.id, AgentSession.agent_id == agent.id,
                 AgentSession.assigned_role == matching_role_name,
                 AgentSession.ended_at.is_(None), AgentSession.launch_spec_json.is_not(None),
-            ).limit(1))
+            )
+            if launch_request_id is not None:
+                reserved_query = reserved_query.where(AgentSession.launch_request_id == launch_request_id)
+            else:
+                reserved_query = reserved_query.where(AgentSession.launch_request_id.is_(None))
+            reserved = await db.scalar(reserved_query.limit(1))
             if reserved:
                 await db.commit()
                 return await self._resume_reserved_session(reserved.id)
@@ -980,8 +995,16 @@ class AssignmentLauncher:
                     raise WorkspacePreparationError("Reserved launch is no longer assigned or runnable")
                 if session.launch_request_id:
                     request = await db.get(LaunchRequest, session.launch_request_id)
-                    if request:
-                        request.status = "starting"
+                    if (
+                        request is None
+                        or request.session_id != session.id
+                        or request.status not in {"reserved", "starting"}
+                        or not request.claim_token
+                    ):
+                        raise WorkspacePreparationError(
+                            "Launch request was cancelled or scheduler ownership was lost"
+                        )
+                    request.status = "starting"
                 await db.commit()
 
         if state.status == "missing":

@@ -454,6 +454,7 @@ class DiffReviewUpdate(BaseModel):
 class DiffReviewResponse(BaseModel):
     diff_sha256: Optional[str] = None
     work_revision: Optional[str] = None
+    base_revision: Optional[str] = None
     id: int
     project_id: int
     task_id: Optional[int] = None

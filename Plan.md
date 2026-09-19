@@ -8,9 +8,10 @@ Release preparation: `0.6.0`
 
 ## Scope and evidence
 
-This plan records the seven remaining flaws identified after the lifecycle and
-UI changes. Every item below remains open; documenting it does not mean it has
-been fixed. The subsequent upstream merge `ea13868` changed only README text.
+This plan records the seven flaws identified after the lifecycle and UI
+changes. All seven were implemented and verified on `release/v0.6.0` after the
+`v0.6.0` tag; the published tag was intentionally left unchanged. The
+subsequent upstream merge `ea13868` changed only README text.
 
 The application started successfully on `http://localhost:8000/ui/projects`.
 Health, dashboard, agent settings, and project Board, Activity, Settings, and
@@ -19,17 +20,16 @@ startup. The standalone role supervisor was disabled; the task scheduler
 remained active.
 
 The prior implementation validation passed 298 backend tests and 33 browser
-tests, plus lint and distribution checks. The findings below came from static
-source review, not runtime reproductions. Threadline and a connected browser
-were unavailable for this review. Static review does not observe execution or
-prove correctness; each fix needs a regression covering its reported trigger.
+tests, plus lint and distribution checks. The original findings came from
+static source review. Their fixes now have behavioral regressions, including
+real Git repositories and Playwright browser flows.
 
 Source references below describe the reviewed snapshot and may move as fixes
 are implemented.
 
 ## 1. High: preserve assignment delivery during shutdown
 
-- [ ] Fix and verify.
+- [x] Fixed and verified.
 
 **Trigger and impact:** Assign work and shut down before the outbox delivers
 the assignment. Shutdown removes the launch subscriber before draining events,
@@ -48,9 +48,14 @@ durable launch-delivery evidence rather than the mere existence of an outbox row
 **Acceptance:** A committed assignment followed immediately by shutdown and
 restart produces exactly one durable launch request and does not lose work.
 
+**Outcome:** Shutdown drains the outbox while the launch subscriber remains
+registered. Startup reconciliation now requires a durable launch request—not
+just an assignment event—and reuses the original event without duplicating
+intent. The crash/restart regression produces exactly one request.
+
 ## 2. High: preserve reserved-session ownership through recovery errors
 
-- [ ] Fix and verify.
+- [x] Fixed and verified.
 
 **Trigger and impact:** Revoke project approval after a session is reserved,
 allow recovery to fail, then cancel its request. The scheduler clears
@@ -71,9 +76,14 @@ recheck request state and ownership before resuming an unstarted process.
 cancellation, and later reapproval cannot restart the cancelled run. The session
 and queue record stay consistent, and abandoned reservations release capacity.
 
+**Outcome:** Recovery no longer clears an existing session relationship.
+Cancellation resolves the durable reservation, closes its STARTING session,
+releases leases, and retry creates a new request/session. Resume revalidates the
+request status, claim token, and session ownership immediately before execution.
+
 ## 3. High: bind review requester identity to the authenticated caller
 
-- [ ] Fix and verify.
+- [x] Fixed and verified.
 
 **Trigger and impact:** A worker creates a review with themselves as reviewer
 and another entity as requester, then approves it. The REST endpoint accepts
@@ -92,9 +102,14 @@ Keep REST and MCP behavior consistent while retaining explicit manager authority
 substituting another requester. A legitimate independent reviewer still works,
 and stored review identity agrees with the event and audit records.
 
+**Outcome:** REST now derives `requester_id` exclusively from the authenticated
+entity, rejects a conflicting supplied identity and invalid reviewers, and
+prevents non-manager self-designation. REST and MCP now store the caller as the
+requester, and the spoof/self-approval regression is rejected.
+
 ## 4. High: verify the PR destination as well as its commit
 
-- [ ] Fix and verify.
+- [x] Fixed and verified.
 
 **Trigger and impact:** Submit a PR merged into a personal fork or the wrong
 branch at the same implementation SHA. Current verification checks merged state
@@ -112,9 +127,14 @@ the verified artifact. Make any alternate destination policy explicit.
 or branch. Accept a merged PR matching the configured destination and reviewed
 revision. Missing destination metadata must not silently satisfy the gate.
 
+**Outcome:** Verification derives the GitHub repository and integration branch
+from `origin`, compares both with `gh` metadata, and stores both values in the
+verified artifact. Correct-SHA PRs targeting another repository or branch are
+covered and rejected.
+
 ## 5. Medium: make nested workflow overrides visible and keyboard-accessible
 
-- [ ] Fix and verify.
+- [x] Fixed and verified.
 
 **Trigger and impact:** Submit a gated task edit or role assignment. The override
 dialog opens while its originating modal remains visible. Equal stacking order
@@ -134,9 +154,14 @@ restoration. Preserve the originating form's draft when the override is cancelle
 overrides from both Edit and Assign. Cancellation preserves entered data; a
 confirmed override submits once and records its reason.
 
+**Outcome:** Nested overrides explicitly suspend and hide the parent dialog,
+use a higher stacking layer, own keyboard handling, and restore the parent and
+focus on close. Playwright covers Edit and Assign cancellation with the original
+dialog state preserved; existing completion coverage verifies reasoned submit.
+
 ## 6. Medium: keep the reviewed diff base immutable
 
-- [ ] Fix and verify.
+- [x] Fixed and verified.
 
 **Trigger and impact:** Approve an implementation, merge it, then fetch the
 updated default branch. Diff generation recalculates the merge base against
@@ -155,9 +180,14 @@ a real implementation change as a new review, not a baseline refresh.
 default branch, fetches, and verifies that unchanged reviewed work remains valid.
 Changing the implementation revision or content must still invalidate approval.
 
+**Outcome:** Migration 19 persists the implementation's first review base and
+copies it into each review record. Every later digest uses that commit. A
+real-Git regression advances the default branch to the implementation commit and
+confirms the pinned diff stays identical while a fresh moving-base diff changes.
+
 ## 7. Medium: preserve Activity approval-note drafts during refresh
 
-- [ ] Fix and verify.
+- [x] Fixed and verified.
 
 **Trigger and impact:** Type an approval or rejection explanation while another
 approval event arrives. Refresh rebuilds all pending cards using empty note
@@ -175,15 +205,22 @@ preserve focus and text selection during unrelated refreshes.
 selection. Submitting sends the preserved note once, and a remotely resolved
 approval cannot be submitted again.
 
+**Outcome:** The workbench keeps drafts by approval ID, ignores stale refresh
+responses, restores focus/selection after rendering, and prevents concurrent
+submissions. A remotely resolved approval is removed with its controls, while a
+Playwright refresh regression preserves the active note and focus.
+
 ## Delivery and verification
 
-1. Address items 1-4 first: durable execution and evidence provenance.
-2. Address item 5 to unblock the affected manual workflow, then items 6-7.
-3. Add focused behavioral regressions for each trigger before marking it done.
-4. Run the relevant backend and browser suites, then the release checks in
-   [RELEASING.md](RELEASING.md). Keep tests on throwaway databases and workspaces.
-5. Update this plan and release notes with actual outcomes and remaining limits.
+Completed verification on 2026-09-19:
 
-The documented explicit human override is intentional and is not one of these
-defects. This plan does not authorize implementing the fixes as part of release
-tag preparation; the open items remain follow-up work.
+- 304 non-browser tests passed with the release timeout settings.
+- 36 Playwright browser tests passed.
+- Flake8 correctness checks reported zero findings.
+- JavaScript syntax checks passed for all changed scripts.
+- `uv lock --check`, migration-19 upgrade coverage, package build, and Twine
+  metadata checks passed.
+
+The documented explicit human override remains intentional and is not one of
+these defects. The existing `v0.6.0` tag still points to the pre-fix release;
+these changes require a subsequent release rather than moving that tag.

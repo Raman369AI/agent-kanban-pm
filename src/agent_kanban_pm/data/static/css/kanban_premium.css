@@ -360,6 +360,15 @@
     animation: fadeIn 0.25s ease-out;
 }
 
+.modal-overlay.modal-suspended {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+#done-override-modal {
+    z-index: 1100;
+}
+
 .modal-card {
     background: var(--glass-bg);
     backdrop-filter: blur(var(--glass-blur));

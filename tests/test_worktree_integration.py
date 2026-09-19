@@ -478,3 +478,28 @@ def test_task_git_diff_falls_back_to_branch_and_rejects_unrelated_repo(tmp_path)
     unrelated = tmp_path / "unrelated"
     _init_repo(unrelated)
     assert read_task_git_diff(str(project), str(unrelated), None) is None
+
+
+def test_task_git_diff_keeps_original_base_after_default_branch_advances(tmp_path):
+    project = tmp_path / "project"
+    _init_repo(project)
+    workspace = tmp_path / "task-worktree"
+    branch = "kanban/task-9-claude"
+    assert _create_git_worktree(str(project), workspace, branch_name=branch, base_ref="main")
+    (workspace / "README.md").write_text("reviewed implementation\n")
+    _run(GIT, "-C", str(workspace), "add", "README.md")
+    _run(GIT, "-C", str(workspace), "commit", "-m", "implementation")
+
+    original = read_task_git_diff(str(project), str(workspace), branch)
+    assert original is not None and "+reviewed implementation" in original["diff"]
+
+    # Advancing the default branch to the task head changes a fresh merge-base
+    # calculation, but must not change evidence captured from the stored base.
+    _run(GIT, "-C", str(project), "merge", "--ff-only", branch)
+    moving = read_task_git_diff(str(project), str(workspace), branch)
+    pinned = read_task_git_diff(
+        str(project), str(workspace), branch, original["base_revision"],
+    )
+    assert moving is not None and moving["diff"] == ""
+    assert pinned is not None and pinned["diff"] == original["diff"]
+    assert pinned["base_revision"] == original["base_revision"]

@@ -5,6 +5,9 @@ let wbHashHandled = false;
 let wbTerminalData = null;
 let wbTerminalRequestSerial = 0;
 let wbHandoffRequestSerial = 0;
+let wbApprovalsRequestSerial = 0;
+const wbApprovalDrafts = new Map();
+const wbResolvingApprovals = new Set();
 let wbTerminalRefreshTimer = null;
 let wbTerminalMode = 'focused';
 try { if (localStorage.getItem('kanban.terminal.mode') === 'raw') wbTerminalMode = 'raw'; } catch(e) {}
@@ -270,11 +273,14 @@ async function loadWbHandoff(sessionId, switchTab, showLoading=true){
 
 /* ── APPROVALS ── */
 async function loadApprovals(){
+  captureApprovalDrafts();
+  const requestSerial=++wbApprovalsRequestSerial;
   try{
     const [pending,recent]=await Promise.all([
       workbenchFetch('/agents/approvals?project_id='+PROJECT_ID+'&status_filter=pending&limit=50'),
       workbenchFetch('/agents/approvals?project_id='+PROJECT_ID+'&limit=20')
     ]);
+    if(requestSerial!==wbApprovalsRequestSerial)return;
     renderPendingApprovals(pending);
     renderResolvedApprovals(recent.filter(a=>a.status!=='pending'));
     const n=pending.length;
@@ -300,7 +306,9 @@ function approvalCard(a,withControls){
   const typeColors={pending:'#f59e0b',approved:'#10b981',rejected:'#ef4444',expired:'#64748b',cancelled:'#64748b'};
   const color=typeColors[a.status]||'#64748b';
   const diffHtml=a.diff_content?`<details class="approval-diff-wrap"><summary>Show diff (${a.diff_content.split('\n').length} lines)</summary><pre class="approval-diff">${colorDiff(a.diff_content)}</pre></details>`:'';
-  const controls=withControls?`<div class="approval-controls"><input class="approval-note-input" id="wb-note-${a.id}" type="text" placeholder="Optional note"/><button class="btn btn-success btn-sm" onclick="resolveWbApproval(${a.id},'approved')">Approve</button><button class="btn btn-danger btn-sm" onclick="resolveWbApproval(${a.id},'rejected')">Reject</button></div>`
+  const draft=wbApprovalDrafts.get(a.id)||'';
+  const disabled=wbResolvingApprovals.has(a.id)?' disabled':'';
+  const controls=withControls?`<div class="approval-controls"><input class="approval-note-input" data-approval-id="${a.id}" id="wb-note-${a.id}" type="text" placeholder="Optional note" value="${esc(draft)}"/><button class="btn btn-success btn-sm"${disabled} onclick="resolveWbApproval(${a.id},'approved')">Approve</button><button class="btn btn-danger btn-sm"${disabled} onclick="resolveWbApproval(${a.id},'rejected')">Reject</button></div>`
     :`<div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.35rem;">${a.response_message?'"'+esc(a.response_message)+'"':''} ${a.resolved_at?ta(a.resolved_at):''}</div>`;
   return`<div class="approval-card" id="wb-approval-${a.id}">
     <div class="approval-card-header">
@@ -318,21 +326,45 @@ function approvalCard(a,withControls){
   </div>`;
 }
 
+function captureApprovalDrafts(){
+  document.querySelectorAll('.approval-note-input[data-approval-id]').forEach(input=>{
+    wbApprovalDrafts.set(Number(input.dataset.approvalId),input.value);
+  });
+}
 function renderPendingApprovals(list){
+  captureApprovalDrafts();
   const el=document.getElementById('wb-pending-list');
+  const active=document.activeElement;
+  const focusedId=active&&active.classList&&active.classList.contains('approval-note-input')?Number(active.dataset.approvalId):null;
+  const selection=focusedId!==null?[active.selectionStart,active.selectionEnd]:null;
+  const pendingIds=new Set(list.map(a=>a.id));
+  Array.from(wbApprovalDrafts.keys()).forEach(id=>{if(!pendingIds.has(id))wbApprovalDrafts.delete(id);});
   el.innerHTML=list.length?list.map(a=>approvalCard(a,true)).join(''):'<p style="color:var(--text-muted);font-size:0.82rem;">No pending approvals.</p>';
+  if(focusedId!==null&&pendingIds.has(focusedId)){
+    const input=document.getElementById('wb-note-'+focusedId);
+    if(input){input.focus();if(selection&&selection[0]!==null)input.setSelectionRange(selection[0],selection[1]);}
+  }
 }
 function renderResolvedApprovals(list){
   const el=document.getElementById('wb-resolved-list');
   el.innerHTML=list.length?list.map(a=>approvalCard(a,false)).join(''):'<p style="color:var(--text-muted);font-size:0.82rem;">No resolved approvals yet.</p>';
 }
 async function resolveWbApproval(id,decision){
+  if(wbResolvingApprovals.has(id))return;
   const note=(document.getElementById('wb-note-'+id)||{}).value||'';
+  wbApprovalDrafts.set(id,note);
+  wbResolvingApprovals.add(id);
+  document.querySelectorAll('#wb-approval-'+id+' button').forEach(button=>button.disabled=true);
   try{
     await workbenchFetch('/agents/approvals/'+id+'/resolve',{method:'PATCH',body:JSON.stringify({decision,response_message:note})});
+    wbApprovalDrafts.delete(id);
     showToast('Approval '+decision,'success');
-    loadApprovals();
+    await loadApprovals();
   }catch(e){showToast('Failed: '+e.message,'error');}
+  finally{
+    wbResolvingApprovals.delete(id);
+    document.querySelectorAll('#wb-approval-'+id+' button').forEach(button=>button.disabled=false);
+  }
 }
 
 /* ── DECISIONS ── */

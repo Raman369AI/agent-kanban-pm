@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve assignment delivery during shutdown and reconstruct missing launch
+  requests from durable assignment events without duplicating intent.
+- Keep failed launch reservations linked and cancellable, prevent cancelled
+  reservations from reviving, and release their capacity before retry.
+- Bind diff-review requesters to authenticated callers and reject requester
+  spoofing, invalid reviewers, and worker self-designation.
+- Require merged pull requests to target the project's GitHub repository and
+  integration branch, in addition to matching the reviewed head commit.
+- Make nested Edit and Assign workflow overrides visible, focus-safe, and
+  reversible without losing the originating form state.
+- Pin review diffs to an immutable base commit through database migration 19 so
+  advancing the default branch cannot invalidate unchanged approved work.
+- Preserve unsent Activity approval notes, focus, and selection across live
+  refreshes, while removing remotely resolved approvals and blocking duplicate
+  submissions.
+
 ## [0.6.0] — 2026-09-19
 
 ### Changed

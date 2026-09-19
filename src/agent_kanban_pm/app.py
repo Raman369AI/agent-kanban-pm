@@ -315,8 +315,8 @@ async def lifespan(app: FastAPI):
             await t
         except asyncio.CancelledError:
             pass
-    event_bus.unsubscribe(EventType.TASK_ASSIGNED.value, request_launch)
     await event_bus.stop_async()
+    event_bus.unsubscribe(EventType.TASK_ASSIGNED.value, request_launch)
     await engine.dispose()
 
 app = FastAPI(

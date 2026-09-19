@@ -349,6 +349,75 @@ def test_edit_modal_focus_and_detailed_error_toast(
     )
 
 
+def test_nested_override_modal_suspends_and_restores_edit_dialog(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    task_id = board["task"]["id"]
+    page.route(
+        f"**/ui/tasks/{task_id}/edit",
+        lambda route: route.fulfill(
+            status=409,
+            content_type="application/json",
+            body=json.dumps({"detail": "Review evidence is missing. A human override reason is required to continue"}),
+        ),
+    )
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    page.locator(f"#task-card-{task_id} button[title='Edit']").click()
+    edit = page.locator("#task-modal")
+    title = page.locator("#task-form-title")
+    title.fill("Unsaved title survives the override")
+    edit.get_by_role("button", name="Save").click()
+
+    override = page.locator("#done-override-modal")
+    expect(override).to_be_visible()
+    expect(edit).to_have_attribute("aria-hidden", "true")
+    expect(edit).to_have_class("modal-overlay modal-suspended")
+    expect(page.locator("#done-override-reason")).to_be_focused()
+    override.get_by_role("button", name="Cancel", exact=True).click()
+
+    expect(override).to_be_hidden()
+    expect(edit).to_be_visible()
+    expect(edit).to_have_attribute("aria-hidden", "false")
+    expect(title).to_have_value("Unsaved title survives the override")
+
+
+def test_nested_override_modal_restores_assignment_dialog(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    task_id = board["task"]["id"]
+    roles = {
+        "roles": [{
+            "role": "worker", "agent": "browser-cli", "display_name": "Browser CLI",
+            "command": "browser-cli", "model": None, "models": [], "mode": "headless",
+            "autonomy": "supervised", "installed": True,
+        }],
+        "role_names": ["worker"], "candidates": [],
+    }
+    page.route("**/ui/api/roles", lambda route: route.fulfill(json=roles))
+    page.route(
+        f"**/ui/tasks/{task_id}/assign-role",
+        lambda route: route.fulfill(
+            status=409,
+            content_type="application/json",
+            body=json.dumps({"detail": "Prerequisite is missing. A human override reason is required to start work"}),
+        ),
+    )
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    page.evaluate(f"openAssignModal({task_id})")
+    assign = page.locator("#assign-modal")
+    assign.get_by_role("button", name="Assign", exact=True).click()
+
+    override = page.locator("#done-override-modal")
+    expect(override).to_be_visible()
+    expect(assign).to_have_attribute("aria-hidden", "true")
+    override.get_by_role("button", name="Cancel", exact=True).click()
+    expect(assign).to_be_visible()
+    expect(assign).to_have_attribute("aria-hidden", "false")
+    expect(assign.get_by_role("button", name="Assign", exact=True)).to_be_enabled()
+
+
 def test_approval_queue_can_resolve_request(
     page: Page, live_server: str, api: httpx.Client
 ):
@@ -398,6 +467,50 @@ def test_approval_queue_can_resolve_request(
     resolved.raise_for_status()
     matching = [item for item in resolved.json() if item["id"] == approval_id]
     assert matching and matching[0]["status"] == "approved"
+
+
+def test_workbench_approval_refresh_preserves_draft_and_remote_resolution(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    suffix = uuid.uuid4().hex[:8]
+    agent = api.post(
+        "/entities/register/agent",
+        json={"name": f"draft-agent-{suffix}", "entity_type": "agent"},
+        headers=board["headers"],
+    )
+    agent.raise_for_status()
+    approval = api.post(
+        "/agents/approvals",
+        json={
+            "project_id": board["project_id"], "task_id": board["task"]["id"],
+            "agent_id": agent.json()["id"], "approval_type": "other",
+            "title": "Preserve this note", "message": "Wait for a decision",
+        },
+        headers={"X-Entity-ID": str(agent.json()["id"])},
+    )
+    approval.raise_for_status()
+    approval_id = approval.json()["id"]
+
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/workbench")
+    page.locator('.wb-tab[data-tab="approvals"]').click()
+    note = page.locator(f"#wb-note-{approval_id}")
+    expect(note).to_be_visible()
+    note.fill("unsent approval rationale")
+    note.focus()
+    page.evaluate("loadApprovals()")
+    expect(note).to_have_value("unsent approval rationale")
+    expect(note).to_be_focused()
+
+    resolved = api.patch(
+        f"/agents/approvals/{approval_id}/resolve",
+        json={"decision": "approved", "response_message": "resolved elsewhere"},
+        headers=board["headers"],
+    )
+    resolved.raise_for_status()
+    page.evaluate("loadApprovals()")
+    expect(page.locator(f"#wb-approval-{approval_id} .approval-controls")).to_have_count(0)
+    expect(page.locator(f"#wb-note-{approval_id}")).to_have_count(0)
 
 
 def test_plan_work_pending_guard_blocks_duplicate_submissions(

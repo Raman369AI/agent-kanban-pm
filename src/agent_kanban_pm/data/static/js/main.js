@@ -141,7 +141,8 @@ window.closeModal = function(id) {
 document.addEventListener('keydown', function(event) {
     var visible = Array.from(document.querySelectorAll('.modal-overlay, .project-modal-overlay, .folder-picker-overlay'))
         .filter(function(modal) {
-            return modal.style.display !== 'none' && window.getComputedStyle(modal).display !== 'none';
+            return modal.getAttribute('aria-hidden') !== 'true' &&
+                modal.style.display !== 'none' && window.getComputedStyle(modal).display !== 'none';
         });
     var modal = visible[visible.length - 1];
     if (!modal) return;

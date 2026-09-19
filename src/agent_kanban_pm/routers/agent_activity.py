@@ -14,7 +14,7 @@ import subprocess
 
 from agent_kanban_pm.db import get_db
 from agent_kanban_pm.models import (
-    AgentHeartbeat, AgentActivity, AgentSession, Entity, EntityType, Task, Project, Stage,
+    AgentHeartbeat, AgentActivity, AgentSession, Entity, EntityType, Role, Task, Project, Stage,
     AgentStatusType, ActivityType, AgentSessionStatus, ProjectWorkspace,
     OrchestrationDecision, TaskLease, ActivitySummary, AgentCheckpoint, UserContribution,
     LeaseStatus, ContributionType, DiffReview, DiffReviewStatus,
@@ -1295,6 +1295,7 @@ async def get_task_git_diff(
         branch = _task_branch_name(task, agent)
         snapshot = await asyncio.to_thread(
             read_task_git_diff, project.path, session.workspace_path, branch,
+            session.review_base_revision,
         )
         if snapshot is not None:
             snapshot["session_id"] = session.id
@@ -1358,16 +1359,34 @@ async def create_diff_review(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     if review.project_id != project_id:
         raise HTTPException(status_code=422, detail="Path project_id and body project_id must match")
+    if review.requester_id is not None and review.requester_id != current_entity.id:
+        raise HTTPException(
+            status_code=422,
+            detail="requester_id is derived from the authenticated caller",
+        )
+    if (
+        review.reviewer_id == current_entity.id
+        and not is_owner_or_manager(current_entity)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="An independent reviewer must differ from the requester",
+        )
+    if review.reviewer_id is not None:
+        reviewer = await db.get(Entity, review.reviewer_id)
+        if reviewer is None or not reviewer.is_active or reviewer.role == Role.VIEWER:
+            raise HTTPException(status_code=422, detail="Reviewer must be an active non-viewer entity")
 
     from agent_kanban_pm.services.coordination import review_evidence
     evidence = await review_evidence(db, project_id, review.task_id)
     db_review = DiffReview(
         work_revision=evidence["work_revision"],
+        base_revision=evidence["base_revision"],
         diff_sha256=evidence["diff_sha256"],
         project_id=project_id,
         task_id=review.task_id,
         reviewer_id=review.reviewer_id or current_entity.id,
-        requester_id=review.requester_id or current_entity.id,
+        requester_id=current_entity.id,
         diff_content=evidence["diff"] if evidence["diff"] is not None else review.diff_content,
         summary=review.summary,
         file_paths=evidence["file_paths"] if evidence["file_paths"] is not None else review.file_paths,
@@ -1482,7 +1501,31 @@ async def cancel_launch_request(
     row = await db.get(LaunchRequest, request_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Launch request not found")
-    if row.session_id is not None or row.status in {"starting", "started", "completed"}:
+    session = await db.get(AgentSession, row.session_id) if row.session_id else None
+    if session is None:
+        session = await db.scalar(select(AgentSession).where(
+            AgentSession.launch_request_id == row.id,
+            AgentSession.ended_at.is_(None),
+        ).limit(1))
+    if session is not None and session.ended_at is None:
+        from agent_kanban_pm.runtime.task_runner import receipt_state
+        receipt = await asyncio.to_thread(receipt_state, session)
+        if session.status != AgentSessionStatus.STARTING or receipt.status != "missing":
+            raise HTTPException(status_code=409, detail="A started session must be stopped through session controls")
+        now = datetime.now(UTC)
+        session.status = AgentSessionStatus.ERROR
+        session.ended_at = now
+        session.last_seen_at = now
+        session.handoff_summary = action.reason or f"Launch cancelled by {current_entity.name} before execution"
+        row.session_id = session.id
+        leases = list((await db.execute(select(TaskLease).where(
+            TaskLease.session_id == session.id,
+            TaskLease.status == LeaseStatus.ACTIVE,
+        ))).scalars())
+        for lease in leases:
+            lease.status = LeaseStatus.RELEASED
+            lease.released_at = now
+    elif row.status in {"starting", "started", "completed"}:
         raise HTTPException(status_code=409, detail="A started session must be stopped through session controls")
     row.status = "cancelled"
     row.last_error = action.reason or f"Cancelled by {current_entity.name}"

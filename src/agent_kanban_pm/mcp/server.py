@@ -1728,6 +1728,7 @@ class KanbanMCPServer:
             evidence = await review_evidence(db, project_id, args.get("task_id"))
             review = DiffReview(
                 work_revision=evidence["work_revision"],
+                base_revision=evidence["base_revision"],
                 diff_sha256=evidence["diff_sha256"],
                 project_id=project_id,
                 task_id=args.get("task_id"),
