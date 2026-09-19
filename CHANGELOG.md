@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased — reliability hardening
+All notable changes to Agent Kanban PM are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.6.0] — 2026-09-19
+
+### Changed
 
 - Consolidate Activity session details and refresh durable handoffs without stale-session responses overwriting the selection.
 - Honor configured completion policies in the task drawer, preserve completion notifications across interfaces, and prevent cancelled queue requests from starting during workspace preparation.
@@ -36,16 +45,13 @@
 - Move all remaining REST, UI, MCP, streamer, and sweeper mutation notifications into their domain transactions; renew slow dispatcher and scheduler claims and deduplicate external adapter delivery per connection.
 - Add migration 17 for durable, server-verified handoff artifacts.
 
-The approved lifecycle integration is applied. Remaining engineering work and verification limits are documented in `review/LIFECYCLE_REVIEW.md`.
+### Known issues
 
-All notable changes to Agent Kanban PM are documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
----
-
-## [Unreleased]
+Seven open findings covering shutdown delivery, launch recovery, review and PR
+provenance, nested override dialogs, moving diff baselines, and approval-note
+drafts are documented with proposed fixes and acceptance checks in [Plan.md](Plan.md).
+Implementation details and verification limits are documented in
+[review/LIFECYCLE_REVIEW.md](review/LIFECYCLE_REVIEW.md).
 
 ## [0.5.0] — 2026-09-14
 
