@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 
-# Columns added by migrations v1-v8, keyed by table. Dropping these from a
+# Columns added by migrations v1-v18, keyed by table. Dropping these from a
 # freshly built schema reproduces the pre-migration shape.
 MIGRATED_COLUMNS = {
     "stages": ["workflow_key"],
@@ -44,11 +44,16 @@ MIGRATED_COLUMNS = {
         "workspace_path", "file_path", "command",
     ],
     "agent_approvals": ["update_version"],
-    "pending_events": ["consumed_at"],
+    "diff_reviews": ["work_revision", "diff_sha256"],
+    "launch_requests": ["actor_id", "claimed_at", "claim_token", "archived_at", "override_reason"],
+    "pending_events": ["consumed_at", "outbox_event_id"],
+    "outbox_events": ["claimed_at", "claim_token"],
     "projects": ["is_demo"],
     "agent_sessions": [
         "assigned_role", "run_token", "handoff_state",
-        "handoff_summary", "handoff_received_at",
+        "handoff_summary", "handoff_received_at", "exit_code",
+        "launch_request_id", "launch_spec_json", "source_session_id", "work_revision", "handoff_outputs_json",
+        "handoff_artifacts_json",
     ],
 }
 
@@ -252,7 +257,7 @@ def test_upgrade_records_the_migration_chain(legacy_db):
     assert "INIT_OK" in result.stdout, f"upgrade failed:\n{result.stderr}"
 
     versions = {row[0] for row in _rows(legacy_db, "SELECT version FROM schema_migrations")}
-    assert versions >= set(range(1, 12)), f"migration chain incomplete: {sorted(versions)}"
+    assert versions >= set(range(1, 19)), f"migration chain incomplete: {sorted(versions)}"
 
 
 def test_upgrade_is_idempotent(legacy_db):
@@ -284,7 +289,7 @@ def test_fresh_database_also_records_the_chain(tmp_path):
     assert "INIT_OK" in result.stdout, f"fresh init failed:\n{result.stderr}"
 
     versions = {row[0] for row in _rows(fresh, "SELECT version FROM schema_migrations")}
-    assert versions >= set(range(1, 12)), (
+    assert versions >= set(range(1, 19)), (
         "a fresh database skipped migration bookkeeping, so the next release's "
         f"migrations would run against it unpredictably: {sorted(versions)}"
     )

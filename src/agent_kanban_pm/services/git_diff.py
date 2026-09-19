@@ -82,6 +82,7 @@ def read_task_git_diff(project_path: str, workspace_path: str, branch: str | Non
     command = ["diff", "--no-ext-diff", "--no-color", "--find-renames", base]
     if target:
         command.append(target)
+    command.extend(["--", ".", ":(exclude)STATUS.md"])
     result = _git(repo, *command)
     if result.returncode != 0:
         return None
@@ -90,7 +91,7 @@ def read_task_git_diff(project_path: str, workspace_path: str, branch: str | Non
         untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z")
         if untracked.returncode == 0:
             for relative_path in untracked.stdout.split("\0"):
-                if not relative_path:
+                if not relative_path or relative_path == "STATUS.md":
                     continue
                 patch += _untracked_patch(repo, relative_path)
                 if len(patch) > MAX_DIFF_CHARS:

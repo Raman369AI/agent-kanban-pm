@@ -32,6 +32,7 @@
                 .filter(candidate => candidate.installed).map(candidate => [candidate.agent, candidate]));
             if (current && !candidates.has(current.agent)) candidates.set(current.agent, current);
             const form = element('form', '', 'role-settings-row');
+            form.dataset.role = name;
             form.append(element('strong', name));
             const agent = field(form, 'Agent', element('select'), 'role-agent-' + name);
             choices(agent, [['', 'Choose an agent'], ...[...candidates.values()].map(c =>

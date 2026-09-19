@@ -1,0 +1,14 @@
+<nav class="project-sub-nav" aria-label="Project navigation">
+  <a href="/ui/projects/{{ project.id }}/board"
+    class="sub-nav-pill{% if active_page == 'board' %} active{% endif %}"
+    {% if active_page == 'board' %}aria-current="page"{% endif %}>Board</a>
+  <a href="/ui/projects/{{ project.id }}/workbench"
+    class="sub-nav-pill{% if active_page == 'activity' %} active{% endif %}"
+    {% if active_page == 'activity' %}aria-current="page"{% endif %}>Activity</a>
+  <a href="/ui/projects/{{ project.id }}/git"
+    class="sub-nav-pill{% if active_page == 'changes' %} active{% endif %}"
+    {% if active_page == 'changes' %}aria-current="page"{% endif %}>Changes</a>
+  <a href="/ui/projects/{{ project.id }}/settings"
+    class="sub-nav-pill{% if active_page == 'settings' %} active{% endif %}"
+    {% if active_page == 'settings' %}aria-current="page"{% endif %}>Settings</a>
+</nav>

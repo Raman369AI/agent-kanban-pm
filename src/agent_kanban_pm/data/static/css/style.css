@@ -1198,3 +1198,190 @@ a:hover {
     .appearance-menu-content { right: 0; }
     .attention-list .text-secondary { width: 100%; margin-left: 0; }
 }
+
+
+.settings-policy-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+.settings-policy-summary > div {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.85rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--control-radius);
+    background: var(--bg-primary);
+}
+.settings-policy-summary span {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+.settings-role-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+
+.role-settings-row.role-settings-focus {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb), 0.12);
+}
+
+
+.dashboard-task-link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+.dashboard-task-link:hover {
+    border-color: rgba(var(--accent-primary-rgb), 0.4);
+    transform: translateY(-1px);
+    text-decoration: none;
+}
+.dashboard-task-link:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 3px;
+}
+
+/* Shared workspace folder picker */
+.folder-picker-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    background: rgba(0, 0, 0, 0.44);
+    backdrop-filter: blur(8px);
+}
+.folder-picker-card {
+    display: flex;
+    flex-direction: column;
+    width: min(760px, 100%);
+    max-height: min(760px, 92vh);
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    background: var(--bg-card);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.3);
+}
+.folder-picker-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+.folder-picker-header h3 { margin: 0; font-size: 1.2rem; }
+.folder-picker-header p {
+    margin: 0.25rem 0 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+.folder-picker-body {
+    display: grid;
+    gap: 1rem;
+    min-height: 0;
+    padding: 1.25rem 1.5rem 1.5rem;
+}
+.folder-toolbar {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.6rem;
+}
+.folder-shortcuts { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.folder-list {
+    display: grid;
+    gap: 0.45rem;
+    min-height: 260px;
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 0.35rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--control-radius);
+    background: var(--bg-primary);
+}
+.folder-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    align-items: center;
+    width: 100%;
+    padding: 0.72rem 0.8rem;
+    border: 1px solid transparent;
+    border-radius: var(--control-radius);
+    background: transparent;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+.folder-row:hover,
+.folder-row:focus-visible {
+    border-color: var(--accent-primary);
+    outline: none;
+    background: var(--bg-card);
+}
+.folder-icon {
+    display: inline-flex;
+    width: 2rem;
+    height: 2rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--control-radius);
+    background: rgba(var(--accent-primary-rgb), 0.12);
+}
+.folder-name { display: block; font-weight: 700; }
+.folder-path {
+    display: block;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.folder-open { color: var(--text-muted); font-size: 1.15rem; }
+.folder-empty {
+    margin: 0;
+    padding: 2rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+@media (max-width: 720px) {
+    .folder-toolbar { grid-template-columns: 1fr; }
+    .folder-toolbar .btn { width: 100%; }
+}
+
+/* Shared application confirmation dialog */
+.app-confirm-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    background: rgba(0, 0, 0, 0.48);
+    backdrop-filter: blur(8px);
+}
+.app-confirm-card {
+    width: min(480px, 100%);
+    padding: 1.25rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    background: var(--bg-card);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.3);
+}
+.app-confirm-card h2 { margin: 0 0 0.5rem; font-size: 1.2rem; }
+.app-confirm-card p { color: var(--text-secondary); line-height: 1.5; }
+.app-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1.25rem;
+}

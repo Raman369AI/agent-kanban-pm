@@ -959,3 +959,82 @@ body.task-panel-open { overflow: hidden; }
 .plan-preview-row .plan-priority { width: 6rem; }
 .plan-preview-row .btn-link { justify-self: start; }
 #plan-preview-error { min-height: 1.2rem; margin: 0.3rem 0; }
+
+
+/* Completion evidence and explicit human override */
+.task-review-progress {
+    background: rgba(var(--accent-primary-rgb), 0.1);
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
+    color: var(--accent-primary);
+}
+.task-review-progress.is-complete {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.3);
+    color: var(--success);
+}
+.completion-gates-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+.completion-gates-heading h3 { margin: 0; }
+.completion-gates-list,
+.done-override-gates {
+    display: grid;
+    gap: 0.55rem;
+    margin: 0.75rem 0;
+    padding: 0;
+    list-style: none;
+}
+.completion-gate {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.6rem;
+    align-items: start;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+}
+.completion-gate small {
+    display: block;
+    margin-top: 0.15rem;
+    color: var(--text-secondary);
+}
+.completion-gate-complete .completion-gate-mark { color: var(--success); }
+.completion-gate-waiting .completion-gate-mark { color: var(--warning); }
+.completion-gate-not_required { opacity: 0.7; }
+.completion-gate-blocker,
+.completion-gate-ready {
+    margin: 0.75rem 0 0;
+    padding: 0.65rem 0.75rem;
+    border-radius: var(--radius-sm);
+}
+.completion-gate-blocker {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--warning);
+}
+.completion-gate-ready {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--success);
+}
+.done-override-card { width: min(620px, 95vw); }
+.done-override-body { padding: 1rem 1.25rem; }
+.done-override-body label {
+    display: block;
+    margin: 1rem 0 0.35rem;
+    font-weight: 700;
+}
+.done-override-gates li {
+    display: grid;
+    gap: 0.15rem;
+    padding: 0.65rem 0.75rem;
+    border-left: 3px solid var(--warning);
+    background: rgba(245, 158, 11, 0.08);
+}
+.done-override-gates span {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
+.done-override-audit-note { font-size: 0.8rem; }

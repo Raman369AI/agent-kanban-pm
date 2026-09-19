@@ -4,12 +4,7 @@
 
 {% block content %}
 <!-- Consistent Project Navigation -->
-<div class="project-sub-nav">
-  <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill">Board</a>
-  <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">Activity</a>
-  <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">Changes</a>
-  <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill active" aria-current="page">Settings</a>
-</div>
+{% include "_project_subnav.html" %}
 
 <div class="d-flex align-items-center justify-content-between mb-4">
   <div>
@@ -45,16 +40,36 @@
   </form>
 </div>
 
-<!-- Section 2: Team Roles for Project -->
+<!-- Section 2: Workflow and global role summary -->
 <div class="card glass-card mb-4" style="padding: 1.5rem;">
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
     <div>
-      <h3 style="margin:0; font-size:1.2rem; font-weight:700;">Agents &amp; Roles</h3>
-      <p class="text-secondary" style="font-size:0.85rem; margin:0.25rem 0 0 0;">Configure CLI agents and models for roles (worker, reviewer, planner, security).</p>
+      <h3 style="margin:0; font-size:1.2rem; font-weight:700;">Workflow &amp; Global Roles</h3>
+      <p class="text-secondary" style="font-size:0.85rem; margin:0.25rem 0 0 0;">
+        Role assignments apply to every project. Manage them from one global page.
+      </p>
+    </div>
+    <a class="btn btn-secondary btn-sm"
+      href="/ui/users?focus=worker&amp;return=/ui/projects/{{ project.id }}/settings">Manage global roles</a>
+  </div>
+  <div class="settings-policy-summary">
+    <div>
+      <strong>Done policy</strong>
+      <span>Merged GitHub pull request at the reviewed implementation revision</span>
+    </div>
+    <div>
+      <strong>Review roles</strong>
+      <span>Test, diff review, and Git/PR</span>
     </div>
   </div>
-  <div id="team-list" class="team-list">
-    <p class="text-secondary">Loading role assignments...</p>
+  <div class="settings-role-summary" aria-label="Configured global roles">
+    {% for role in role_data.roles %}
+    <span class="badge" title="{{ role.display_name }} · {{ role.command }}">
+      {{ role.role }}: {{ role.display_name }}
+    </span>
+    {% else %}
+    <span class="text-secondary">No global roles are configured.</span>
+    {% endfor %}
   </div>
 </div>
 
@@ -65,162 +80,17 @@
   <button class="btn btn-danger btn-sm" onclick="deleteThisProject()">Delete project</button>
 </div>
 
-<!-- Folder Picker Modal -->
-<div id="folder-picker-modal" class="project-modal-overlay" style="display:none;" role="dialog" aria-modal="true"
-    aria-hidden="true" aria-labelledby="settings-folder-modal-title" onclick="if(event.target===this)closeFolderPicker()">
-    <div class="project-modal-card folder-modal">
-        <div class="project-modal-header">
-            <div>
-                <h3 class="project-modal-title" id="settings-folder-modal-title">Select Folder</h3>
-                <p class="project-modal-subtitle">Browse local directories and choose the project workspace.</p>
-            </div>
-            <button class="btn-icon" aria-label="Close folder picker" onclick="closeFolderPicker()">&times;</button>
-        </div>
-        <div class="folder-picker-body">
-            <div class="folder-toolbar">
-                <input id="folder-picker-current" class="project-input" type="text" aria-label="Current folder">
-                <button type="button" class="btn" onclick="loadFolderFromInput()">Go</button>
-            </div>
-            <div class="folder-shortcuts">
-                <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerParent)">Up</button>
-                <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerHome)">Home</button>
-                <button type="button" class="btn btn-sm btn-primary" onclick="selectCurrentFolder()">Use This Folder</button>
-            </div>
-            <div id="folder-picker-list" class="folder-list">
-                <p class="folder-empty">Loading...</p>
-            </div>
-        </div>
-    </div>
-</div>
+{% set folder_picker_title = 'Select Folder' %}
+{% include "_folder_picker.html" %}
 
 <div id="toast" class="toast" style="display:none;" role="status" aria-live="polite" aria-atomic="true"></div>
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/role-settings.js"></script>
+<script src="/static/js/folder-picker.js?v=7"></script>
 <script>
-  var PROJECT_ID = {{ project.id }};
-  var CURRENT_ENTITY_ID = {{ (current_entity.id if current_entity else 'null') }};
-  var folderPickerTarget = null;
-  var folderPickerCurrent = '';
-  var folderPickerParent = null;
-  var folderPickerHome = '';
-
-  document.addEventListener('DOMContentLoaded', function() {
-    apiFetch('/ui/api/roles', {}, 'Failed to load roles').then(function(data) {
-      if (window.renderRoleCliPanel) {
-        window.renderRoleCliPanel(data);
-      }
-    }).catch(function(err) {
-      var list = document.getElementById('team-list');
-      if (list) list.innerHTML = '<p class="text-danger">Failed to load roles: ' + err.message + '</p>';
-    });
-  });
-
-  async function saveProjectSettings() {
-    var btn = document.getElementById('save-settings-btn');
-    var feedback = document.getElementById('settings-feedback');
-    var name = document.getElementById('settings-name').value;
-    var desc = document.getElementById('settings-desc').value;
-    var path = document.getElementById('settings-path').value;
-    btn.disabled = true;
-    try {
-      await apiFetch('/ui/projects/' + PROJECT_ID + '/edit', {
-        method: 'PATCH',
-        headers: {'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID},
-        body: JSON.stringify({name: name, description: desc, path: path})
-      }, 'Failed to save settings');
-      if (feedback) {
-        feedback.style.display = 'inline';
-        setTimeout(function() { feedback.style.display = 'none'; }, 3000);
-      }
-    } catch (err) {
-      alert('Error saving settings: ' + err.message);
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  function deleteThisProject() {
-    if (!confirm('Are you sure you want to delete this project? This action cannot be undone.')) return;
-    apiFetch('/ui/projects/' + PROJECT_ID, {
-      method: 'DELETE',
-      headers: {'x-entity-id': CURRENT_ENTITY_ID}
-    }, 'Failed to delete project').then(function() {
-      window.location.href = '/ui/projects';
-    }).catch(function(err) {
-      alert('Error deleting project: ' + err.message);
-    });
-  }
-
-  function openFolderPicker(targetInputId) {
-    folderPickerTarget = document.getElementById(targetInputId);
-    var initial = (folderPickerTarget && folderPickerTarget.value.trim()) || '';
-    openModal('folder-picker-modal');
-    loadFolder(initial);
-  }
-  function closeFolderPicker() {
-    closeModal('folder-picker-modal');
-  }
-  function selectCurrentFolder() {
-    if (folderPickerTarget && folderPickerCurrent) {
-      folderPickerTarget.value = folderPickerCurrent;
-    }
-    closeFolderPicker();
-  }
-  function loadFolderFromInput() {
-    var val = document.getElementById('folder-picker-current').value.trim();
-    if (val) loadFolder(val);
-  }
-  var folderRequestSequence = 0;
-  function loadFolder(path) {
-    var requestId = ++folderRequestSequence;
-    var input = document.getElementById('folder-picker-current');
-    var inputAtRequest = input.value;
-    var query = path ? '?path=' + encodeURIComponent(path) : '';
-    apiFetch('/ui/api/folders' + query, {}, 'Failed to load folders').then(function(data) {
-      if (requestId !== folderRequestSequence || input.value !== inputAtRequest) return;
-      folderPickerCurrent = data.path;
-      folderPickerParent = data.parent;
-      folderPickerHome = data.home;
-      document.getElementById('folder-picker-current').value = data.path;
-      var list = document.getElementById('folder-picker-list');
-      list.replaceChildren();
-      if (!data.folders || !data.folders.length) {
-        var empty = document.createElement('p');
-        empty.className = 'folder-empty';
-        empty.textContent = 'No subdirectories found.';
-        list.append(empty);
-        return;
-      }
-      data.folders.forEach(function(folder) {
-        var row = document.createElement('button');
-        row.type = 'button';
-        row.className = 'folder-row';
-        var icon = document.createElement('span');
-        icon.className = 'folder-icon';
-        icon.textContent = '📁';
-        var details = document.createElement('div');
-        var name = document.createElement('div');
-        name.className = 'folder-name';
-        name.textContent = folder.name;
-        var folderPath = document.createElement('div');
-        folderPath.className = 'folder-path';
-        folderPath.textContent = folder.path;
-        details.append(name, folderPath);
-        row.append(icon, details);
-        row.addEventListener('click', function() { loadFolder(folder.path); });
-        list.append(row);
-      });
-    }).catch(function(err) {
-      if (requestId !== folderRequestSequence) return;
-      var list = document.getElementById('folder-picker-list');
-      list.replaceChildren();
-      var error = document.createElement('p');
-      error.className = 'text-danger p-3';
-      error.textContent = 'Error: ' + err.message;
-      list.append(error);
-    });
-  }
+window.PROJECT_ID = {{ project.id }};
+window.CURRENT_ENTITY_ID = {{ (current_entity.id if current_entity else 'null') }};
 </script>
+<script src="/static/js/project-settings.js?v=7"></script>
 {% endblock %}

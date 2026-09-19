@@ -66,7 +66,7 @@ def test_setup_queues_then_assigns_and_requires_a_real_session(monkeypatch, tmp_
 
         queued = client.patch(
             f"/ui/tasks/{task_id}/move",
-            json={"stage_id": stages["To Do"], "status": "pending"},
+            json={"stage_id": stages["To Do"], "status": "pending", "override_reason": "Queue this setup task for the configured worker."},
             headers=headers,
         )
         assert queued.status_code == 200, queued.text
@@ -86,7 +86,7 @@ def test_setup_queues_then_assigns_and_requires_a_real_session(monkeypatch, tmp_
         # Moving a stage/status manually cannot complete the execution step.
         moved = client.patch(
             f"/ui/tasks/{task_id}/move",
-            json={"stage_id": stages["In Progress"], "status": "in_progress"},
+            json={"stage_id": stages["In Progress"], "status": "in_progress", "override_reason": "Exercise the manual stage path without starting an agent."},
             headers=headers,
         )
         assert moved.status_code == 200, moved.text

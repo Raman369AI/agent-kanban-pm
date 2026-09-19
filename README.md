@@ -201,7 +201,8 @@ to `STATUS.md`.
 
 An explicit handoff uses `POST /agents/sessions/{id}/handoff` with
 `project_id`, `task_id`, the session's `run_token`, `state`, and a
-non-empty `summary`. The session agent or an owner/manager may submit it.
+non-empty `summary`, plus the named `outputs` produced by the run. The session
+agent or an owner/manager may submit it.
 
 ## Bundled agent adapters
 

@@ -173,3 +173,11 @@ def test_tmux_launch_execs_cli_after_enabling_remain_on_exit(monkeypatch):
         "task-pane", "KANBAN_SESSION_ID=42 exec agent-cli run", True
     )]
     assert calls[2] == ["tmux", "send-keys", "-t", "task-pane", "Enter"]
+
+
+def test_tmux_missing_socket_is_distinct_from_inaccessible_socket(monkeypatch):
+    completed = mock.Mock(returncode=1, stdout="", stderr="error connecting to /tmp/tmux-test (No such file or directory)")
+    monkeypatch.setattr("agent_kanban_pm.runtime.process_launcher.subprocess.run", lambda *a, **kw: completed)
+    assert tmux_session_state("reserved-run").status == "missing"
+    completed.stderr = "error connecting to /tmp/tmux-test (Permission denied)"
+    assert tmux_session_state("reserved-run").status == "unknown"

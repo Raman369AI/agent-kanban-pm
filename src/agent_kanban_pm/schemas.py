@@ -110,6 +110,7 @@ class TaskUpdate(BaseModel):
     priority: Optional[int] = None
     sequence_order: Optional[int] = None
     version: Optional[int] = None  # For optimistic locking
+    override_reason: Optional[str] = Field(default=None, max_length=2000)
 
 
 class TaskResponse(TaskBase):
@@ -451,6 +452,8 @@ class DiffReviewUpdate(BaseModel):
 
 
 class DiffReviewResponse(BaseModel):
+    diff_sha256: Optional[str] = None
+    work_revision: Optional[str] = None
     id: int
     project_id: int
     task_id: Optional[int] = None

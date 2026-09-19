@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))          # tests dir
 # before any test module imports database.py and creates the global engine.
 _TEST_DB_DIR = tempfile.TemporaryDirectory(prefix="agent-kanban-pm-tests-")
 _TEST_DB_PATH = Path(_TEST_DB_DIR.name) / "kanban.db"
-os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_TEST_DB_PATH}")
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB_PATH}"
 os.environ["KANBAN_TESTING"] = "1"
 
 

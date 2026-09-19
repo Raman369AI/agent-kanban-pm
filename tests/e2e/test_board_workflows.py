@@ -150,6 +150,14 @@ def _prepare_board(api: httpx.Client) -> dict:
     }
 
 
+def _complete_workflow_override(page: Page, reason: str) -> None:
+    dialog = page.locator("#done-override-modal")
+    expect(dialog).to_be_visible()
+    dialog.locator("#done-override-reason").fill(reason)
+    dialog.locator("#done-override-submit").click()
+    expect(dialog).to_be_hidden()
+
+
 def test_drag_and_keyboard_card_movement(page: Page, live_server: str, api: httpx.Client):
     board = _prepare_board(api)
     task_id = board["task"]["id"]
@@ -160,16 +168,60 @@ def test_drag_and_keyboard_card_movement(page: Page, live_server: str, api: http
         '.kanban-column-revamp[data-stage-name="To Do"] .kanban-drop-zone-revamp'
     )
     card.drag_to(todo_zone)
+    _complete_workflow_override(page, "Queue this card for browser movement coverage.")
     expect(todo_zone.locator(f"#task-card-{task_id}")).to_be_visible()
     expect(page.locator("#toast")).to_contain_text("Task moved to To Do")
 
     card.focus()
     card.press("ArrowRight")
+    _complete_workflow_override(page, "Start this card for keyboard movement coverage.")
     progress_zone = page.locator(
         '.kanban-column-revamp[data-stage-name="In Progress"] .kanban-drop-zone-revamp'
     )
     expect(progress_zone.locator(f"#task-card-{task_id}")).to_be_visible()
     expect(card).to_be_focused()
+
+
+def test_completion_gates_and_reasoned_done_override(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    task_id = board["task"]["id"]
+    moved = api.patch(
+        f"/ui/tasks/{task_id}/move",
+        json={
+            "stage_id": board["stages"]["Review"],
+            "status": "in_review",
+            "override_reason": "Place the task in Review to inspect completion gates.",
+        },
+        headers=board["headers"],
+    )
+    moved.raise_for_status()
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+
+    card = page.locator(f"#task-card-{task_id}")
+    card.click()
+    panel = page.locator("#task-detail-panel")
+    expect(panel.get_by_role("heading", name="Completion gates")).to_be_visible()
+    expect(panel.locator(".completion-gate")).to_have_count(6)
+    done_zone = page.locator(
+        '.kanban-column-revamp[data-stage-key="done"] .kanban-drop-zone-revamp'
+    )
+    panel.locator("#task-panel-stage").select_option(str(board["stages"]["Done"]))
+    dialog = page.get_by_role("dialog", name="Move to Done anyway?")
+    expect(dialog).to_be_visible()
+    expect(dialog.locator("#done-override-gates li").first).to_be_visible()
+    dialog.locator("#done-override-submit").click()
+    expect(dialog.locator("#done-override-error")).to_contain_text("Enter a short reason")
+    reason = "Accept incomplete evidence for this explicit browser-test decision."
+    dialog.locator("#done-override-reason").fill(reason)
+    dialog.locator("#done-override-submit").click()
+    expect(done_zone.locator(f"#task-card-{task_id}")).to_be_visible()
+    expect(page.locator("#toast")).to_contain_text("Task moved to Done")
+
+    logs = api.get(f"/tasks/{task_id}/logs", headers=board["headers"])
+    logs.raise_for_status()
+    assert any(reason in item["message"] for item in logs.json())
 
 
 def test_layout_preferences_and_refresh_preserve_task_context(page: Page, live_server: str, api: httpx.Client):
@@ -208,9 +260,11 @@ def test_renamed_stage_keyboard_move_uses_stable_status(page: Page, live_server:
     card = page.locator(f"#task-card-{board['task']['id']}")
     card.focus()
     card.press('ArrowRight')
+    _complete_workflow_override(page, 'Queue the renamed-stage card for keyboard coverage.')
     expect(card).to_have_attribute('data-current-stage', str(board['stages']['To Do']))
     expect(card).not_to_have_attribute('data-moving', 'true')
     card.press('ArrowRight')
+    _complete_workflow_override(page, 'Start the renamed-stage card for keyboard coverage.')
     expect(page.locator(f'.kanban-column-revamp[data-stage-id="{progress_id}"]')).to_contain_text(board['task']['title'])
     expect(card).to_have_attribute('data-status', 'in_progress')
 
@@ -232,9 +286,8 @@ def test_role_editor_updates_models_and_preserves_other_drafts(page: Page, live_
         next(role for role in roles if role['role'] == payload['role']).update(payload)
         route.fulfill(json=data)
     page.route('**/ui/api/roles/assign', save)
-    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
-    page.locator('summary').filter(has_text='Advanced').click()
-    page.get_by_role('button', name='Team roles', exact=True).click()
+    page.goto(f"{live_server}/ui/users")
+    page.get_by_role('button', name='Configure roles', exact=True).click()
     expect(page.locator('#role-mode-worker')).to_have_value('interactive')
     expect(page.locator('#role-autonomy-worker')).to_have_value('auto')
     page.locator('#role-autonomy-security').select_option('supervised')
@@ -248,8 +301,8 @@ def test_role_editor_updates_models_and_preserves_other_drafts(page: Page, live_
     assert saved[0]['autonomy'] == 'auto'
     expect(page.locator('#role-autonomy-security')).to_have_value('supervised')
     page.set_viewport_size({'width': 390, 'height': 844})
-    dialog = page.locator('.role-settings-modal')
-    assert dialog.evaluate('el => el.scrollWidth <= el.clientWidth')
+    editor = page.locator('#role-editor-container')
+    assert editor.evaluate('el => el.scrollWidth <= el.clientWidth')
     expect(row.get_by_role('button', name='Save role')).to_be_in_viewport()
 
 
@@ -513,7 +566,8 @@ def test_card_overflow_menu_focus_visibility_and_move_to_todo(
     move_btn = card.get_by_role("button", name="Move to To Do")
     expect(move_btn).to_be_visible()
     move_btn.click()
-    expect(page.locator("#toast")).to_contain_text("Task moved to To Do")
+    _complete_workflow_override(page, "Queue this card from its explicit backlog action.")
+    expect(page.locator("#toast")).to_contain_text("Task is ready in To Do")
     todo_zone = page.locator(
         '.kanban-column-revamp[data-stage-key="to_do"] .kanban-drop-zone-revamp'
     )
@@ -524,8 +578,10 @@ def test_card_overflow_menu_focus_visibility_and_move_to_todo(
     # The local task_moved WebSocket echo must not replace the open menu.
     page.wait_for_timeout(700)
     expect(menu_item).to_be_visible()
-    page.once("dialog", lambda dialog: dialog.accept())
     menu_item.click()
+    confirm = page.get_by_role("dialog", name="Delete task?")
+    expect(confirm).to_be_visible()
+    confirm.get_by_role("button", name="Delete task").click()
     expect(page.locator(f"#task-card-{task_id}")).to_have_count(0)
 
 
@@ -610,10 +666,10 @@ def test_phase2_setup_checklist_and_navigation_e2e(
     expect(config_btn).to_be_visible()
     config_btn.click()
     expect(assign_dialog).to_be_hidden()
-    expect(page.get_by_role("dialog", name="Team roles")).to_be_visible()
+    expect(page.get_by_role("dialog", name="Global agent roles")).to_be_visible()
     page.unroute("**/ui/api/roles")
     page.keyboard.press("Escape")
-    expect(page.get_by_role("dialog", name="Team roles")).to_be_hidden()
+    expect(page.get_by_role("dialog", name="Global agent roles")).to_be_hidden()
 
     # Navigation between project pages retains active indicator
     subnav.get_by_role("link", name="Activity").click()
@@ -644,6 +700,79 @@ def test_phase2_setup_checklist_and_navigation_e2e(
     expect(page.locator("#role-editor-container")).to_be_visible()
     expect(page.locator("#team-list .role-settings-row").first).to_be_visible()
 
+
+
+
+def test_project_card_and_folder_rows_navigate(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    project_id = board["project_id"]
+
+    page.goto(f"{live_server}/ui/projects")
+    card = page.locator(f"#project-card-{project_id}")
+    card.locator("h3").click()
+    page.wait_for_url(f"**/ui/projects/{project_id}/board")
+    assert page.url.endswith(f"/ui/projects/{project_id}/board")
+
+    folder_tree = {
+        None: {
+            "path": "/virtual",
+            "parent": "/",
+            "home": "/virtual",
+            "folders": [{"name": "child", "path": "/virtual/child"}],
+        },
+        "/virtual/child": {
+            "path": "/virtual/child",
+            "parent": "/virtual",
+            "home": "/virtual",
+            "folders": [{"name": "grandchild", "path": "/virtual/child/grandchild"}],
+        },
+        "/virtual/child/grandchild": {
+            "path": "/virtual/child/grandchild",
+            "parent": "/virtual/child",
+            "home": "/virtual",
+            "folders": [],
+        },
+    }
+
+    def serve_folders(route):
+        requested = httpx.URL(route.request.url).params.get("path")
+        route.fulfill(json=folder_tree.get(requested, folder_tree[None]))
+
+    page.route("**/ui/api/folders*", serve_folders)
+
+    def assert_nested_navigation(url: str, opener: str, dialog_name: str):
+        page.goto(url)
+        page.locator(opener).click()
+        picker = page.get_by_role("dialog", name=dialog_name)
+        expect(picker).to_be_visible()
+        expect(picker.locator("#folder-picker-current")).to_have_value("/virtual")
+        picker.locator("#folder-picker-list button").filter(has_text="child").click()
+        expect(picker.locator("#folder-picker-current")).to_have_value("/virtual/child")
+        picker.locator("#folder-picker-list button").filter(has_text="grandchild").click()
+        expect(picker.locator("#folder-picker-current")).to_have_value(
+            "/virtual/child/grandchild"
+        )
+
+    page.goto(f"{live_server}/ui/projects")
+    page.get_by_role("button", name="New Project").click()
+    create_dialog = page.get_by_role("dialog", name="Create Project")
+    create_dialog.get_by_role("button", name="Browse").click()
+    picker = page.get_by_role("dialog", name="Select Folder")
+    expect(picker.locator("#folder-picker-current")).to_have_value("/virtual")
+    picker.locator("#folder-picker-list button").filter(has_text="child").click()
+    expect(picker.locator("#folder-picker-current")).to_have_value("/virtual/child")
+    picker.locator("#folder-picker-list button").filter(has_text="grandchild").click()
+    expect(picker.locator("#folder-picker-current")).to_have_value(
+        "/virtual/child/grandchild"
+    )
+
+    assert_nested_navigation(
+        f"{live_server}/ui/projects/{project_id}/board",
+        "#step-choose-folder button",
+        "Select Project Folder",
+    )
 
 
 def test_phase2_folder_picker_ignores_stale_browse_response(
@@ -677,6 +806,10 @@ def test_phase2_folder_picker_ignores_stale_browse_response(
         picker = page.get_by_role("dialog", name=dialog_name)
         expect(picker).to_be_visible()
         page.wait_for_function("typeof window.releaseOldFolderResponse === 'function'")
+        if release_before_go:
+            picker.locator("#folder-picker-current").focus()
+            page.evaluate("window.releaseOldFolderResponse()")
+            expect(picker.locator("#folder-picker-current")).to_have_value("")
         picker.locator("#folder-picker-current").fill(target_path)
         if release_before_go:
             page.evaluate("window.releaseOldFolderResponse()")
@@ -868,7 +1001,7 @@ def test_board_refreshes_after_websocket_reconnect(
     sockets[0].close()
     api.patch(
         f"/ui/tasks/{board['task']['id']}/move",
-        json={"stage_id": board["stages"]["To Do"], "status": "pending"},
+        json={"stage_id": board["stages"]["To Do"], "status": "pending", "override_reason": "Exercise WebSocket reconnection after a manual move."},
         headers=board["headers"],
     ).raise_for_status()
     expect(page.locator(f"#task-card-{board['task']['id']}")).to_have_attribute(
@@ -931,6 +1064,7 @@ def test_phase3_task_panel_deep_link_focus_and_stage_control(
     panel.get_by_role("combobox", name="Task stage").select_option(
         str(board["stages"]["To Do"])
     )
+    _complete_workflow_override(page, "Queue this card from the task detail panel.")
     expect(page.locator(
         f'.kanban-column-revamp[data-stage-name="To Do"] #task-card-{task_id}'
     )).to_be_visible()
@@ -1118,7 +1252,7 @@ def test_terminal_focus_keeps_raw_output_and_task_link(
     task_id = board["task"]["id"]
     page.goto(f"{live_server}/ui/projects/{board['project_id']}/workbench#terminal:task:{task_id}")
     viewer = page.locator("#wb-terminal-pre")
-    expect(page.locator("#wb-pane-terminal")).to_have_class("wb-pane active")
+    expect(page.locator("#wb-pane-sessions")).to_have_class("wb-pane active")
     expect(page.locator("#wb-terminal-info")).to_contain_text(f"Task #{task_id}")
     expect(viewer).to_contain_text("Tests passed")
     expect(viewer).not_to_contain_text("Type your message")
@@ -1176,6 +1310,44 @@ def test_terminal_focus_keeps_raw_output_and_task_link(
     live_update.raise_for_status()
     expect(preview).to_contain_text("Live agent update")
 
+
+
+def test_activity_handoff_refresh_ignores_previous_session_response(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    sessions = [
+        {"id": session_id, "agent_id": session_id, "status": "active"}
+        for session_id in (901, 902)
+    ]
+    page.route("**/agents/sessions?**", lambda route: route.fulfill(json=sessions))
+    for session in sessions:
+        page.route(
+            f"**/agents/sessions/{session['id']}/terminal?**",
+            lambda route, request, item=session: route.fulfill(json={"session": item, "activities": []}),
+        )
+    delayed = []
+    page.route("**/agents/sessions/901/handoff", lambda route: delayed.append(route))
+    handoff = {"exists": False, "durable": {"summary": "Second session handoff"}}
+    page.route("**/agents/sessions/902/handoff", lambda route: route.fulfill(json=handoff))
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/workbench")
+    items = page.locator("#wb-terminal-session-list .terminal-session-item")
+    expect(items).to_have_count(2)
+    items.nth(0).click()
+    expect(page.locator("#wb-handoff-view")).to_contain_text("Loading handoff for session #901")
+    items.nth(1).click()
+    handoff_view = page.locator("#wb-handoff-view")
+    expect(handoff_view).to_contain_text("Second session handoff")
+    assert delayed
+    with page.expect_response("**/agents/sessions/901/handoff") as old_response:
+        delayed[0].fulfill(json={"exists": False, "durable": {"summary": "Stale first session"}})
+    old_response.value.finished()
+    expect(handoff_view).to_contain_text("Second session handoff")
+
+    handoff["durable"]["summary"] = "Updated second session handoff"
+    page.get_by_role("button", name="Refresh output", exact=True).click()
+    expect(handoff_view).to_contain_text("Updated second session handoff")
+    expect(handoff_view).not_to_contain_text("Stale first session")
 
 
 def test_reviews_tab_displays_task_git_diff_by_file(page: Page, live_server: str, api: httpx.Client):
@@ -1265,3 +1437,51 @@ def test_reviews_tab_can_approve_and_reject_saved_patches(
     statuses = {review["id"]: review["status"] for review in reviews.json()}
     assert statuses[approve_id] == "approved"
     assert statuses[reject_id] == "rejected"
+
+
+
+def test_launch_queue_controls_cancel_and_retry(page: Page, live_server: str, api: httpx.Client):
+    board = _prepare_board(api)
+    state = {
+        "id": 901, "event_id": 801, "actor_id": board["owner_id"],
+        "task_id": board["task"]["id"], "agent_id": 77, "role": "worker",
+        "source_session_id": None, "stage_id": board["stages"]["Backlog"],
+        "status": "blocked", "attempts": 3, "retry_at": None,
+        "last_error": "<img src=x onerror=alert(1)> unavailable",
+        "session_id": None, "created_at": "2026-09-19T00:00:00",
+        "archived_at": None,
+    }
+    actions = []
+
+    def queue_api(route):
+        request = route.request
+        if request.method == "GET":
+            route.fulfill(status=200, content_type="application/json", body=json.dumps([state]))
+            return
+        if request.url.endswith("/cancel"):
+            state["status"] = "cancelled"
+            state["last_error"] = "Cancelled from workbench"
+            actions.append("cancel")
+        elif request.url.endswith("/retry"):
+            state["status"] = "queued"
+            state["last_error"] = "Retried from workbench"
+            actions.append("retry")
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(state))
+
+    page.route("**/agents/launch-requests?*", queue_api)
+    page.route("**/agents/launch-requests/**", queue_api)
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/workbench")
+    page.get_by_role("button", name="Launch queue").click()
+
+    row = page.locator("#wb-queue-901")
+    expect(row).to_contain_text("Task #" + str(board["task"]["id"]))
+    expect(row).to_contain_text("blocked")
+    expect(row.get_by_role("button", name="Cancel")).to_be_visible()
+    expect(row.get_by_role("button", name="Retry")).to_be_visible()
+    assert row.locator("img").count() == 0
+
+    row.get_by_role("button", name="Cancel").click()
+    expect(row).to_contain_text("cancelled")
+    row.get_by_role("button", name="Retry").click()
+    expect(row).to_contain_text("queued")
+    assert actions == ["cancel", "retry"]

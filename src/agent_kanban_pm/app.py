@@ -154,7 +154,7 @@ async def _heartbeat_sweeper():
                             heartbeat.status_type = status_type
                             heartbeat.message = f"Active task session #{active_session.id} for task {active_session.task_id}"
                             heartbeat.updated_at = datetime.now(UTC)
-                            await event_bus.publish(
+                            event_bus.enqueue(db,
                                 EventType.AGENT_STATUS_UPDATED.value,
                                 {
                                     "agent_id": heartbeat.agent_id,
@@ -255,8 +255,13 @@ async def _orphaned_session_sweeper(staleness_seconds: int = 300, interval_secon
                     if session.command and session.task_id:
                         agent = await db.get(Entity, session.agent_id)
                         if agent:
-                            tmux_name = _tmux_session_name(agent.name, session.task_id)
-                            state = await asyncio.to_thread(session_state, tmux_name)
+                            from agent_kanban_pm.runtime.task_runner import runner_name, receipt_state
+                            if session.launch_spec_json and session.status == AgentSessionStatus.STARTING:
+                                continue
+                            tmux_name = runner_name(session, _tmux_session_name(agent.name, session.task_id))
+                            state = await asyncio.to_thread(receipt_state, session)
+                            if state is None or state.status == "missing":
+                                state = await asyncio.to_thread(session_state, tmux_name)
                             if state.status != "missing":
                                 continue
 
@@ -290,9 +295,10 @@ async def lifespan(app: FastAPI):
     # Register event adapters (WebSocket, Webhook broadcast)
     register_adapters()
     assignment_launcher.api_base = os.getenv("KANBAN_API_BASE", get_api_base())
-    event_bus.subscribe(EventType.TASK_ASSIGNED.value, assignment_launcher.handle_event)
-    startup_workspace = os.getenv("KANBAN_ACTIVE_WORKSPACE", os.getcwd())
-    await assignment_launcher.resume_runnable_assignments(workspace_path=startup_workspace)
+    from agent_kanban_pm.runtime.scheduler import request_launch, scheduler_loop, recover_legacy_assignments
+    event_bus.subscribe(EventType.TASK_ASSIGNED.value, request_launch)
+    await recover_legacy_assignments(os.getenv("KANBAN_ACTIVE_WORKSPACE", os.getcwd()))
+    scheduler_task = asyncio.create_task(scheduler_loop(assignment_launcher))
     # Start heartbeat staleness sweeper
     sweeper_task = asyncio.create_task(_heartbeat_sweeper())
     # Stream tmux pane output of per-task agent sessions into AgentActivity
@@ -303,13 +309,13 @@ async def lifespan(app: FastAPI):
     session_sweeper_task = asyncio.create_task(_orphaned_session_sweeper())
     yield
     # Shutdown
-    for t in (sweeper_task, streamer_task, event_sweeper_task, session_sweeper_task):
+    for t in (scheduler_task, sweeper_task, streamer_task, event_sweeper_task, session_sweeper_task):
         t.cancel()
         try:
             await t
         except asyncio.CancelledError:
             pass
-    event_bus.unsubscribe(EventType.TASK_ASSIGNED.value, assignment_launcher.handle_event)
+    event_bus.unsubscribe(EventType.TASK_ASSIGNED.value, request_launch)
     await event_bus.stop_async()
     await engine.dispose()
 
@@ -319,6 +325,27 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan
 )
+
+from sqlalchemy.orm.exc import StaleDataError
+
+
+@app.exception_handler(StaleDataError)
+async def stale_task_handler(request, exc):
+    return JSONResponse(status_code=409, content={"detail": "Task changed concurrently; reload and retry."})
+
+
+@app.exception_handler(PermissionError)
+async def permission_handler(request, exc):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+from agent_kanban_pm.services.tasks import TaskReferenceError
+
+
+@app.exception_handler(TaskReferenceError)
+async def reference_handler(request, exc):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(static_dir())), name="static")

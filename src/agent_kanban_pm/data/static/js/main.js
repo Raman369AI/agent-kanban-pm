@@ -1,4 +1,19 @@
 // Main UI JavaScript
+window.escapeHtml = function(value) {
+    return String(value === null || value === undefined ? '' : value).replace(
+        /[&<>"']/g,
+        function(character) {
+            return {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[character];
+        }
+    );
+};
+
 // Shared response handling keeps server validation/authorization messages visible.
 window.apiErrorMessage = function(data, fallback) {
     if (data && typeof data.detail === 'string') return data.detail;
@@ -27,6 +42,60 @@ window.apiFetch = async function(input, init, fallback) {
         throw new Error(window.apiErrorMessage(data, fallback || response.statusText));
     }
     return data;
+};
+
+window.confirmAction = function(options) {
+    options = options || {};
+    return new Promise(function(resolve) {
+        var previous = document.activeElement;
+        var overlay = document.createElement('div');
+        overlay.className = 'app-confirm-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+
+        var card = document.createElement('div');
+        card.className = 'app-confirm-card';
+        var title = document.createElement('h2');
+        title.id = 'app-confirm-title-' + Date.now();
+        title.textContent = options.title || 'Confirm action';
+        overlay.setAttribute('aria-labelledby', title.id);
+        var message = document.createElement('p');
+        message.textContent = options.message || 'Are you sure?';
+        var actions = document.createElement('div');
+        actions.className = 'app-confirm-actions';
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'btn';
+        cancel.textContent = options.cancelLabel || 'Cancel';
+        var confirm = document.createElement('button');
+        confirm.type = 'button';
+        confirm.className = options.danger ? 'btn btn-danger' : 'btn btn-primary';
+        confirm.textContent = options.confirmLabel || 'Confirm';
+        actions.append(cancel, confirm);
+        card.append(title, message, actions);
+        overlay.append(card);
+        document.body.append(overlay);
+
+        function finish(value) {
+            document.removeEventListener('keydown', onKey, true);
+            overlay.remove();
+            if (previous && previous.isConnected) previous.focus();
+            resolve(value);
+        }
+        function onKey(event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                finish(false);
+            }
+        }
+        cancel.addEventListener('click', function() { finish(false); });
+        confirm.addEventListener('click', function() { finish(true); });
+        overlay.addEventListener('click', function(event) {
+            if (event.target === overlay) finish(false);
+        });
+        document.addEventListener('keydown', onKey, true);
+        confirm.focus();
+    });
 };
 
 var modalReturnFocus = {};
@@ -70,7 +139,7 @@ window.closeModal = function(id) {
 };
 
 document.addEventListener('keydown', function(event) {
-    var visible = Array.from(document.querySelectorAll('.modal-overlay, .project-modal-overlay'))
+    var visible = Array.from(document.querySelectorAll('.modal-overlay, .project-modal-overlay, .folder-picker-overlay'))
         .filter(function(modal) {
             return modal.style.display !== 'none' && window.getComputedStyle(modal).display !== 'none';
         });
@@ -78,7 +147,12 @@ document.addEventListener('keydown', function(event) {
     if (!modal) return;
     if (event.key === 'Escape') {
         event.preventDefault();
-        window.closeModal(modal.id);
+        var cancelHandler = modal.dataset.cancelHandler;
+        if (cancelHandler && typeof window[cancelHandler] === 'function') {
+            window[cancelHandler]();
+        } else {
+            window.closeModal(modal.id);
+        }
         return;
     }
     if (event.key !== 'Tab') return;
@@ -130,7 +204,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             document.documentElement.setAttribute('data-view', newView);
             localStorage.setItem('view', newView);
-            viewToggle.textContent = newView === 'grid' ? 'Board view' : 'List view';
+            viewToggle.textContent = newView === 'grid' ? 'Switch to list' : 'Switch to board';
             viewToggle.setAttribute('aria-pressed', String(newView === 'list'));
             
             // Trigger view change event
@@ -139,7 +213,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Set initial icon
         const savedView = localStorage.getItem('view') || 'grid';
-        viewToggle.textContent = savedView === 'grid' ? 'Board view' : 'List view';
+        viewToggle.textContent = savedView === 'grid' ? 'Switch to list' : 'Switch to board';
         viewToggle.setAttribute('aria-pressed', String(savedView === 'list'));
     }
 

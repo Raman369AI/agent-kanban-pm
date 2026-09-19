@@ -123,9 +123,9 @@ def test_first_task_launches_from_setup_checklist(tmp_path: Path):
                     )
 
                     checklist.locator("#step-configure-worker").get_by_role(
-                        "button", name="Configure agents",
+                        "button", name="Configure global worker role",
                     ).click()
-                    team = page.get_by_role("dialog", name="Team roles")
+                    team = page.get_by_role("dialog", name="Global agent roles")
                     expect(team).to_be_visible()
                     worker_row = page.locator(".role-settings-row").filter(
                         has=page.locator("#role-agent-worker"),
@@ -152,11 +152,23 @@ def test_first_task_launches_from_setup_checklist(tmp_path: Path):
                     checklist.locator("#step-start-work").get_by_role(
                         "button", name="Move to To Do",
                     ).click()
+                    override = page.get_by_role("dialog", name="Override workflow gate?")
+                    expect(override).to_be_visible()
+                    override.locator("#done-override-reason").fill(
+                        "Queue the first configured task for its worker."
+                    )
+                    override.locator("#done-override-submit").click()
                     assign = checklist.locator("#step-start-work").get_by_role(
                         "button", name="Assign worker",
                     )
                     expect(assign).to_be_visible()
                     assign.click()
+                    start_override = page.get_by_role("dialog", name="Start work anyway?")
+                    expect(start_override).to_be_visible()
+                    start_override.locator("#done-override-reason").fill(
+                        "Start this manually created task without planning artifacts."
+                    )
+                    start_override.locator("#done-override-submit").click()
                     expect(checklist.locator("#step-start-work")).to_have_class(
                         "setup-step-item step-complete", timeout=20000,
                     )
