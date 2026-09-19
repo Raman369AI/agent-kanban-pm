@@ -1,0 +1,28 @@
+<div id="folder-picker-modal" class="folder-picker-overlay" style="display:none;" role="dialog"
+  aria-modal="true" aria-hidden="true" aria-labelledby="folder-picker-title" data-cancel-handler="closeFolderPicker"
+  onclick="if(event.target===this)closeFolderPicker()">
+  <div class="folder-picker-card">
+    <div class="folder-picker-header">
+      <div>
+        <h3 id="folder-picker-title">{{ folder_picker_title|default('Select Folder') }}</h3>
+        <p>Browse local directories and choose the project workspace.</p>
+      </div>
+      <button class="btn-icon" type="button" aria-label="Close folder picker"
+        onclick="closeFolderPicker()">&times;</button>
+    </div>
+    <div class="folder-picker-body">
+      <div class="folder-toolbar">
+        <input id="folder-picker-current" class="form-input" type="text" aria-label="Current folder">
+        <button type="button" class="btn" onclick="loadFolderFromInput()">Go</button>
+      </div>
+      <div class="folder-shortcuts">
+        <button type="button" class="btn btn-sm" onclick="folderPickerUp()">Up</button>
+        <button type="button" class="btn btn-sm" onclick="folderPickerGoHome()">Home</button>
+        <button type="button" class="btn btn-sm btn-primary" onclick="selectCurrentFolder()">Use This Folder</button>
+      </div>
+      <div id="folder-picker-list" class="folder-list" aria-live="polite">
+        <p class="folder-empty">Loading...</p>
+      </div>
+    </div>
+  </div>
+</div>

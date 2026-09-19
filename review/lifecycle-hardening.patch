@@ -1,0 +1,183 @@
+--- a/src/agent_kanban_pm/runtime/assignment_launcher.py
++++ b/src/agent_kanban_pm/runtime/assignment_launcher.py
+@@ -577,11 +577,35 @@
+             await db.commit()
+
+             git_bin = shutil.which("git")
++            from agent_kanban_pm.runtime.review_gate import implementation_for_task
++            source = None
++            if matching_role_name in {"test", "diff_review", "git_pr"} and stage_key in {"review", "done", "completed"}:
++                source = await implementation_for_task(db, task.id)
++                if source is None:
++                    raise WorkspacePreparationError("Review requires an implementation handoff")
++                active = await db.scalar(select(AgentSession.id).where(
++                    AgentSession.workspace_path == source.workspace_path,
++                    AgentSession.ended_at.is_(None),
++                ).limit(1))
++                if active:
++                    return None
++                previous = await db.scalar(select(AgentSession.id).where(
++                    AgentSession.source_session_id == source.id,
++                    AgentSession.assigned_role == matching_role_name,
++                    AgentSession.agent_id == agent.id,
++                    AgentSession.status == AgentSessionStatus.DONE,
++                ).limit(1))
++                if previous:
++                    return previous
++                await db.commit()
++                from agent_kanban_pm.runtime.workspaces import git_revision
++                if await asyncio.to_thread(git_revision, source.workspace_path) != source.work_revision:
++                    raise WorkspacePreparationError("Implementation changed after handoff")
+             base_ref = await asyncio.to_thread(
+                 _detect_base_ref, project.path, git_bin
+-            ) if git_bin else None
++            ) if git_bin and source is None else None
+             branch_name = _task_branch_name(task, agent)
+-            workspace_path = await asyncio.to_thread(
++            workspace_path = source.workspace_path if source else await asyncio.to_thread(
+                 _create_git_worktree,
+                 project.path,
+                 _git_worktree_path(project, task, agent),
+@@ -712,6 +736,10 @@
+             prompt = _build_prompt(
+                 task, project, agent, workspace_path, checkpoint, isolated_workspace, autonomy
+             )
++            if source:
++                prompt = (f"Act as {matching_role_name} for implementation session #{source.id}. "
++                          f"Review revision {source.work_revision or 'non-Git workspace'} without changing it. "
++                          "Record named test/review outcomes in STATUS.md outputs.\n\n" + prompt)
+             args = await asyncio.to_thread(
+                 _build_agent_command, adapter, workspace_path, prompt, autonomy, model
+             )
+@@ -724,6 +752,8 @@
+                 workspace_path=workspace_path,
+                 assigned_role=matching_role_name,
+                 launch_request_id=launch_request_id,
++                source_session_id=source.id if source else None,
++                work_revision=source.work_revision if source else None,
+                 run_token=uuid.uuid4().hex,
+                 status=AgentSessionStatus.STARTING,
+                 command=command_text,
+--- a/src/agent_kanban_pm/runtime/session_streamer.py
++++ b/src/agent_kanban_pm/runtime/session_streamer.py
+@@ -208,6 +208,7 @@
+             )
+             .values(
+                 handoff_state=state,
++                handoff_outputs_json=json.dumps(status_data['validated'].outputs),
+                 handoff_summary=summary,
+                 handoff_received_at=datetime.now(UTC),
+             )
+@@ -297,6 +298,11 @@
+     if not target_stage or target_stage.id == task.stage_id:
+         return None, []
+
++    from agent_kanban_pm.runtime.review_gate import completion_blocker
++    blocker = await completion_blocker(db, session, task, current_stage, target_stage)
++    if blocker:
++        db.add(TaskLog(task_id=task.id, log_type="handoff", message=f"Automatic transition blocked: {blocker}"))
++        return None, []
+     old_stage_id = task.stage_id
+     old_stage_name = current_stage.name if current_stage else None
+     task.stage_id = target_stage.id
+@@ -307,7 +313,15 @@
+     if target_status == TaskStatus.COMPLETED and task.completed_at is None:
+         task.completed_at = datetime.now(UTC)
+
+-    assigned = await _assign_stage_entry_roles(db, task, target_stage, skip_agent_id=session.agent_id)
++    assigned = await _assign_stage_entry_roles(db, task, target_stage)
++    event_bus.enqueue(db, EventType.TASK_MOVED.value,
++                      {"task_id": task.id, "from_stage_id": old_stage_id, "to_stage_id": target_stage.id,
++                       "status": target_status.value}, project_id=task.project_id, entity_id=session.agent_id)
++    for assignment in assigned:
++        event_bus.enqueue(db, EventType.TASK_ASSIGNED.value,
++                          {"task_id": task.id, "entity_id": assignment["entity_id"], "role": assignment["role"],
++                           "stage_id": target_stage.id, "source_session_id": session.source_session_id or session.id},
++                          project_id=task.project_id, entity_id=session.agent_id)
+     return {
+         "task_id": task.id,
+         "title": task.title,
+@@ -325,6 +339,13 @@
+     session: AgentSession, pane: str, summary: str, exit_code: Optional[int] = None
+ ) -> bool:
+     """Mark the session DONE, record handoff, and advance the card to the next collaboration stage."""
++    from agent_kanban_pm.runtime.review_gate import verify_handoff_revision
++    from agent_kanban_pm.runtime.workspaces import WorkspacePreparationError
++    try:
++        revision = await asyncio.to_thread(verify_handoff_revision, session)
++    except WorkspacePreparationError as exc:
++        await _finalize_failed_session(session, pane, exit_code, str(exc))
++        return True
+     now = datetime.now(UTC)
+     async with async_session_maker() as db:
+         claimed = await db.execute(
+@@ -340,6 +361,7 @@
+             )
+             .values(
+                 status=AgentSessionStatus.DONE,
++                work_revision=revision,
+                 ended_at=now,
+                 last_seen_at=now,
+                 exit_code=exit_code,
+@@ -455,19 +477,6 @@
+             project_id=transition_event["project_id"],
+             entity_id=session.agent_id,
+         )
+-        for assignment in assigned_stage_roles:
+-            await event_bus.publish(
+-                EventType.TASK_ASSIGNED.value,
+-                {
+-                    "task_id": transition_event["task_id"],
+-                    "entity_id": assignment["entity_id"],
+-                    "role": assignment["role"],
+-                    "trigger": "stage_entry",
+-                },
+-                project_id=transition_event["project_id"],
+-                entity_id=session.agent_id,
+-            )
+-
+     await event_bus.publish(
+         EventType.AGENT_STATUS_UPDATED.value,
+         {
+@@ -677,14 +686,7 @@
+     if runner.status != "running":
+         pane = await asyncio.to_thread(capture_pane, tmux_session, lines=200)
+         if runner.status == "exited" and runner.exit_code == 0:
+-            summary = _checkpoint_summary(pane)
+-            if summary.startswith("Session is active;"):
+-                summary = "CLI exited successfully."
+-            else:
+-                summary = f"CLI exited successfully.\n{summary}"
+-            await _finalize_completed_session(
+-                session, pane, summary, exit_code=runner.exit_code
+-            )
++            await _finalize_failed_session(session, pane, 0, "CLI exited without a verified completion handoff; task was not advanced.")
+             await asyncio.to_thread(kill_session, tmux_session)
+         elif runner.status == "exited":
+             await _finalize_failed_session(
+--- a/src/agent_kanban_pm/routers/agent_activity.py
++++ b/src/agent_kanban_pm/routers/agent_activity.py
+@@ -627,6 +627,7 @@
+     run_token: str = Field(min_length=1)
+     state: Literal["done", "completed", "review"]
+     summary: str = Field(min_length=1, max_length=4000)
++    outputs: list[str] = Field(default_factory=list)
+
+
+ @router.post("/sessions/{session_id}/handoff")
+@@ -665,6 +666,7 @@
+         )
+         .values(
+             handoff_state=handoff.state,
++            handoff_outputs_json=json.dumps(handoff.outputs),
+             handoff_summary=handoff.summary.strip(),
+             handoff_received_at=datetime.now(UTC),
+         )
+@@ -678,6 +680,7 @@
+         existing and existing.ended_at is None
+         and existing.handoff_state == handoff.state
+         and existing.handoff_summary == handoff.summary.strip()
++        and json.loads(existing.handoff_outputs_json or "[]") == handoff.outputs
+     ):
+         return {"session_id": session_id, "accepted": True}
+     raise HTTPException(status_code=409, detail="A different handoff was already submitted")

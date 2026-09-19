@@ -1,25 +1,22 @@
-"""
-Event Bus for publishing and subscribing to events across the system.
-Used for real-time notifications between components and agents.
+"""Durable SQLite outbox shared by REST and MCP producers.
 
-Supports:
-- Exact event type subscriptions (e.g., "task_created")
-- Wildcard subscription ("*") for all events
-- Persistent event queue for MCP agents via database
-- Async queue-based processing to avoid SQLAlchemy greenlet conflicts
+The single HTTP server dispatches committed events. Handlers can be retried;
+execution intent is separately recorded by the scheduler before it launches.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Dict, List, Optional, Callable, Any, Set
 from enum import Enum
-from sqlalchemy import select
+from sqlalchemy import select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_kanban_pm.db import async_session_maker
-from agent_kanban_pm.models import PendingEvent, AgentConnection, ProtocolType, ConnectionStatus
+from agent_kanban_pm.models import (PendingEvent, AgentConnection, ProtocolType, ConnectionStatus,
+                                    OutboxEvent, OutboxDelivery)
 
 logger = logging.getLogger(__name__)
 
@@ -79,14 +76,7 @@ class EventType(str, Enum):
 
 
 class EventBus:
-    """
-    Event bus for publishing events to subscribers.
-    Supports both in-memory subscriptions and persistent agent queues.
-
-    Uses an internal async queue to process events in a dedicated
-    background task, avoiding SQLAlchemy greenlet conflicts when
-    event handlers create their own database sessions.
-    """
+    """Dispatch committed notifications with bounded retry delays."""
 
     def __init__(self):
         self._subscribers: Dict[str, List[Callable]] = {}
@@ -97,7 +87,6 @@ class EventBus:
     def start(self):
         """Start the background event processing worker."""
         if self._worker_task is None or self._worker_task.done():
-            self._queue = asyncio.Queue()
             self._worker_task = asyncio.create_task(self._process_events())
             logger.info("Event bus worker started")
 
@@ -116,14 +105,8 @@ class EventBus:
     async def stop_async(self):
         """Drain queued events, then stop and await the background worker."""
         task = self._worker_task
-        queue = self._queue
         if not task:
             return
-        if queue is not None:
-            try:
-                await asyncio.wait_for(queue.join(), timeout=10)
-            except asyncio.TimeoutError:
-                logger.warning("Timed out draining the event queue during shutdown")
         task.cancel()
         try:
             await task
@@ -132,6 +115,10 @@ class EventBus:
         finally:
             self._worker_task = None
             self._queue = None
+            try:
+                await asyncio.wait_for(self.dispatch_pending(), timeout=10)
+            except Exception:
+                logger.warning("Undelivered events retained for the next server start")
             logger.info("Event bus worker stopped")
 
     def reset(self):
@@ -166,69 +153,146 @@ class EventBus:
             except ValueError:
                 pass
 
-    async def publish(
-        self,
-        event_type: str,
-        data: Dict[str, Any],
-        project_id: Optional[int] = None,
-        entity_id: Optional[int] = None
-    ):
-        """
-        Publish an event by placing it on the internal queue.
-        The actual dispatch (subscribers, DB, WebSocket) happens in the background.
-        """
-        event_payload = {
-            "event_type": event_type,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "project_id": project_id,
-            "entity_id": entity_id,
-            "data": data
-        }
+    def enqueue(self, db, event_type, data, project_id=None, entity_id=None):
+        """Add a notification to the caller's transaction. No delivery before commit."""
+        from agent_kanban_pm.models import OutboxEvent
+        row = OutboxEvent(payload=json.dumps({
+            "event_type": event_type, "timestamp": datetime.now(UTC).isoformat(),
+            "project_id": project_id, "entity_id": entity_id, "data": data,
+        }, default=str))
+        db.add(row)
+        return row
 
-        if self._queue is None:
-            self.start()
+    async def publish(self, event_type, data, project_id=None, entity_id=None):
+        # Standalone telemetry uses its own transaction. Domain mutations use
+        # enqueue(db, ...) so their state and notification commit atomically.
+        async with async_session_maker() as db:
+            self.enqueue(db, event_type, data, project_id, entity_id)
+            await db.commit()
 
-        # Just queue the event; background worker handles the rest
-        await self._queue.put(event_payload)
+    async def _claim_pending(self):
+        """Claim due events with a renewable database lease."""
+        now = datetime.now(UTC)
+        stale = now - timedelta(seconds=30)
+        token = __import__("uuid").uuid4().hex
+        async with async_session_maker() as db:
+            ids = list((await db.execute(select(OutboxEvent.id).where(
+                OutboxEvent.delivered_at.is_(None),
+                or_(OutboxEvent.retry_at.is_(None), OutboxEvent.retry_at <= now),
+                or_(OutboxEvent.claimed_at.is_(None), OutboxEvent.claimed_at < stale),
+            ).order_by(OutboxEvent.id).limit(50))).scalars())
+            claimed = []
+            for event_id in ids:
+                result = await db.execute(update(OutboxEvent).where(
+                    OutboxEvent.id == event_id,
+                    OutboxEvent.delivered_at.is_(None),
+                    or_(OutboxEvent.claimed_at.is_(None), OutboxEvent.claimed_at < stale),
+                ).values(claimed_at=now, claim_token=token))
+                if result.rowcount == 1:
+                    claimed.append(event_id)
+            await db.commit()
+        return claimed, token
+
+    async def _renew_claim(self, event_ids: list[int], token: str):
+        while True:
+            await asyncio.sleep(10)
+            async with async_session_maker() as db:
+                await db.execute(update(OutboxEvent).where(
+                    OutboxEvent.id.in_(event_ids),
+                    OutboxEvent.claim_token == token,
+                    OutboxEvent.delivered_at.is_(None),
+                ).values(claimed_at=datetime.now(UTC)))
+                await db.commit()
+
+    async def dispatch_pending(self):
+        event_ids, token = await self._claim_pending()
+        for event_id in event_ids:
+            async with async_session_maker() as db:
+                row = await db.get(OutboxEvent, event_id)
+                if row is None or row.claim_token != token or row.delivered_at is not None:
+                    continue
+                payload = json.loads(row.payload)
+            payload["event_id"] = event_id
+            error = None
+            renewal = asyncio.create_task(self._renew_claim(event_ids, token))
+            try:
+                await self._handle_event(payload)
+            except Exception as exc:
+                error = str(exc)
+                logger.exception("Event %s delivery failed", event_id)
+            finally:
+                renewal.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await renewal
+            async with async_session_maker() as db:
+                saved = await db.get(OutboxEvent, event_id)
+                if saved is None or saved.claim_token != token:
+                    continue
+                saved.attempts += 1
+                saved.last_error = error
+                saved.claimed_at = None
+                saved.claim_token = None
+                if error:
+                    saved.retry_at = datetime.now(UTC) + timedelta(seconds=min(60, 2 ** min(saved.attempts, 6)))
+                else:
+                    saved.retry_at = None
+                    saved.delivered_at = datetime.now(UTC)
+                await db.commit()
+        return len(event_ids)
 
     async def _process_events(self):
-        """Background worker that processes events from the queue."""
         while True:
             try:
-                event_payload = await self._queue.get()
-            except asyncio.CancelledError:
-                break
-            try:
-                await self._handle_event(event_payload)
+                await self.dispatch_pending()
+                await asyncio.sleep(0.25)
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
-                logger.error(f"Error in event bus worker loop: {e}")
-            finally:
-                self._queue.task_done()
+            except Exception:
+                logger.exception('Outbox dispatcher failed')
+                await asyncio.sleep(1)
+
+    async def _deliver_channel(self, event_id: int, channel: str, handler):
+        async with async_session_maker() as db:
+            existing = await db.scalar(select(OutboxDelivery.id).where(
+                OutboxDelivery.event_id == event_id, OutboxDelivery.channel == channel))
+        if existing is not None:
+            return
+        await handler()
+        async with async_session_maker() as db:
+            db.add(OutboxDelivery(event_id=event_id, channel=channel))
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                if await db.scalar(select(OutboxDelivery.id).where(
+                        OutboxDelivery.event_id == event_id, OutboxDelivery.channel == channel)) is None:
+                    raise
 
     async def _handle_event(self, event_payload: dict):
-        """Dispatch an event to all channels in parallel."""
+        """Dispatch each channel once; failed channels alone are retried."""
         event_type = event_payload.get("event_type")
         project_id = event_payload.get("project_id")
-        
-        tasks = []
-
-        # 1. In-memory subscribers
+        event_id = event_payload["event_id"]
         callbacks = self._subscribers.get(event_type, [])
         wildcard_subs = self._subscribers.get(EventType.ALL.value, [])
+        deliveries = []
         for callback in set(callbacks + wildcard_subs):
-            tasks.append(self._safe_call(callback, event_payload))
-
-        # 2. WebSocket broadcasts
+            identity = f"{callback.__module__}.{callback.__qualname__}"
+            deliveries.append(self._deliver_channel(
+                event_id, f"subscriber:{identity}",
+                lambda callback=callback: self._safe_call(callback, event_payload),
+            ))
         if self._websocket_manager:
-            tasks.append(self._broadcast_websocket(event_payload))
-
-        # 3. Persistent DB queue for MCP agents
-        tasks.append(self._persist_for_agents(event_type, event_payload, project_id))
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            deliveries.append(self._deliver_channel(
+                event_id, "websocket", lambda: self._broadcast_websocket(event_payload)))
+        deliveries.append(self._deliver_channel(
+            event_id, "mcp_queue",
+            lambda: self._persist_for_agents(event_type, event_payload, project_id, event_id),
+        ))
+        results = await asyncio.gather(*deliveries, return_exceptions=True)
+        errors = [result for result in results if isinstance(result, Exception)]
+        if errors:
+            raise RuntimeError("; ".join(str(error) for error in errors))
 
     async def _safe_call(self, callback: Callable, payload: Dict):
         """Call a subscriber callback safely, supporting both sync and async."""
@@ -239,6 +303,7 @@ class EventBus:
                 callback(payload)
         except Exception as e:
             logger.error(f"Error in event subscriber {callback.__name__}: {e}")
+            raise
 
     async def _broadcast_websocket(self, payload: Dict):
         """Broadcast event to UI clients via WebSockets."""
@@ -246,18 +311,17 @@ class EventBus:
             return
         
         project_id = payload.get("project_id")
-        try:
-            if project_id:
-                await self._websocket_manager.broadcast_to_project(payload, project_id)
+        if project_id:
+            await self._websocket_manager.broadcast_to_project(payload, project_id)
+        else:
             await self._websocket_manager.broadcast_to_all(payload)
-        except Exception as e:
-            logger.error(f"WebSocket broadcast error: {e}")
 
     async def _persist_for_agents(
         self,
         event_type: str,
         payload: Dict,
-        project_id: Optional[int]
+        project_id: Optional[int],
+        outbox_event_id: int,
     ):
         """Persist event for agents who subscribe via MCP polling"""
         async with async_session_maker() as session:
@@ -281,7 +345,14 @@ class EventBus:
                     if sub_projects and project_id not in sub_projects:
                         continue
 
+                    existing = await session.scalar(select(PendingEvent.id).where(
+                        PendingEvent.outbox_event_id == outbox_event_id,
+                        PendingEvent.agent_id == conn.entity_id,
+                    ))
+                    if existing is not None:
+                        continue
                     session.add(PendingEvent(
+                        outbox_event_id=outbox_event_id,
                         agent_id=conn.entity_id,
                         event_type=event_type,
                         payload=json.dumps(payload),

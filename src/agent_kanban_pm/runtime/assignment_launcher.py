@@ -15,12 +15,13 @@ import os
 import re
 import shutil
 import subprocess
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from agent_kanban_pm.runtime.model_selection import effective_model, model_arguments
 
-from sqlalchemy import select, and_, desc
+from sqlalchemy import select, and_, desc, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -52,12 +53,15 @@ from agent_kanban_pm.runtime.handoff_protocol import (
     ensure_instruction_aliases,
     initialize_status_file,
     read_status_file,
+    status_path_for_workspace,
+    status_matches_session,
 )
 from agent_kanban_pm.runtime.process_launcher import (
     shell_command,
     runner_available,
     has_session,
     kill_session,
+    session_state,
     start_session,
 )
 from agent_kanban_pm.runtime.preferences import (
@@ -67,6 +71,10 @@ from agent_kanban_pm.runtime.preferences import (
     load_preferences,
 )
 from agent_kanban_pm.runtime.instance import get_tmux_prefix
+
+from agent_kanban_pm.runtime.workspaces import (
+    WorkspacePreparationError, record_ownership, owns_workspace, ownership_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +191,7 @@ def _create_git_worktree(
         if result.returncode != 0:
             logger.warning("git worktree add failed for %s: %s", worktree_path, result.stderr.strip())
             return None
+        record_ownership(project_path, worktree_path)
         return str(worktree_path)
     except Exception as exc:
         logger.warning("Cannot create isolated task workspace: %s", exc)
@@ -199,12 +208,22 @@ def _sync_worktree_with_base(worktree_path: str, base_ref: Optional[str]) -> tup
 
     try:
         status = subprocess.run(
-            [git, "-C", worktree_path, "status", "--porcelain"],
+            [git, "-C", worktree_path, "status", "--porcelain", "-z"],
             capture_output=True, text=True, timeout=10,
         )
         if status.returncode != 0:
             return False, f"git status failed before sync: {status.stderr.strip()}"
-        if status.stdout.strip():
+        runtime_files = {"STATUS.md"}
+        workspace = Path(worktree_path)
+        for alias in ("CLAUDE.md", "CODEX.md"):
+            alias_path = workspace / alias
+            try:
+                if alias_path.is_symlink() and alias_path.resolve() == (workspace / "AGENTS.md").resolve():
+                    runtime_files.add(alias)
+            except OSError:
+                pass
+        changed_paths = [entry[3:] for entry in status.stdout.split("\0") if len(entry) > 3]
+        if any(path not in runtime_files for path in changed_paths):
             return False, "worktree has uncommitted changes; skipped rebase onto base"
 
         if base_ref.startswith("origin/"):
@@ -232,24 +251,33 @@ def _sync_worktree_with_base(worktree_path: str, base_ref: Optional[str]) -> tup
 
 
 def prune_git_worktree(project_path: str, worktree_path: str | Path) -> bool:
-    """Safely remove a git worktree using `git worktree remove --force`."""
+    """Remove only a clean worktree; never discard agent or user changes."""
     git = shutil.which("git")
     if not git:
         logger.warning("Cannot prune git worktree: git is not installed")
         return False
+    if not owns_workspace(project_path, worktree_path):
+        return False
+    wt_str = str(worktree_path)
     try:
-        wt_str = str(worktree_path)
-        logger.info("Pruning git worktree at %s (project: %s)", wt_str, project_path)
+        status = subprocess.run(
+            [git, "-C", wt_str, "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if status.returncode != 0:
+            logger.warning("Cannot inspect git worktree %s: %s", wt_str, status.stderr.strip())
+            return False
+        if status.stdout.strip():
+            logger.info("Preserving dirty git worktree %s for review", wt_str)
+            return False
         result = subprocess.run(
-            [git, "-C", project_path, "worktree", "remove", "--force", wt_str],
-            capture_output=True,
-            text=True,
-            timeout=30,
+            [git, "-C", project_path, "worktree", "remove", wt_str],
+            capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             logger.warning("git worktree remove failed for %s: %s", wt_str, result.stderr.strip())
-            subprocess.run([git, "-C", project_path, "worktree", "prune"], capture_output=True, timeout=10)
             return False
+        ownership_path(worktree_path).unlink(missing_ok=True)
         return True
     except Exception as exc:
         logger.warning("Exception pruning git worktree %s: %s", worktree_path, exc)
@@ -381,7 +409,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _role_is_review(role_name: Optional[str]) -> bool:
-    return (role_name or "").strip().lower() in {"test", "diff_review"}
+    return (role_name or "").strip().lower() in {"test", "diff_review", "git_pr"}
 
 
 async def _scheduling_blocker(
@@ -458,18 +486,29 @@ class AssignmentLauncher:
         entity_id = data.get("entity_id")
         if not task_id or not entity_id:
             return
-        await self.launch_for_assignment(int(task_id), int(entity_id), assigned_role=data.get("role"))
+        await self.launch_for_assignment(
+            int(task_id), int(entity_id), assigned_role=data.get("role"),
+            override_reason=data.get("override_reason"),
+        )
 
-    async def launch_for_assignment(self, task_id: int, entity_id: int, assigned_role: Optional[str] = None) -> Optional[int]:
+    async def launch_for_assignment(self, task_id: int, entity_id: int, assigned_role: Optional[str] = None, *, launch_request_id=None, override_reason=None) -> Optional[int]:
         # The supported topology has one server process. Serializing admission
         # makes scheduling checks and session reservation atomic in that
         # process; database indexes provide a final cross-process guard.
         if self._admission_lock is None:
             self._admission_lock = asyncio.Lock()
         async with self._admission_lock:
-            return await self._launch_for_assignment(task_id, entity_id, assigned_role)
+            if launch_request_id is None:
+                return await self._launch_for_assignment(
+                    task_id, entity_id, assigned_role, override_reason=override_reason,
+                )
+            return await self._launch_for_assignment(
+                task_id, entity_id, assigned_role,
+                launch_request_id=launch_request_id,
+                override_reason=override_reason,
+            )
 
-    async def _launch_for_assignment(self, task_id: int, entity_id: int, assigned_role: Optional[str] = None) -> Optional[int]:
+    async def _launch_for_assignment(self, task_id: int, entity_id: int, assigned_role: Optional[str] = None, *, launch_request_id=None, override_reason=None) -> Optional[int]:
         if not _tmux_available():
             logger.warning("Cannot auto-start assigned agent: no process runner available")
             return None
@@ -491,7 +530,7 @@ class AssignmentLauncher:
                 )
             )
             task = task_result.scalar_one_or_none()
-            if not task or task.status == TaskStatus.COMPLETED:
+            if not task:
                 return None
 
             agent_result = await db.execute(
@@ -506,6 +545,10 @@ class AssignmentLauncher:
                 "worker",
             )
 
+            if task.status == TaskStatus.COMPLETED and matching_role_name != "git_pr":
+                return None
+            if not any(a.id == agent.id for a in task.assignees):
+                return None
             stage_key = task.stage.key if task.stage else ""
             runnable_stages = {"to_do", "in_progress"}
             if _role_is_review(matching_role_name):
@@ -526,6 +569,34 @@ class AssignmentLauncher:
             if not project or not project.path:
                 logger.warning("Cannot auto-start %s for task %s: project has no path", agent.name, task.id)
                 return None
+
+            if project.approval_status != ApprovalStatus.APPROVED:
+                raise WorkspacePreparationError("Project must be approved before execution")
+            transition_actor = agent
+            launch_claim_token = None
+            if launch_request_id:
+                from agent_kanban_pm.models import LaunchRequest
+                intent = await db.get(LaunchRequest, launch_request_id)
+                if not intent or intent.status not in {"queued", "blocked", "reserved", "starting"}:
+                    return None
+                launch_claim_token = intent.claim_token
+                if intent and intent.actor_id:
+                    transition_actor = await db.get(Entity, intent.actor_id)
+                if intent and intent.override_reason:
+                    override_reason = intent.override_reason
+            reserved_query = select(AgentSession).where(
+                AgentSession.task_id == task.id, AgentSession.agent_id == agent.id,
+                AgentSession.assigned_role == matching_role_name,
+                AgentSession.ended_at.is_(None), AgentSession.launch_spec_json.is_not(None),
+            )
+            if launch_request_id is not None:
+                reserved_query = reserved_query.where(AgentSession.launch_request_id == launch_request_id)
+            else:
+                reserved_query = reserved_query.where(AgentSession.launch_request_id.is_(None))
+            reserved = await db.scalar(reserved_query.limit(1))
+            if reserved:
+                await db.commit()
+                return await self._resume_reserved_session(reserved.id)
 
             blocker = await _scheduling_blocker(db, task, agent, matching_role_name, prefs)
             if blocker:
@@ -553,11 +624,40 @@ class AssignmentLauncher:
             await db.commit()
 
             git_bin = shutil.which("git")
+            from agent_kanban_pm.runtime.review_gate import implementation_for_task
+            source = None
+            if matching_role_name in {"test", "diff_review", "git_pr"} and stage_key in {"review", "done", "completed"}:
+                source = await implementation_for_task(db, task.id)
+                if source is None:
+                    raise WorkspacePreparationError("Review requires an implementation handoff")
+                if launch_request_id:
+                    from agent_kanban_pm.models import LaunchRequest
+                    request = await db.get(LaunchRequest, launch_request_id)
+                    if request and request.source_session_id and request.source_session_id != source.id:
+                        raise WorkspacePreparationError("Queued review refers to an older implementation handoff")
+                active = await db.scalar(select(AgentSession.id).where(
+                    AgentSession.workspace_path == source.workspace_path,
+                    AgentSession.ended_at.is_(None),
+                ).limit(1))
+                if active:
+                    return None
+                previous = await db.scalar(select(AgentSession.id).where(
+                    AgentSession.source_session_id == source.id,
+                    AgentSession.assigned_role == matching_role_name,
+                    AgentSession.agent_id == agent.id,
+                    AgentSession.status == AgentSessionStatus.DONE,
+                ).limit(1))
+                if previous:
+                    return previous
+                await db.commit()
+                from agent_kanban_pm.runtime.workspaces import git_revision
+                if await asyncio.to_thread(git_revision, source.workspace_path) != source.work_revision:
+                    raise WorkspacePreparationError("Implementation changed after handoff")
             base_ref = await asyncio.to_thread(
                 _detect_base_ref, project.path, git_bin
-            ) if git_bin else None
+            ) if git_bin and source is None else None
             branch_name = _task_branch_name(task, agent)
-            workspace_path = await asyncio.to_thread(
+            workspace_path = source.workspace_path if source else await asyncio.to_thread(
                 _create_git_worktree,
                 project.path,
                 _git_worktree_path(project, task, agent),
@@ -567,6 +667,8 @@ class AssignmentLauncher:
             isolated_workspace = True
             sync_message: Optional[str] = None
             if not workspace_path:
+                if (Path(project.path) / ".git").exists():
+                    raise WorkspacePreparationError("Git worktree creation failed; primary workspace was preserved.")
                 if not Path(project.path).is_dir():
                     db.add(AgentActivity(
                         agent_id=agent.id,
@@ -582,22 +684,37 @@ class AssignmentLauncher:
                 workspace_path = project.path
                 isolated_workspace = False
             else:
-                _, sync_message = await asyncio.to_thread(
+                synced, sync_message = await asyncio.to_thread(
                     _sync_worktree_with_base, workspace_path, base_ref
                 )
+                if base_ref and not synced:
+                    raise WorkspacePreparationError(sync_message)
+
+            if not isolated_workspace:
+                other_sessions = (await db.execute(
+                    select(AgentSession).filter(
+                        AgentSession.workspace_path == workspace_path,
+                        AgentSession.ended_at.is_(None),
+                        AgentSession.status.in_([
+                            AgentSessionStatus.STARTING,
+                            AgentSessionStatus.ACTIVE,
+                            AgentSessionStatus.BLOCKED,
+                        ]),
+                    )
+                )).scalars().all()
+                if any(s.task_id != task.id or s.agent_id != agent.id for s in other_sessions):
+                    db.add(TaskLog(
+                        task_id=task.id,
+                        log_type="info",
+                        message="Assignment queued: this non-Git workspace already has an active agent session.",
+                    ))
+                    await db.commit()
+                    return None
 
             alias_results = await asyncio.to_thread(
                 ensure_instruction_aliases, workspace_path
             )
-            status_path = await asyncio.to_thread(
-                initialize_status_file,
-                workspace_path,
-                task_id=task.id,
-                project_id=project.id,
-                current_agent=agent.name,
-                assigned_role=matching_role_name,
-                task_title=task.title,
-            )
+            status_path = status_path_for_workspace(workspace_path)
 
             adapter = adapters.get(agent.name)
             if not adapter:
@@ -625,14 +742,29 @@ class AssignmentLauncher:
             )
             if existing_sessions and runner_is_active:
                 existing_session = existing_sessions[0]
+                if not existing_session.run_token:
+                    existing_session.run_token = uuid.uuid4().hex
+                if not existing_session.assigned_role:
+                    existing_session.assigned_role = matching_role_name
+                await asyncio.to_thread(
+                    initialize_status_file, workspace_path,
+                    task_id=task.id, project_id=project.id,
+                    current_agent=agent.name,
+                    assigned_role=existing_session.assigned_role,
+                    task_title=task.title,
+                    session_id=existing_session.id,
+                    run_token=existing_session.run_token,
+                )
                 now = datetime.now(UTC)
                 for stale_session in existing_sessions[1:]:
                     stale_session.status = AgentSessionStatus.DONE
                     stale_session.ended_at = now
                     stale_session.last_seen_at = now
-                task_started_event = await self._mark_task_started(db, task, agent)
+                task_started_event = await self._mark_task_started(
+                    db, task, agent, actor=transition_actor,
+                    override_reason=override_reason,
+                )
                 await db.commit()
-                await self._publish_task_started(task_started_event)
                 return existing_session.id
             if existing_sessions:
                 now = datetime.now(UTC)
@@ -658,16 +790,52 @@ class AssignmentLauncher:
             prompt = _build_prompt(
                 task, project, agent, workspace_path, checkpoint, isolated_workspace, autonomy
             )
+            from agent_kanban_pm.runtime.stage_policy import get_stage_policy_for_stage, policy_outputs
+            execution_stage_id = task.stage_id
+            if not source and stage_key == "to_do":
+                # _mark_task_started moves this run into In Progress.
+                execution_stage_id = await db.scalar(select(Stage.id).where(
+                    Stage.project_id == task.project_id, Stage.workflow_key == "in_progress",
+                ).limit(1)) or execution_stage_id
+            policy = await get_stage_policy_for_stage(db, task.project_id, execution_stage_id)
+            prompt += ("\n\nStage output requirements across the assigned roles: "
+                       + json.dumps(policy_outputs(policy))
+                       + ". Record only outputs you actually produced or verified in STATUS.md outputs.\n")
+            if not source and (Path(workspace_path) / ".git").exists():
+                prompt += ("Commit completed implementation changes before submitting the handoff; "
+                           "uncommitted code cannot enter review. Leave runtime STATUS.md out of implementation commits.\n")
+            if source:
+                prompt = (f"Act as {matching_role_name} for implementation session #{source.id}. "
+                          f"Review revision {source.work_revision or 'non-Git workspace'} without changing it. "
+                          "Record named test/review outcomes in STATUS.md outputs.\n\n" + prompt)
             args = await asyncio.to_thread(
                 _build_agent_command, adapter, workspace_path, prompt, autonomy, model
             )
             command_text = shell_command(args)
+
+            if launch_request_id:
+                # Filesystem preparation may yield long enough for cancellation
+                # or another scheduler to take ownership. Reserve only while
+                # this request is still runnable and has its original claim.
+                claimed = await db.execute(update(LaunchRequest).where(
+                    LaunchRequest.id == launch_request_id,
+                    LaunchRequest.status.in_(["queued", "blocked"]),
+                    LaunchRequest.claim_token == launch_claim_token,
+                ).values(status="reserved"))
+                if claimed.rowcount != 1:
+                    await db.rollback()
+                    return None
 
             db_session = AgentSession(
                 agent_id=agent.id,
                 project_id=project.id,
                 task_id=task.id,
                 workspace_path=workspace_path,
+                assigned_role=matching_role_name,
+                launch_request_id=launch_request_id,
+                source_session_id=source.id if source else None,
+                work_revision=source.work_revision if source else None,
+                run_token=uuid.uuid4().hex,
                 status=AgentSessionStatus.STARTING,
                 command=command_text,
                 model=model,
@@ -694,6 +862,16 @@ class AssignmentLauncher:
                     )
                     return existing.id
                 raise
+
+            status_path = await asyncio.to_thread(
+                initialize_status_file, workspace_path,
+                task_id=task.id, project_id=project.id,
+                current_agent=agent.name,
+                assigned_role=matching_role_name,
+                task_title=task.title,
+                session_id=db_session.id,
+                run_token=db_session.run_token,
+            )
 
             now = datetime.now(UTC)
             older_leases = await db.execute(
@@ -762,45 +940,95 @@ class AssignmentLauncher:
                     "autonomy": autonomy,
                 }),
             ))
-            task_started_event = await self._mark_task_started(db, task, agent)
+            task_started_event = await self._mark_task_started(
+                db, task, agent, actor=transition_actor,
+                override_reason=override_reason,
+            )
+            from agent_kanban_pm.runtime.task_runner import make_spec
+            db_session.launch_spec_json = make_spec(db_session.run_token, session_name, args, task.stage_id)
+            if launch_request_id:
+                from agent_kanban_pm.models import LaunchRequest
+                request = await db.get(LaunchRequest, launch_request_id)
+                if request:
+                    request.session_id = db_session.id
+                    request.status = "reserved"
+                    request.retry_at = None
 
             await db.commit()
             session_id = db_session.id
-            await self._publish_task_started(task_started_event)
 
-        env = os.environ.copy()
-        env["KANBAN_AGENT_NAME"] = agent.name
-        env["KANBAN_AGENT_ROLE"] = matching_role_name
-        env["KANBAN_API_BASE"] = self.api_base
-        if await asyncio.to_thread(_tmux_has_session, session_name):
-            await asyncio.to_thread(kill_session, session_name)
-        try:
-            await asyncio.to_thread(
-                start_session,
-                session_name=session_name,
-                cwd=workspace_path,
-                args=args,
-                env=env,
-                kill_existing=False,
-            )
-        except Exception:
-            async with async_session_maker() as db:
-                failed = await db.get(AgentSession, session_id)
-                if failed and failed.ended_at is None:
-                    failed.status = AgentSessionStatus.ERROR
-                    failed.ended_at = datetime.now(UTC)
-                    failed.last_seen_at = failed.ended_at
-                    leases = await db.execute(
-                        select(TaskLease).filter(
-                            TaskLease.session_id == session_id,
-                            TaskLease.status == LeaseStatus.ACTIVE,
+        return await self._resume_reserved_session(session_id)
+
+    async def recover_launch(self, session_id: int) -> int:
+        """Reconcile a reservation under the same lock as new admission."""
+        if self._admission_lock is None:
+            self._admission_lock = asyncio.Lock()
+        async with self._admission_lock:
+            return await self._resume_reserved_session(session_id)
+
+    async def _resume_reserved_session(self, session_id: int) -> int:
+        from agent_kanban_pm.models import LaunchRequest, task_assignments
+        from agent_kanban_pm.runtime.task_runner import launch_spec, receipt_state, guarded_args
+        async with async_session_maker() as db:
+            session = await db.get(AgentSession, session_id)
+            if session is None:
+                raise WorkspacePreparationError("Reserved session no longer exists")
+            if session.ended_at is not None:
+                return session.id
+            spec = launch_spec(session)
+            if spec is None:
+                raise WorkspacePreparationError("Legacy session has no recoverable launch specification")
+            state = await asyncio.to_thread(receipt_state, session)
+            if state.status == "unknown":
+                raise WorkspacePreparationError("Execution receipt is unreadable; automatic replay is blocked")
+            agent = await db.get(Entity, session.agent_id)
+            if state.status == "missing":
+                task = await db.get(Task, session.task_id)
+                project = await db.get(Project, session.project_id)
+                assigned = await db.scalar(select(task_assignments.c.entity_id).where(
+                    task_assignments.c.task_id == session.task_id,
+                    task_assignments.c.entity_id == session.agent_id,
+                ))
+                if not project or project.approval_status != ApprovalStatus.APPROVED:
+                    raise WorkspacePreparationError("Project must be approved before execution")
+                if not agent or not agent.is_active or not assigned or not task or task.stage_id != spec['stage_id']:
+                    raise WorkspacePreparationError("Reserved launch is no longer assigned or runnable")
+                if session.launch_request_id:
+                    request = await db.get(LaunchRequest, session.launch_request_id)
+                    if (
+                        request is None
+                        or request.session_id != session.id
+                        or request.status not in {"reserved", "starting"}
+                        or not request.claim_token
+                    ):
+                        raise WorkspacePreparationError(
+                            "Launch request was cancelled or scheduler ownership was lost"
                         )
-                    )
-                    for lease in leases.scalars().all():
-                        lease.status = LeaseStatus.RELEASED
-                        lease.released_at = failed.ended_at
-                    await db.commit()
-            raise
+                    request.status = "starting"
+                await db.commit()
+
+        if state.status == "missing":
+            env = os.environ.copy()
+            env["KANBAN_AGENT_NAME"] = agent.name
+            env["KANBAN_AGENT_ROLE"] = session.assigned_role or "worker"
+            env["KANBAN_SESSION_ID"] = str(session.id)
+            env["KANBAN_RUN_TOKEN"] = session.run_token
+            env["KANBAN_API_BASE"] = self.api_base
+            name = spec['runner_name']
+            transport = await asyncio.to_thread(session_state, name)
+            if transport.status == "unknown":
+                raise WorkspacePreparationError("Runner state is unknown; automatic replay is blocked")
+            if transport.status != "missing":
+                # This name is unique to the stored run token. A bootstrap shell
+                # interrupted before the guard claimed the run is replaceable.
+                await asyncio.to_thread(kill_session, name)
+            state = await asyncio.to_thread(receipt_state, session)
+            if state.status == "missing":
+                await asyncio.to_thread(start_session, session_name=name,
+                                        cwd=session.workspace_path, args=guarded_args(spec),
+                                        env=env, kill_existing=False)
+            elif state.status == "unknown":
+                raise WorkspacePreparationError("Execution receipt is unreadable; automatic replay is blocked")
 
         async with async_session_maker() as db:
             started = await db.get(AgentSession, session_id)
@@ -808,11 +1036,12 @@ class AssignmentLauncher:
                 started.status = AgentSessionStatus.ACTIVE
                 started.last_seen_at = datetime.now(UTC)
                 await db.commit()
-        logger.info("Auto-started %s for task #%s in session %s", agent.name, task_id, session_name)
         return session_id
 
-    async def _mark_task_started(self, db, task: Task, agent: Entity) -> Optional[dict]:
+    async def _mark_task_started(self, db, task: Task, agent: Entity, *, actor=None, override_reason=None) -> Optional[dict]:
         """Record that execution has started and reflect it on the board."""
+        if task.stage and task.stage.key in {"review", "done", "completed"}:
+            return None
         current_stage_name = task.stage.name if task.stage else str(task.stage_id)
         current_stage_key = task.stage.key if task.stage else ""
         already_in_progress = (
@@ -841,14 +1070,16 @@ class AssignmentLauncher:
                 None,
             )
             if in_progress_stage:
-                task.stage_id = in_progress_stage.id
-                task.stage = in_progress_stage
                 in_progress_stage_id = in_progress_stage.id
                 in_progress_stage_name = in_progress_stage.name
 
-        task.status = TaskStatus.IN_PROGRESS
-        task.version += 1
-        task.updated_at = datetime.now(UTC)
+        from agent_kanban_pm.services.tasks import update_task_record
+        await update_task_record(
+            db, task, actor or agent, changes={},
+            stage_id=in_progress_stage_id,
+            status=TaskStatus.IN_PROGRESS,
+            override_reason=override_reason,
+        )
         current_stage = task.stage.name if task.stage else str(task.stage_id)
         db.add(TaskLog(
             task_id=task.id,
@@ -870,37 +1101,6 @@ class AssignmentLauncher:
             "status": TaskStatus.IN_PROGRESS.value,
             "stage_changed": old_stage_id != in_progress_stage_id,
         }
-
-    async def _publish_task_started(self, task_started_event: Optional[dict]) -> None:
-        if not task_started_event:
-            return
-        project_id = task_started_event["project_id"]
-        entity_id = task_started_event["entity_id"]
-        if task_started_event["stage_changed"]:
-            await event_bus.publish(
-                EventType.TASK_MOVED.value,
-                {
-                    "task_id": task_started_event["task_id"],
-                    "title": task_started_event["title"],
-                    "from_stage_id": task_started_event["from_stage_id"],
-                    "to_stage_id": task_started_event["to_stage_id"],
-                    "status": task_started_event["status"],
-                    "summary": "Execution started by assigned agent",
-                },
-                project_id=project_id,
-                entity_id=entity_id,
-            )
-        await event_bus.publish(
-            EventType.TASK_UPDATED.value,
-            {
-                "task_id": task_started_event["task_id"],
-                "title": task_started_event["title"],
-                "status": task_started_event["status"],
-                "stage_id": task_started_event["to_stage_id"],
-            },
-            project_id=project_id,
-            entity_id=entity_id,
-        )
 
     async def resume_runnable_assignments(self, workspace_path: Optional[str] = None) -> int:
         """Replay already-assigned runnable tasks after a server/runtime restart."""
@@ -968,19 +1168,25 @@ class AssignmentLauncher:
                 except Exception as exc:
                     logger.warning("Failed to read STATUS.md at %s: %s", session.workspace_path, exc)
                     continue
-                if not status_data.get("handoff_ready"):
+                if not status_matches_session(status_data, session):
                     continue
                 state = (status_data.get("state") or "").lower()
-                if state not in ("done", "completed", "review"):
-                    continue
 
+                existing_report = await db.scalar(
+                    select(AgentActivity.id).filter(
+                        AgentActivity.session_id == session.id,
+                        AgentActivity.source == "handoff_scan",
+                    )
+                )
+                if existing_report:
+                    continue
                 db.add(AgentActivity(
                     agent_id=session.agent_id,
                     session_id=session.id,
                     project_id=session.project_id,
                     task_id=session.task_id,
                     activity_type=ActivityType.HANDOFF,
-                    source="session_streamer",
+                    source="handoff_scan",
                     message=(
                         f"Task #{task.id} appears ready for review: STATUS.md handoff_ready=true "
                         f"(state={state}, agent={status_data.get('current_agent', '?')}). "

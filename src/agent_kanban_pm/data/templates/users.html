@@ -8,6 +8,7 @@
         <h2 style="font-weight: 800; font-size: 1.75rem; letter-spacing: -0.02em; margin: 0; background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Agents &amp; Roles</h2>
         <p class="text-secondary" style="font-size: 0.9rem; margin-top: 0.25rem;">Configured agent roles, available CLI tools, and workspace team members</p>
     </div>
+    <a id="role-return-link" class="btn btn-secondary" href="/ui/projects" hidden>Return to project</a>
 </div>
 
 <!-- Section 1: Configured Roles -->
@@ -144,55 +145,13 @@
     </div>
 </div>
 
-<style>
-    .status-indicator {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        transition: all 0.3s ease;
-    }
-
-    .status-enabled { background-color: var(--success); }
-    .status-disabled { background-color: var(--danger); }
-</style>
+<link rel="stylesheet" href="/static/css/users.css?v=7">
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/role-settings.js"></script>
+<script src="/static/js/role-settings.js?v=7"></script>
 <script>
-    var CURRENT_ENTITY_ID = {{ (current_entity.id if current_entity else 'null') }};
-    var roleEditorLoaded = false;
-    var roleEditorDirty = false;
-    window.onRoleSettingsSaved = function() { roleEditorDirty = true; };
-
-    function toggleRoleEditor() {
-        var container = document.getElementById('role-editor-container');
-        var btnText = document.getElementById('role-editor-btn-text');
-        if (!container) return;
-
-        if (container.style.display === 'none') {
-            container.style.display = 'block';
-            if (btnText) btnText.textContent = 'Hide editor';
-            if (!roleEditorLoaded) {
-                roleEditorLoaded = true;
-                apiFetch('/ui/api/roles', {}, 'Failed to load roles').then(function(data) {
-                    if (window.renderRoleCliPanel) {
-                        window.renderRoleCliPanel(data);
-                    }
-                }).catch(function(err) {
-                    var list = document.getElementById('team-list');
-                    if (list) list.innerHTML = '<p class="text-danger">Failed to load roles: ' + err.message + '</p>';
-                });
-            }
-        } else {
-            if (roleEditorDirty) {
-                window.location.reload();
-                return;
-            }
-            container.style.display = 'none';
-            if (btnText) btnText.textContent = 'Configure roles';
-        }
-    }
+window.CURRENT_ENTITY_ID = {{ (current_entity.id if current_entity else 'null') }};
 </script>
+<script src="/static/js/users.js?v=7"></script>
 {% endblock %}

@@ -1,7 +1,8 @@
 """Stage policy helpers: default policies, transition validation, and seeding.
 
-The server stores and validates policies but never infers routing from them.
-Only the orchestrator agent reads policies to decide assignments and movement.
+Defaults and hypothetical policy diagnostics live here. Actual task mutations
+use review_gate's server evidence checks; stage_entry applies configured roles.
+Caller-supplied diagnostic flags are not authorization for a task mutation.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import json
 import logging
 from typing import Dict, List, Optional, Any
 
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_kanban_pm.models import StagePolicy, ReviewMode, Stage, Project
@@ -40,15 +41,15 @@ DEFAULT_POLICIES: Dict[str, Dict[str, Any]] = {
         "requires_orchestrator_move": True,
     },
     "review": {
-        "on_enter_roles": ["diff_review", "test"],
-        "required_outputs": ["test_result", "diff_review_result"],
+        "on_enter_roles": ["diff_review", "test", "git_pr"],
+        "required_outputs": ["test_result", "diff_review_result", "final_summary"],
         "review_mode": ReviewMode.AUTO_THEN_HUMAN_FOR_CRITICAL,
         "allow_parallel": True,
         "requires_orchestrator_move": True,
     },
     "done": {
-        "on_enter_roles": ["git_pr"],
-        "required_outputs": ["final_summary"],
+        "on_enter_roles": [],
+        "required_outputs": [],
         "review_mode": ReviewMode.NONE,
         "allow_parallel": False,
         "requires_orchestrator_move": True,
@@ -173,6 +174,8 @@ async def gather_transition_context(
     db: "AsyncSession",
     task_id: int,
     project_id: int,
+    *,
+    work_revision: Optional[str] = None,
 ) -> dict:
     """Gather real has_diff_review and is_critical values for a task move.
 
@@ -186,24 +189,28 @@ async def gather_transition_context(
     """
     from agent_kanban_pm.models import DiffReview, DiffReviewStatus, AgentActivity, ActivityType
 
-    has_diff_review = False
-    review_result = await db.execute(
-        select(DiffReview).filter(
-            DiffReview.task_id == task_id,
-            DiffReview.status == DiffReviewStatus.APPROVED,
-        )
+    review_query = select(DiffReview).where(
+        DiffReview.task_id == task_id,
+        DiffReview.project_id == project_id,
     )
-    if review_result.scalar_one_or_none() is not None:
-        has_diff_review = True
-
-    is_critical = False
+    if work_revision is not None:
+        review_query = review_query.where(DiffReview.work_revision == work_revision)
+    review_query = review_query.order_by(
+        desc(func.coalesce(DiffReview.reviewed_at, DiffReview.created_at)), desc(DiffReview.id)
+    ).limit(1)
+    latest_review = (await db.execute(review_query)).scalar_one_or_none()
+    has_diff_review = bool(
+        latest_review and latest_review.status == DiffReviewStatus.APPROVED
+        and (work_revision is None or latest_review.diff_sha256)
+    )
+    is_critical = bool(latest_review and latest_review.is_critical)
     activity_result = await db.execute(
         select(AgentActivity.file_path)
         .filter(AgentActivity.task_id == task_id)
         .order_by(desc(AgentActivity.created_at))
         .limit(50)
     )
-    file_paths = [row[0] for row in activity_result.all() if row[0]]
+    file_paths = [row[0] for row in activity_result.all() if row[0]] if work_revision is None else []
     for fp in file_paths:
         for pattern in CRITICAL_FILE_PATTERNS:
             if pattern in fp:
@@ -215,6 +222,8 @@ async def gather_transition_context(
     return {
         "has_diff_review": has_diff_review,
         "is_critical": is_critical,
+        "review_id": latest_review.id if latest_review else None,
+        "diff_sha256": latest_review.diff_sha256 if latest_review else None,
     }
 
 

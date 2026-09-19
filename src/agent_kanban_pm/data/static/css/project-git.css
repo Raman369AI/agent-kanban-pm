@@ -1,0 +1,260 @@
+:root {
+        --glass-bg: rgba(255, 255, 255, 0.05);
+        --glass-border: rgba(255, 255, 255, 0.1);
+        --purple-main: #7c3aed;
+        --purple-bg: rgba(124, 58, 237, 0.1);
+    }
+
+    .sub-nav {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 2rem;
+        border-bottom: 1px solid var(--glass-border);
+        padding-bottom: 1rem;
+    }
+
+    .nav-pill {
+        padding: 0.5rem 1.25rem;
+        border-radius: 99px;
+        text-decoration: none;
+        color: var(--text-muted);
+        transition: all 0.2s;
+        background: var(--glass-bg);
+    }
+
+    .nav-pill:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--text-main);
+    }
+
+    .nav-pill.active {
+        background: var(--purple-main);
+        color: white;
+    }
+
+    .git-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .project-info h1 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.75rem;
+    }
+
+    .path-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.25rem 0.75rem;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 0.85rem;
+        color: var(--text-muted);
+    }
+
+    .sync-controls {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.5rem;
+    }
+
+    #last-sync-time {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+    }
+
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .stat-card {
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        padding: 1rem;
+        border-radius: 12px;
+        text-align: center;
+        backdrop-filter: blur(10px);
+    }
+
+    .stat-value {
+        display: block;
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+
+    .stat-label {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .filter-tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        overflow-x: auto;
+        padding-bottom: 0.5rem;
+    }
+
+    .filter-btn {
+        padding: 0.4rem 1rem;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        border-radius: 6px;
+        color: var(--text-muted);
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .filter-btn.active {
+        background: rgba(255, 255, 255, 0.15);
+        color: var(--text-main);
+        border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .contribution-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .contribution-card {
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        padding: 1rem;
+        border-radius: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        backdrop-filter: blur(8px);
+        transition: transform 0.1s;
+    }
+
+    .contribution-card:hover {
+        transform: translateY(-2px);
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    .cont-left {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-start;
+    }
+
+    .cont-icon {
+        font-size: 1.25rem;
+        margin-top: 0.2rem;
+    }
+
+    .cont-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .cont-title {
+        font-weight: 600;
+        color: var(--text-main);
+        text-decoration: none;
+    }
+
+    .cont-title:hover {
+        text-decoration: underline;
+    }
+
+    .cont-external-id {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        font-family: monospace;
+    }
+
+    .cont-meta {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+    }
+
+    .cont-right {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.5rem;
+    }
+
+    .badge {
+        padding: 0.25rem 0.6rem;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .date-chip {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        background: rgba(0,0,0,0.2);
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        background: var(--glass-bg);
+        border: 1px dashed var(--glass-border);
+        border-radius: 12px;
+        color: var(--text-muted);
+    }
+
+    .spinner {
+        animation: rotate 2s linear infinite;
+        width: 18px;
+        height: 18px;
+    }
+
+    @keyframes rotate {
+        100% { transform: rotate(360deg); }
+    }
+
+    #toast-container {
+        position: fixed;
+        bottom: 2rem;
+        right: 2rem;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .toast {
+        background: #333;
+        color: white;
+        padding: 0.75rem 1.25rem;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+
+    @media (max-width: 768px) {
+        .contribution-card { flex-direction: column; align-items: flex-start; gap: 1rem; }
+        .cont-right { align-items: flex-start; }
+    }
+
+.badge-merged{background:rgba(124,58,237,0.12);color:#7c3aed;border:1px solid rgba(124,58,237,0.25);}
+  .badge-committed{background:rgba(var(--accent-primary-rgb),0.1);color:var(--accent-primary);}

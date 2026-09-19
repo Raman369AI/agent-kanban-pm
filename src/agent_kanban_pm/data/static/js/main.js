@@ -1,4 +1,19 @@
 // Main UI JavaScript
+window.escapeHtml = function(value) {
+    return String(value === null || value === undefined ? '' : value).replace(
+        /[&<>"']/g,
+        function(character) {
+            return {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[character];
+        }
+    );
+};
+
 // Shared response handling keeps server validation/authorization messages visible.
 window.apiErrorMessage = function(data, fallback) {
     if (data && typeof data.detail === 'string') return data.detail;
@@ -27,6 +42,60 @@ window.apiFetch = async function(input, init, fallback) {
         throw new Error(window.apiErrorMessage(data, fallback || response.statusText));
     }
     return data;
+};
+
+window.confirmAction = function(options) {
+    options = options || {};
+    return new Promise(function(resolve) {
+        var previous = document.activeElement;
+        var overlay = document.createElement('div');
+        overlay.className = 'app-confirm-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+
+        var card = document.createElement('div');
+        card.className = 'app-confirm-card';
+        var title = document.createElement('h2');
+        title.id = 'app-confirm-title-' + Date.now();
+        title.textContent = options.title || 'Confirm action';
+        overlay.setAttribute('aria-labelledby', title.id);
+        var message = document.createElement('p');
+        message.textContent = options.message || 'Are you sure?';
+        var actions = document.createElement('div');
+        actions.className = 'app-confirm-actions';
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'btn';
+        cancel.textContent = options.cancelLabel || 'Cancel';
+        var confirm = document.createElement('button');
+        confirm.type = 'button';
+        confirm.className = options.danger ? 'btn btn-danger' : 'btn btn-primary';
+        confirm.textContent = options.confirmLabel || 'Confirm';
+        actions.append(cancel, confirm);
+        card.append(title, message, actions);
+        overlay.append(card);
+        document.body.append(overlay);
+
+        function finish(value) {
+            document.removeEventListener('keydown', onKey, true);
+            overlay.remove();
+            if (previous && previous.isConnected) previous.focus();
+            resolve(value);
+        }
+        function onKey(event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                finish(false);
+            }
+        }
+        cancel.addEventListener('click', function() { finish(false); });
+        confirm.addEventListener('click', function() { finish(true); });
+        overlay.addEventListener('click', function(event) {
+            if (event.target === overlay) finish(false);
+        });
+        document.addEventListener('keydown', onKey, true);
+        confirm.focus();
+    });
 };
 
 var modalReturnFocus = {};
@@ -70,15 +139,21 @@ window.closeModal = function(id) {
 };
 
 document.addEventListener('keydown', function(event) {
-    var visible = Array.from(document.querySelectorAll('.modal-overlay, .project-modal-overlay'))
+    var visible = Array.from(document.querySelectorAll('.modal-overlay, .project-modal-overlay, .folder-picker-overlay'))
         .filter(function(modal) {
-            return modal.style.display !== 'none' && window.getComputedStyle(modal).display !== 'none';
+            return modal.getAttribute('aria-hidden') !== 'true' &&
+                modal.style.display !== 'none' && window.getComputedStyle(modal).display !== 'none';
         });
     var modal = visible[visible.length - 1];
     if (!modal) return;
     if (event.key === 'Escape') {
         event.preventDefault();
-        window.closeModal(modal.id);
+        var cancelHandler = modal.dataset.cancelHandler;
+        if (cancelHandler && typeof window[cancelHandler] === 'function') {
+            window[cancelHandler]();
+        } else {
+            window.closeModal(modal.id);
+        }
         return;
     }
     if (event.key !== 'Tab') return;
@@ -102,29 +177,21 @@ document.addEventListener('keydown', function(event) {
 document.addEventListener('DOMContentLoaded', function() {
     'use strict';
 
-    // Theme cycle: light → dark → blue → rose → light
-    const themeCycle = ['light', 'dark', 'blue', 'rose'];
-    const themeIcons = { light: '🌙', dark: '☀️', blue: '🌊', rose: '🌹' };
-
-    const themeToggle = document.getElementById('theme-toggle');
-    const themeIcon = themeToggle?.querySelector('.icon');
-    
-    if (themeToggle) {
-        themeToggle.addEventListener('click', function() {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const currentIndex = themeCycle.indexOf(currentTheme);
-            const nextIndex = (currentIndex + 1) % themeCycle.length;
-            const newTheme = themeCycle[nextIndex];
-            
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
-            if (themeIcon) themeIcon.textContent = themeIcons[newTheme] || '🌙';
+    // White and Night are the only selectable themes. Older saved Blue and
+    // Rose values are normalized by theme.js before this script runs.
+    const themeButtons = document.querySelectorAll('[data-set-theme]');
+    function setTheme(theme) {
+        if (theme !== 'light' && theme !== 'dark') return;
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('theme', theme);
+        themeButtons.forEach(function(button) {
+            button.setAttribute('aria-pressed', String(button.dataset.setTheme === theme));
         });
-
-        // Set initial icon
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        if (themeIcon) themeIcon.textContent = themeIcons[savedTheme] || '🌙';
     }
+    themeButtons.forEach(function(button) {
+        button.addEventListener('click', function() { setTheme(button.dataset.setTheme); });
+    });
+    setTheme(document.documentElement.getAttribute('data-theme') || 'light');
 
     // View toggle
     const viewToggle = document.getElementById('view-toggle');
@@ -138,7 +205,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             document.documentElement.setAttribute('data-view', newView);
             localStorage.setItem('view', newView);
-            viewToggle.textContent = newView === 'grid' ? 'Board view' : 'List view';
+            viewToggle.textContent = newView === 'grid' ? 'Switch to list' : 'Switch to board';
             viewToggle.setAttribute('aria-pressed', String(newView === 'list'));
             
             // Trigger view change event
@@ -147,7 +214,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Set initial icon
         const savedView = localStorage.getItem('view') || 'grid';
-        viewToggle.textContent = savedView === 'grid' ? 'Board view' : 'List view';
+        viewToggle.textContent = savedView === 'grid' ? 'Switch to list' : 'Switch to board';
         viewToggle.setAttribute('aria-pressed', String(savedView === 'list'));
     }
 

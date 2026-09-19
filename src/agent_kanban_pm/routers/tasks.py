@@ -23,6 +23,7 @@ from agent_kanban_pm.services.tasks import (
     TaskTransitionError,
     create_task_record,
     update_task_record,
+    assign_task_record,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,24 +60,6 @@ async def create_task(
         raise HTTPException(status_code=422, detail=str(exc))
     await db.commit()
     await db.refresh(db_task, ["assignees"])
-
-    # Auto-audit log
-    log = TaskLog(
-        task_id=db_task.id,
-        message=f"Task created by {current_entity.name}",
-        log_type="action"
-    )
-    db.add(log)
-    await db.commit()
-
-    logger.info(f"Task created: {db_task.title} by {current_entity.name}")
-
-    await event_bus.publish(
-        EventType.TASK_CREATED.value,
-        {"task_id": db_task.id, "title": db_task.title},
-        project_id=db_task.project_id,
-        entity_id=current_entity.id
-    )
 
     return db_task
 
@@ -179,6 +162,7 @@ async def update_task(
 
     update_data = task_update.model_dump(exclude_unset=True)
     update_data.pop("version", None)
+    override_reason = update_data.pop("override_reason", None)
 
     try:
         mutation = await update_task_record(
@@ -196,6 +180,7 @@ async def update_task(
                 if "status" in update_data
                 else None
             ),
+            override_reason=override_reason,
         )
     except TaskReferenceError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -204,51 +189,6 @@ async def update_task(
     transition_state = mutation.transition
     await db.commit()
     await db.refresh(task)
-
-    # Auto-audit log
-    log = TaskLog(
-        task_id=task.id,
-        message=f"Task updated by {current_entity.name} (version {task.version})",
-        log_type="action"
-    )
-    db.add(log)
-    await db.commit()
-
-    logger.info(f"Task updated: {task.title} by {current_entity.name}")
-
-    if task_update.stage_id is not None and task_update.stage_id != transition_state.old_stage_id:
-        await event_bus.publish(
-            EventType.TASK_MOVED.value,
-            {
-                "task_id": task.id,
-                "title": task.title,
-                "from_stage_id": transition_state.old_stage_id,
-                "to_stage_id": task.stage_id,
-                "status": task.status
-            },
-            project_id=task.project_id,
-            entity_id=current_entity.id
-        )
-
-    if transition_state.completed_now:
-        await event_bus.publish(
-            EventType.TASK_COMPLETED.value,
-            {"task_id": task.id, "title": task.title},
-            project_id=task.project_id,
-            entity_id=current_entity.id
-        )
-
-    await event_bus.publish(
-        EventType.TASK_UPDATED.value,
-        {
-            "task_id": task.id,
-            "title": task.title,
-            "status": task.status,
-            "stage_id": task.stage_id
-        },
-        project_id=task.project_id,
-        entity_id=current_entity.id
-    )
 
     return task
 
@@ -277,16 +217,14 @@ async def delete_task(
     task_id_to_delete = task.id
     project_id = task.project_id
     await db.delete(task)
-    await db.commit()
-
-    logger.info(f"Task deleted: {task.title} by {current_entity.name}")
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.TASK_DELETED.value,
         {"task_id": task_id_to_delete},
         project_id=project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    logger.info(f"Task deleted: {task.title} by {current_entity.name}")
 
 
 # ============================================================================
@@ -338,29 +276,9 @@ async def assign_task(
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    if entity not in task.assignees:
-        task.assignees.append(entity)
-        task.version += 1
-        await db.commit()
-        await db.refresh(task)
-
-        # Auto-audit log
-        log = TaskLog(
-            task_id=task.id,
-            message=f"Assigned to {entity.name} by {current_entity.name}",
-            log_type="action"
-        )
-        db.add(log)
-        await db.commit()
-
-        logger.info(f"Task assigned: {task.title} -> {entity.name} by {current_entity.name}")
-
-        await event_bus.publish(
-            EventType.TASK_ASSIGNED.value,
-            {"task_id": task.id, "entity_id": entity_id},
-            project_id=task.project_id,
-            entity_id=current_entity.id
-        )
+    await assign_task_record(db, task, current_entity, entity, unassign=False)
+    await db.commit()
+    await db.refresh(task, ["assignees"])
 
     return task
 
@@ -408,29 +326,9 @@ async def self_assign_task(
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    if entity not in task.assignees:
-        task.assignees.append(entity)
-        task.version += 1
-        await db.commit()
-        await db.refresh(task)
-
-        # Auto-audit log
-        log = TaskLog(
-            task_id=task.id,
-            message=f"Self-assigned by {entity.name}",
-            log_type="action"
-        )
-        db.add(log)
-        await db.commit()
-
-        logger.info(f"Task self-assigned: {task.title} -> {entity.name}")
-
-        await event_bus.publish(
-            EventType.TASK_ASSIGNED.value,
-            {"task_id": task.id, "entity_id": entity_id, "self_assigned": True},
-            project_id=task.project_id,
-            entity_id=entity_id
-        )
+    await assign_task_record(db, task, current_entity, entity, unassign=False)
+    await db.commit()
+    await db.refresh(task, ["assignees"])
 
     return task
 
@@ -467,29 +365,9 @@ async def unassign_task(
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    if entity in task.assignees:
-        task.assignees.remove(entity)
-        task.version += 1
-        await db.commit()
-        await db.refresh(task)
-
-        # Auto-audit log
-        log = TaskLog(
-            task_id=task.id,
-            message=f"Unassigned {entity.name} by {current_entity.name}",
-            log_type="action"
-        )
-        db.add(log)
-        await db.commit()
-
-        logger.info(f"Task unassigned: {task.title} <- {entity.name} by {current_entity.name}")
-
-        await event_bus.publish(
-            EventType.TASK_UNASSIGNED.value,
-            {"task_id": task.id, "entity_id": entity_id},
-            project_id=task.project_id,
-            entity_id=current_entity.id
-        )
+    await assign_task_record(db, task, current_entity, entity, unassign=True)
+    await db.commit()
+    await db.refresh(task, ["assignees"])
 
     return task
 
@@ -535,15 +413,15 @@ async def create_comment(
         author_id=current_entity.id
     )
     db.add(db_comment)
-    await db.commit()
-    await db.refresh(db_comment, ["author"])
-
-    await event_bus.publish(
+    await db.flush()
+    event_bus.enqueue(db,
         EventType.TASK_COMMENTED.value,
         {"task_id": task.id, "comment": db_comment.content},
         project_id=task.project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(db_comment, ["author"])
 
     return db_comment
 

@@ -5,20 +5,111 @@ All notable changes to Agent Kanban PM are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
----
-
 ## [Unreleased]
 
+## [0.6.1] — 2026-09-19
+
 ### Fixed
-- **Task creation has two explicit entry points** — the header mixed a single-task form and a multi-card planner into one "Add a task" input, and its inline `onkeydown` plus the script-level Enter handler each fired the same request, so one key press created the plan twice. The board now offers **New task** (a dialog with a visible destination-stage selector) and **Plan work** (labelled with the stage its proposed cards land in). Both submit through a pending guard, keep the entered text on failure, and show the server's error beside the field instead of only in a toast.
-- **Global navigation works at tablet and phone widths** — below 992px the stylesheet zeroed the sidebar width, including its internal toggle, leaving no way to reach Dashboard, Projects, or Team. A header menu button now opens the sidebar as a drawer with a backdrop, closable with Escape or a navigation click. The drawer keeps readable labels with a saved collapsed desktop sidebar, cannot take keyboard focus while closed, and clears its backdrop when the viewport grows to desktop width.
-- **Task creation controls fit tablet and zoomed phone layouts** — the Plan work field no longer shrinks to an unusable width at 1024px with the sidebar open; the shared header and board creation controls stay within a 200% phone zoom-equivalent viewport.
-- **Task actions are reachable by keyboard and touch** — the Edit/Delete buttons appeared only on pointer hover (opacity 0), so keyboard and touch users could not see them. Actions now also reveal on `:focus-within` and stay visible on touch screens, and Delete moved into an accessible overflow menu (`aria-haspopup`, Escape closes and restores focus).
+
+- Preserve assignment delivery during shutdown and reconstruct missing launch
+  requests from durable assignment events without duplicating intent.
+- Keep failed launch reservations linked and cancellable, prevent cancelled
+  reservations from reviving, and release their capacity before retry.
+- Bind diff-review requesters to authenticated callers and reject requester
+  spoofing, invalid reviewers, and worker self-designation.
+- Require merged pull requests to target the project's GitHub repository and
+  integration branch, in addition to matching the reviewed head commit.
+- Make nested Edit and Assign workflow overrides visible, focus-safe, and
+  reversible without losing the originating form state.
+- Pin review diffs to an immutable base commit through database migration 19 so
+  advancing the default branch cannot invalidate unchanged approved work.
+- Preserve unsent Activity approval notes, focus, and selection across live
+  refreshes, while removing remotely resolved approvals and blocking duplicate
+  submissions.
+
+## [0.6.0] — 2026-09-19
 
 ### Changed
-- **The backlog "Approve" action is now "Move to To Do"** — the old label implied an approval decision; it only moves the card. Approval language is reserved for actual agent approval requests.
-- **Task cards show readable status labels** — badges render "In progress" or "In review" instead of the raw `in_progress`/`in_review` enum values, in both server-rendered markup and live WebSocket updates (`status_label` template filter, shared JS label map).
-- **The Stage Policy dialog describes the real handoff behavior** — it claimed "the server never auto-assigns or auto-moves cards", but the runtime does move cards when a session reports handoff ready (To Do/In Progress → Review, finished test/diff review → Done) and assigns the next stage's expected roles. The copy now matches the runtime.
+
+- Consolidate Activity session details and refresh durable handoffs without stale-session responses overwriting the selection.
+- Honor configured completion policies in the task drawer, preserve completion notifications across interfaces, and prevent cancelled queue requests from starting during workspace preparation.
+- Preserve manual Git worktrees; automatic cleanup requires explicit runtime ownership and an age guard.
+- Enforce SQLite foreign keys on each connection and database-level task version checks.
+- Persist events in a shared outbox and consume assignments through a durable scheduler.
+- Commit task create/update/assignment audit records and events together through shared services.
+- Commit project setup and its default stage policies atomically.
+- Apply shared task authorization to MCP mutations and validate approval ownership across REST/MCP.
+- Preserve Review/Done when launching their agents; require the Git/PR role to finish in Review before Done.
+- Move terminal process polling off the async event loop and fix project WebSocket audiences.
+- Preserve draft review notes during background refresh and prevent historical approvals from opening a modal on page load.
+- Keep approval outcome notifications consistent and prevent delayed folder browsing from overwriting an edit.
+- Add behavioral regression tests for concurrency, rollback, retry, ownership and coordination permissions.
+
+- Require durable handoffs and committed Git revisions for automatic completion; reject nonzero exits and changed review work.
+- Run configured review roles serially on the implementation workspace, preserving revision identity through durable launch requests.
+- Enforce current-revision role/output gates and human/orchestrator movement requirements; record review revisions through REST and MCP.
+- Add a real-Git, deterministic-CLI lifecycle regression and migration-13 upgrade coverage.
+
+- Recover durable launch reservations using stored commands, run identities, and POSIX execution receipts; never blindly replay claimed work after a crash.
+- Track reservation/start/completion/failure outcomes and revalidate approval immediately before execution.
+- Apply shared evidence and authority checks to REST, UI, MCP, automatic handoffs, and execution-start moves; audit human decisions consistently.
+- Normalize status-only moves, enforce predecessors, and share transactional Review/Done role assignments across interfaces.
+- Add migration 14 plus crash-injection and cross-interface policy regressions.
+- Bind reviews to server-generated Git snapshots and digests; newer decisions supersede older approvals on the same revision.
+- Verify built-in handoff outputs from recorded session outcomes and require Git/PR completion before Done.
+- Add per-channel outbox receipts, database dispatcher leases, MCP pending-event deduplication, and launch queue manager controls.
+- Add migrations 15-16 for evidence/delivery metadata and PR-before-Done default policies.
+- Require a server-verified, merged GitHub pull request whose head SHA matches the reviewed implementation revision before Git/PR completion can enter Done.
+- Replace the POSIX lock-only run guard with portable atomic receipts, process identity checks, and cross-host heartbeats; remote or uncertain claims remain fail-closed.
+- Add workbench launch-queue controls for inspection, cancel, retry, and archival, with a browser regression covering action state and escaped errors.
+- Move all remaining REST, UI, MCP, streamer, and sweeper mutation notifications into their domain transactions; renew slow dispatcher and scheduler claims and deduplicate external adapter delivery per connection.
+- Add migration 17 for durable, server-verified handoff artifacts.
+
+### Known issues
+
+Seven open findings covering shutdown delivery, launch recovery, review and PR
+provenance, nested override dialogs, moving diff baselines, and approval-note
+drafts are documented with proposed fixes and acceptance checks in [Plan.md](Plan.md).
+Implementation details and verification limits are documented in
+[review/LIFECYCLE_REVIEW.md](review/LIFECYCLE_REVIEW.md).
+
+## [0.5.0] — 2026-09-14
+
+### Fixed
+- **CLI completion comes from the runner process state.** Tmux retains finished panes long enough to capture the real exit code; successful exits advance the task without requiring `STATUS.md`, while failed or vanished runners become errors and leave the card in place. The native PTY fallback uses the same lifecycle.
+- **Card menus stay open after local task moves.** The board waits for its own refresh before showing success and ignores duplicate WebSocket echoes of that move, preventing a delayed rerender from detaching an active menu.
+
+## [0.4.0] — 2026-09-13
+
+### Added
+- **Task reviews include the actual Git changes** from the retained task worktree, committed task branch, or saved review snapshot. Reviewers can inspect patches file by file and approve or reject pending reviews with an optional note; decisions update the review record without changing Git or moving the card.
+- **The terminal and activity views have a focused feed** that removes repeated screen redraws while preserving a raw-output view for diagnosis. Finished sessions remain available in task terminal history.
+
+### Changed
+- **Session handoffs are durable and scoped to one run**. The runtime records the handoff on `AgentSession` before changing task state, verifies `STATUS.md` against the project, task, session, and run token, and serializes non-Git workspaces so concurrent tasks cannot overwrite a shared handoff.
+- **Task worktrees remain available for review after sessions finish**. Automatic cleanup retains recorded worktrees and never removes dirty work, allowing later review and Git roles to inspect unfinished or uncommitted changes.
+- **Controls and project navigation share consistent styling** across the dashboard, board, activity, changes, settings, project list, and appearance menu.
+
+### Fixed
+- **Supervised interactive CLI menus resolve predictably**. Menu selections use constrained navigation keys, resolved decisions are delivered once, and approval notes are retained as audit text instead of being typed into menus.
+- **Review completion stays separate from Git integration**. Approving a diff review records the decision without silently applying, committing, merging, or publishing the reviewed patch.
+
+## [0.4.0rc9] — 2026-09-12
+
+### Added
+- **A guided first-project flow** shows the next step for choosing a folder, configuring an available worker, creating a task, and starting work. Project pages share Board, Activity, Changes, and Settings navigation; Agents & roles shows configured tools and availability.
+- **A task detail workspace** opens from a board card or direct task link. Overview shows description, owner, priority, stage, execution state, blockers, and the next action; secondary tabs show approvals, activity, terminal output, logs, and reviews.
+- **Board search and attention filters** find tasks by title or ID and isolate decisions, blocked work, running sessions, unassigned tasks, agents, and priority. The dashboard links pending approvals, failed sessions, and review-ready tasks to their cards; project cards show progress and attention counts.
+- **A Plan work preview** lets users edit, remove, or deselect proposed cards before creation. Preparing a preview does not create tasks or write workspace files, and confirmation creates only the selected cards.
+
+### Changed
+- **Board and List are labeled views**, with theme and density under Appearance. Task titles and supporting text are larger, shared cards use quieter surfaces, and dashboard status labels are readable.
+- **New task and Plan work are separate actions** with a visible destination stage. Moving a Backlog card to To Do is labeled as a move, leaving approval language for actual approval requests.
+
+### Fixed
+- **Task creation is guarded against repeat submission** and keeps input after a failed request. Mobile navigation, task actions, and creation controls remain reachable by keyboard, touch, and narrow or zoomed viewports.
+- **Live updates keep task context**: the open panel, selected tab, board position, filters, and unsaved edit draft survive refresh. Concurrent task edits report a conflict instead of silently overwriting newer work. Reconnecting is shown until the board refresh succeeds.
+- **Stage policy copy reflects execution handoff behavior**, and board and dashboard badges show human-readable task status.
 
 ## [0.4.0rc8] — 2026-09-11
 

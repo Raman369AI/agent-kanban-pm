@@ -40,6 +40,7 @@ engine = create_async_engine(DATABASE_URL, **_ENGINE_KWARGS)
 def set_sqlite_pragma(dbapi_connection, connection_record):
     try:
         cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA busy_timeout=10000")
@@ -255,6 +256,101 @@ async def _migrate_db_schema():
                 await conn.execute(text("UPDATE stages SET workflow_key = :key WHERE id = :id"),
                                    {"key": normalize_stage_key(name), "id": stage_id})
             await _record_migration(10, "stable_stage_identity")
+
+        if not await _migration_applied(11):
+            for column, ddl in (
+                ("assigned_role", "VARCHAR(100)"),
+                ("run_token", "VARCHAR(64)"),
+                ("handoff_state", "VARCHAR(32)"),
+                ("handoff_summary", "TEXT"),
+                ("handoff_received_at", "DATETIME"),
+            ):
+                if not await _column_exists(conn, "agent_sessions", column):
+                    await conn.execute(text(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}"))
+            await _record_migration(11, "session_handoff_identity")
+
+        if not await _migration_applied(12):
+            if not await _column_exists(conn, "agent_sessions", "exit_code"):
+                await conn.execute(text("ALTER TABLE agent_sessions ADD COLUMN exit_code INTEGER"))
+            await _record_migration(12, "session_process_exit_code")
+
+        if not await _migration_applied(13):
+            for column, ddl in (
+                ("launch_request_id", "INTEGER"),
+                ("source_session_id", "INTEGER"),
+                ("work_revision", "VARCHAR(64)"),
+                ("handoff_outputs_json", "TEXT"),
+            ):
+                if not await _column_exists(conn, "agent_sessions", column):
+                    await conn.execute(text(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}"))
+            if not await _column_exists(conn, "diff_reviews", "work_revision"):
+                await conn.execute(text("ALTER TABLE diff_reviews ADD COLUMN work_revision VARCHAR(64)"))
+            await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_session_launch_request ON agent_sessions (launch_request_id)"))
+            await _record_migration(13, "durable_launches_and_review_revisions")
+
+        if not await _migration_applied(14):
+            if not await _column_exists(conn, "agent_sessions", "launch_spec_json"):
+                await conn.execute(text("ALTER TABLE agent_sessions ADD COLUMN launch_spec_json TEXT"))
+            if not await _column_exists(conn, "launch_requests", "actor_id"):
+                await conn.execute(text("ALTER TABLE launch_requests ADD COLUMN actor_id INTEGER REFERENCES entities(id) ON DELETE SET NULL"))
+            await _record_migration(14, "recoverable_task_launches")
+
+        if not await _migration_applied(15):
+            for table, column, ddl in (
+                ("diff_reviews", "diff_sha256", "VARCHAR(64)"),
+                ("pending_events", "outbox_event_id", "INTEGER REFERENCES outbox_events(id) ON DELETE CASCADE"),
+                ("outbox_events", "claimed_at", "DATETIME"),
+                ("outbox_events", "claim_token", "VARCHAR(64)"),
+                ("launch_requests", "claimed_at", "DATETIME"),
+                ("launch_requests", "claim_token", "VARCHAR(64)"),
+                ("launch_requests", "archived_at", "DATETIME"),
+            ):
+                if not await _column_exists(conn, table, column):
+                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_pending_event_outbox_agent "
+                "ON pending_events (outbox_event_id, agent_id) WHERE outbox_event_id IS NOT NULL"
+            ))
+            await _record_migration(15, "review_evidence_and_delivery_claims")
+
+        if not await _migration_applied(16):
+            await conn.execute(text("""
+                UPDATE stage_policies
+                SET on_enter_roles_json = '["diff_review", "test", "git_pr"]',
+                    required_outputs_json = '["test_result", "diff_review_result", "final_summary"]'
+                WHERE stage_key = 'review'
+                  AND on_enter_roles_json IN ('["diff_review", "test"]', '["test", "diff_review"]')
+                  AND required_outputs_json IN ('["test_result", "diff_review_result"]', '["diff_review_result", "test_result"]')
+            """))
+            await conn.execute(text("""
+                UPDATE stage_policies
+                SET on_enter_roles_json = '[]', required_outputs_json = '[]'
+                WHERE stage_key IN ('done', 'completed')
+                  AND on_enter_roles_json = '["git_pr"]'
+                  AND required_outputs_json = '["final_summary"]'
+            """))
+            await _record_migration(16, "git_pr_before_done")
+
+        if not await _migration_applied(17):
+            if not await _column_exists(conn, "agent_sessions", "handoff_artifacts_json"):
+                await conn.execute(text("ALTER TABLE agent_sessions ADD COLUMN handoff_artifacts_json TEXT"))
+            await _record_migration(17, "verified_handoff_artifacts")
+
+        if not await _migration_applied(18):
+            if not await _column_exists(conn, "launch_requests", "override_reason"):
+                await conn.execute(text("ALTER TABLE launch_requests ADD COLUMN override_reason TEXT"))
+            await _record_migration(18, "launch_override_reasons")
+
+        if not await _migration_applied(19):
+            for table, column in (
+                ("agent_sessions", "review_base_revision"),
+                ("diff_reviews", "base_revision"),
+            ):
+                if not await _column_exists(conn, table, column):
+                    await conn.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR(64)"
+                    ))
+            await _record_migration(19, "immutable_review_base")
 
     # Backfill default roles
     async with async_session_maker() as session:

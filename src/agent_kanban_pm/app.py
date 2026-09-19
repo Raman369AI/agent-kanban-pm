@@ -15,7 +15,7 @@ from agent_kanban_pm.runtime.adapter_loader import init_adapter_registry
 from agent_kanban_pm.runtime.assignment_launcher import assignment_launcher
 from agent_kanban_pm.runtime.paths import static_dir
 from agent_kanban_pm.runtime.session_streamer import session_streamer_loop
-from agent_kanban_pm.runtime.instance import get_port, get_api_base, get_tmux_prefix
+from agent_kanban_pm.runtime.instance import get_port, get_api_base
 from agent_kanban_pm.runtime._version import __version__
 import logging
 import os
@@ -154,7 +154,7 @@ async def _heartbeat_sweeper():
                             heartbeat.status_type = status_type
                             heartbeat.message = f"Active task session #{active_session.id} for task {active_session.task_id}"
                             heartbeat.updated_at = datetime.now(UTC)
-                            await event_bus.publish(
+                            event_bus.enqueue(db,
                                 EventType.AGENT_STATUS_UPDATED.value,
                                 {
                                     "agent_id": heartbeat.agent_id,
@@ -224,19 +224,17 @@ async def _pending_event_sweeper(ttl_hours: int = 6, interval_seconds: int = 600
 
 
 async def _orphaned_session_sweeper(staleness_seconds: int = 300, interval_seconds: int = 120):
-    """Background task: mark orphaned AgentSession rows as DONE.
+    """Background task: mark vanished, stale AgentSession rows as ERROR.
 
     A session is considered orphaned if:
       - ended_at is NULL (still marked active)
       - last_seen_at is older than staleness_seconds
-      - The tmux session no longer exists (if command was set)
+      - Its runner no longer exists (if command was set)
     """
-    import shutil
-    import subprocess
+    from agent_kanban_pm.runtime.assignment_launcher import _tmux_session_name
+    from agent_kanban_pm.runtime.process_launcher import session_state
     from datetime import UTC, datetime, timedelta
-    from agent_kanban_pm.models import AgentSession, AgentSessionStatus
-
-    has_tmux = shutil.which("tmux") is not None
+    from agent_kanban_pm.models import AgentSession, AgentSessionStatus, Entity
 
     while True:
         try:
@@ -252,29 +250,28 @@ async def _orphaned_session_sweeper(staleness_seconds: int = 300, interval_secon
                 stale_sessions = result.scalars().all()
                 cleaned = 0
                 for session in stale_sessions:
-                    # If the session had a tmux command, verify the tmux session is gone
-                    if session.command and has_tmux:
-                        tmux_name = f"{get_tmux_prefix()}-task-{session.task_id}" if session.task_id else None
-                        if tmux_name:
-                            try:
-                                check = await asyncio.to_thread(
-                                    subprocess.run,
-                                    ["tmux", "has-session", "-t", tmux_name],
-                                    capture_output=True,
-                                    timeout=5,
-                                )
-                                if check.returncode == 0:
-                                    continue  # tmux session still alive, skip
-                            except Exception:
-                                pass  # tmux check failed, assume gone
+                    # Never infer success from a missing process. A live, exited, or
+                    # temporarily unobservable runner belongs to the streamer.
+                    if session.command and session.task_id:
+                        agent = await db.get(Entity, session.agent_id)
+                        if agent:
+                            from agent_kanban_pm.runtime.task_runner import runner_name, receipt_state
+                            if session.launch_spec_json and session.status == AgentSessionStatus.STARTING:
+                                continue
+                            tmux_name = runner_name(session, _tmux_session_name(agent.name, session.task_id))
+                            state = await asyncio.to_thread(receipt_state, session)
+                            if state is None or state.status == "missing":
+                                state = await asyncio.to_thread(session_state, tmux_name)
+                            if state.status != "missing":
+                                continue
 
-                    session.status = AgentSessionStatus.DONE
+                    session.status = AgentSessionStatus.ERROR
                     session.ended_at = datetime.now(UTC).replace(tzinfo=None)
                     cleaned += 1
 
                 if cleaned:
                     await db.commit()
-                    logger.info("Marked %d orphaned sessions as DONE (stale >%ds)", cleaned, staleness_seconds)
+                    logger.info("Marked %d vanished orphaned sessions as ERROR (stale >%ds)", cleaned, staleness_seconds)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -298,9 +295,10 @@ async def lifespan(app: FastAPI):
     # Register event adapters (WebSocket, Webhook broadcast)
     register_adapters()
     assignment_launcher.api_base = os.getenv("KANBAN_API_BASE", get_api_base())
-    event_bus.subscribe(EventType.TASK_ASSIGNED.value, assignment_launcher.handle_event)
-    startup_workspace = os.getenv("KANBAN_ACTIVE_WORKSPACE", os.getcwd())
-    await assignment_launcher.resume_runnable_assignments(workspace_path=startup_workspace)
+    from agent_kanban_pm.runtime.scheduler import request_launch, scheduler_loop, recover_legacy_assignments
+    event_bus.subscribe(EventType.TASK_ASSIGNED.value, request_launch)
+    await recover_legacy_assignments(os.getenv("KANBAN_ACTIVE_WORKSPACE", os.getcwd()))
+    scheduler_task = asyncio.create_task(scheduler_loop(assignment_launcher))
     # Start heartbeat staleness sweeper
     sweeper_task = asyncio.create_task(_heartbeat_sweeper())
     # Stream tmux pane output of per-task agent sessions into AgentActivity
@@ -311,14 +309,14 @@ async def lifespan(app: FastAPI):
     session_sweeper_task = asyncio.create_task(_orphaned_session_sweeper())
     yield
     # Shutdown
-    for t in (sweeper_task, streamer_task, event_sweeper_task, session_sweeper_task):
+    for t in (scheduler_task, sweeper_task, streamer_task, event_sweeper_task, session_sweeper_task):
         t.cancel()
         try:
             await t
         except asyncio.CancelledError:
             pass
-    event_bus.unsubscribe(EventType.TASK_ASSIGNED.value, assignment_launcher.handle_event)
     await event_bus.stop_async()
+    event_bus.unsubscribe(EventType.TASK_ASSIGNED.value, request_launch)
     await engine.dispose()
 
 app = FastAPI(
@@ -327,6 +325,27 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan
 )
+
+from sqlalchemy.orm.exc import StaleDataError
+
+
+@app.exception_handler(StaleDataError)
+async def stale_task_handler(request, exc):
+    return JSONResponse(status_code=409, content={"detail": "Task changed concurrently; reload and retry."})
+
+
+@app.exception_handler(PermissionError)
+async def permission_handler(request, exc):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+from agent_kanban_pm.services.tasks import TaskReferenceError
+
+
+@app.exception_handler(TaskReferenceError)
+async def reference_handler(request, exc):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(static_dir())), name="static")

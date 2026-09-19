@@ -3,8 +3,8 @@
 {% block title %}{{ project.name }} - Kanban Board{% endblock %}
 
 {% block content %}
-<link rel="stylesheet" href="/static/css/kanban_premium.css?v=6">
-<link rel="stylesheet" href="/static/css/board.css">
+<link rel="stylesheet" href="/static/css/kanban_premium.css?v=7">
+<link rel="stylesheet" href="/static/css/board.css?v=7">
 
 {# Destination stage for planned work: Backlog, or the first stage when no
    Backlog stage exists (mirrors the server-side chat-plan fallback). #}
@@ -14,12 +14,7 @@
 
 <div class="board-revamp-shell board-simple-shell" style="--stage-count: {{ project.stages|length }};">
   <!-- Consistent Project Navigation -->
-  <div class="project-sub-nav">
-    <a href="/ui/projects/{{ project.id }}/board" class="sub-nav-pill active" aria-current="page">&#128203; Board</a>
-    <a href="/ui/projects/{{ project.id }}/workbench" class="sub-nav-pill">&#9889; Activity</a>
-    <a href="/ui/projects/{{ project.id }}/git" class="sub-nav-pill">&#128260; Changes</a>
-    <a href="/ui/projects/{{ project.id }}/settings" class="sub-nav-pill">&#9881;&#65039; Settings</a>
-  </div>
+  {% include "_project_subnav.html" %}
 
   <section class="board-header-section board-simple-header">
     <div class="board-title-row">
@@ -44,7 +39,7 @@
           <input type="text" id="chat-task-input" class="form-input chat-input-compact"
             placeholder="Describe work to plan&hellip;" aria-label="Describe work to plan"
             aria-describedby="chat-plan-hint">
-          <button class="btn chat-btn-compact" id="chat-plan-btn" type="button" onclick="createTaskFromChat()"
+          <button class="btn btn-secondary chat-btn-compact" id="chat-plan-btn" type="button" onclick="createTaskFromChat()"
             title="Preview proposed task cards for {{ plan_stage.name if plan_stage else 'Backlog' }}">Plan work</button>
           <p class="chat-plan-hint text-secondary" id="chat-plan-hint">
             Planning proposes task cards for {{ plan_stage.name if plan_stage else 'Backlog' }}. Review before creating.
@@ -55,10 +50,9 @@
 
       <div class="header-actions board-primary-actions">
         <span id="board-connection-status" class="board-connection-status is-stale" role="status" aria-live="polite">Connecting…</span>
-        <button class="btn btn-icon" id="header-bell-btn" onclick="toggleBellDropdown()" title="Pending approvals">
-          <span id="header-bell-icon">&#128276;</span> <span id="header-bell-count" class="badge" style="display:none;background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;position:absolute;top:0;right:0;border-radius:1rem;">0</span>
+        <button class="btn btn-icon" id="header-bell-btn" onclick="toggleBellDropdown()" title="Pending approvals" aria-label="Pending approvals">
+          <span id="header-bell-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></span> <span id="header-bell-count" class="badge" style="display:none;background:var(--danger);color:#fff;font-size:0.6rem;padding:0.05rem 0.3rem;position:absolute;top:0;right:0;border-radius:1rem;">0</span>
         </button>
-        <a class="btn btn-secondary" href="/ui/projects/{{ project.id }}/workbench" title="Activity &amp; sessions">&#9889; Activity</a>
       </div>
     </div>
 
@@ -68,11 +62,8 @@
         {% if project.path %}
         <button class="btn btn-secondary btn-sm" data-path="{{ project.path|e }}" onclick="openWorkspace(this.dataset.path)" title="Open workspace folder">Open folder</button>
         {% endif %}
-        <button class="btn btn-secondary btn-sm" onclick="openTeamModal()">Team roles</button>
         <button class="btn btn-secondary btn-sm stage-policy-btn" onclick="openStagePolicyModal()">Stage policy</button>
         <button class="btn btn-secondary btn-sm notification-settings-btn" onclick="toggleNotificationSettings()">Notifications</button>
-        <button class="btn btn-link btn-sm" onclick="syncGithub()" title="Sync GitHub PRs/issues">GitHub sync</button>
-        <a class="btn btn-link btn-sm" href="/ui/projects/{{ project.id }}/git">Git view</a>
       </div>
     </details>
     <div id="bell-dropdown" class="bell-dropdown" style="display:none;">
@@ -154,7 +145,7 @@
           </div>
         </div>
         <div class="step-action">
-          <button class="btn btn-sm {% if not setup_checklist.has_worker %}btn-primary{% else %}btn-secondary{% endif %}" type="button" onclick="openTeamModal()">Configure agents</button>
+          <button class="btn btn-sm {% if not setup_checklist.has_worker %}btn-primary{% else %}btn-secondary{% endif %}" type="button" onclick="openTeamModal()">Configure global worker role</button>
         </div>
       </div>
 
@@ -215,7 +206,7 @@
           {% elif not setup_checklist.has_folder %}
           <button class="btn btn-sm btn-primary" type="button" onclick="openWorkspaceFolderPicker()">Choose folder</button>
           {% elif not setup_checklist.has_worker %}
-          <button class="btn btn-sm btn-primary" type="button" onclick="openTeamModal()">Configure worker</button>
+          <button class="btn btn-sm btn-primary" type="button" onclick="openTeamModal()">Configure global worker role</button>
           {% elif not setup_checklist.has_tasks %}
           <button class="btn btn-sm btn-primary" type="button" onclick="openNewTaskModal()">New task</button>
           {% elif setup_checklist.first_todo_unassigned_task_id %}
@@ -350,8 +341,9 @@
                 <div class="task-overview" id="task-overview-{{ task.id }}">Loading task details…</div>
               </div>
               <div class="expansion-pane" role="tabpanel" id="expansion-pane-terminal-{{ task.id }}">
-                <div style="display:flex;justify-content:flex-end;margin-bottom:0.35rem;">
-                  <button class="btn-link" style="font-size:0.72rem;" onclick="event.stopPropagation();popOutTerminal({{ task.id }})">&#8599; Open in Workbench</button>
+                <div class="in-card-activity-header" style="justify-content:space-between;align-items:center;">
+                  <span class="text-secondary" style="font-size:0.72rem;">Recent agent output</span>
+                  <button class="btn-link" style="font-size:0.72rem;" onclick="event.stopPropagation();popOutTerminal({{ task.id }})">&#8599; Open in Activity</button>
                 </div>
                 <pre class="in-card-terminal" id="task-terminal-pre-{{ task.id }}" style="background:#020617;color:#d1fae5;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.72rem;line-height:1.4;padding:0.6rem;border-radius:var(--radius-sm);max-height:220px;overflow:auto;white-space:pre-wrap;margin:0;">No active session.</pre>
               </div>
@@ -372,6 +364,16 @@
                 <div id="task-logs-{{ task.id }}" class="task-logs-list">Loading task logs…</div>
               </div>
               <div class="expansion-pane" role="tabpanel" id="expansion-pane-reviews-{{ task.id }}">
+                <div class="task-diff-heading">
+                  <div>
+                    <strong>Git changes</strong>
+                    <span id="task-git-diff-source-{{ task.id }}" class="text-secondary">Loading&hellip;</span>
+                  </div>
+                  <button type="button" class="btn-link" onclick="refreshTaskGitDiff({{ task.id }})">Refresh diff</button>
+                </div>
+                <div id="task-git-diff-{{ task.id }}" class="task-git-diff" aria-live="polite"></div>
+                <h4 class="task-review-heading">Review decisions</h4>
+                <p class="task-review-guidance">Approve or reject the saved patch. Agent runs finish separately; this does not move the task or merge code.</p>
                 <div id="task-reviews-list-{{ task.id }}">
                   <p class="text-secondary" style="font-size:0.8rem;">Loading&hellip;</p>
                 </div>
@@ -464,6 +466,35 @@
 </div>
 
 
+
+<!-- Human completion override modal -->
+<div id="done-override-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
+  aria-hidden="true" aria-labelledby="done-override-title" data-cancel-handler="cancelDoneOverride"
+  onclick="if(event.target===this)cancelDoneOverride()">
+  <div class="modal-card done-override-card">
+    <div class="modal-header">
+      <div>
+        <p class="approval-popup-kicker">Workflow override</p>
+        <h3 id="done-override-title">Override workflow gate?</h3>
+      </div>
+      <button class="btn-icon" type="button" aria-label="Cancel workflow override" onclick="cancelDoneOverride()">&times;</button>
+    </div>
+    <div class="done-override-body">
+      <p id="done-override-blocker" class="text-secondary"></p>
+      <p id="done-override-evidence-label">The following required evidence is still missing:</p>
+      <ul id="done-override-gates" class="done-override-gates"></ul>
+      <label for="done-override-reason">Override reason</label>
+      <textarea id="done-override-reason" class="form-input" rows="3" autofocus
+        placeholder="Explain why this transition should proceed without the missing evidence"></textarea>
+      <p id="done-override-error" class="text-danger" role="alert" style="display:none;"></p>
+      <p class="text-secondary done-override-audit-note">Your name, the missing gates, and this reason will be recorded in the task audit trail.</p>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn" onclick="cancelDoneOverride()">Cancel</button>
+      <button id="done-override-submit" type="button" class="btn btn-danger" onclick="submitDoneOverride()">Continue anyway</button>
+    </div>
+  </div>
+</div>
 
 <!-- Toast notification -->
 <div id="toast" class="toast" style="display:none;" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -641,9 +672,13 @@
     onclick="if(event.target===this)closeModal('team-modal')">
   <div class="modal-card role-settings-modal">
     <div class="modal-header">
-      <h3 id="team-modal-title">Team roles</h3>
+      <h3 id="team-modal-title">Global agent roles</h3>
       <button class="btn-icon" aria-label="Close team dialog" onclick="closeModal('team-modal')">&times;</button>
     </div>
+    <p class="text-secondary" style="padding:0 1rem;margin:0.75rem 0 0;font-size:0.82rem;">
+      Changes here apply to every project.
+      <a href="/ui/users?focus=worker&amp;return=/ui/projects/{{ project.id }}/board">Open the full role manager</a>
+    </p>
     <div id="team-list" class="entity-list role-settings-list"></div>
     <div class="modal-footer" style="padding-top: 1rem; border-top: 1px solid var(--border-color); margin-top: 1rem;">
       <small class="text-secondary">Assign CLI tools to roles. Discovered CLIs are candidates only; role assignment is the working team.</small>
@@ -651,32 +686,8 @@
   </div>
 </div>
 
-<!-- Folder Picker Modal -->
-<div id="folder-picker-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true"
-    aria-hidden="true" aria-labelledby="folder-picker-modal-title"
-    onclick="if(event.target===this)closeFolderPicker()">
-  <div class="modal-card modal-small">
-    <div class="modal-header">
-      <h3 id="folder-picker-modal-title">Select Project Folder</h3>
-      <button class="btn-icon" aria-label="Close folder picker" onclick="closeFolderPicker()">&times;</button>
-    </div>
-    <div class="form-group mb-2">
-      <label>Current Folder</label>
-      <div style="display:flex;gap:0.5rem;">
-        <input id="folder-picker-current" class="form-input" type="text">
-        <button type="button" class="btn" onclick="loadFolderFromInput()">Go</button>
-      </div>
-    </div>
-    <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
-      <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerParent)">Up</button>
-      <button type="button" class="btn btn-sm" onclick="loadFolder(folderPickerHome)">Home</button>
-      <button type="button" class="btn btn-sm btn-primary" onclick="selectCurrentFolder()">Use This Folder</button>
-    </div>
-    <div id="folder-picker-list" class="entity-list" style="max-height:320px;overflow-y:auto;">
-      <p class="text-secondary">Loading...</p>
-    </div>
-  </div>
-</div>
+{% set folder_picker_title = 'Select Project Folder' %}
+{% include "_folder_picker.html" %}
 
 {% endblock %}
 
@@ -686,6 +697,8 @@
     var CURRENT_ENTITY_ID = {{ current_entity.id if current_entity else 'null' }};
     var PLAN_STAGE_ID = {{ new_task_default_stage.id if new_task_default_stage else 'null' }};
 </script>
-<script src="/static/js/role-settings.js"></script>
-<script src="/static/js/board.js"></script>
+<script src="/static/js/role-settings.js?v=7"></script>
+<script src="/static/js/terminal-feed.js?v=7"></script>
+<script src="/static/js/folder-picker.js?v=7"></script>
+<script src="/static/js/board.js?v=7"></script>
 {% endblock %}

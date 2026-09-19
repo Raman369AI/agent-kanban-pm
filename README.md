@@ -2,12 +2,15 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
-Status: release candidate (`0.4.0rc8`) for local, single-user development.
+Status: stable release (`0.6.1`) for local, single-user development.
 The local runtime, board UI, per-task agent sessions, and MCP surface work and
 are covered by tests, including a database upgrade path. It is a single-operator
 tool by design: one shared token guards the local server, so do not expose it to
 an untrusted network or share an instance with people you would not give shell
 access.
+
+The version in this checkout can be newer than the latest published package;
+use the matching Git tag when you need to reproduce a particular release.
 
 The server stores state, starts assigned local agents, streams terminal output,
 and advances cards through the standard execution/review handoff. The selected
@@ -34,19 +37,17 @@ system diagram.
 
 ## Install
 
-Release candidates need pre-release resolution:
-
 ```bash
-pip install --pre agent-kanban-pm
+pip install agent-kanban-pm
 kanban init
 ```
 
 For an isolated CLI installation:
 
 ```bash
-pipx install --pip-args="--pre" agent-kanban-pm
+pipx install agent-kanban-pm
 # Or run without installing:
-uvx --prerelease allow --from agent-kanban-pm kanban --help
+uvx --from agent-kanban-pm kanban --help
 ```
 
 From source:
@@ -68,21 +69,49 @@ kanban run --no-supervisor    # server + UI only
 - UI: `http://localhost:8000/ui/projects`
 - API docs: `http://localhost:8000/docs`
 
+## Using the UI
+
+1. Open **Projects**, create a project, and choose its workspace folder in
+   the setup guide.
+2. Open **Agents & roles** to configure an available worker. Use **New task**
+   to create one card, then **Move to To Do** and assign the worker to start
+   execution. **Activity** shows whether the session is queued, running,
+   blocked, or failed.
+3. Open a task card to read its description, change its stage, inspect output,
+   or answer a pending approval. The dashboard's **Needs attention** list and
+   the board's **Needs me** filter take you directly to tasks waiting for a
+   decision.
+4. Use **Plan work** for a larger request. Review and edit the proposed cards,
+   remove or deselect any you do not want, then choose **Create selected
+   tasks**. Canceling the preview creates nothing.
+
 ## Board controls
 
-Cards can be moved with drag-and-drop or entirely from the keyboard. Press
-`Tab` until a card is focused, then use `Left Arrow` or `Right Arrow` to
-move it to the adjacent stage. Task and approval dialogs keep focus inside the
-dialog, close with `Escape`, and return focus to the control that opened them.
+Click a card to open its task panel. Its link includes the task ID, so it
+can be shared or bookmarked; browser Back closes the panel. Overview shows the
+current task and execution state, while the other tabs contain approvals,
+activity, terminal output, logs, and reviews. The task's terminal preview and
+the Activity workbench show a short, de-duplicated Focused view by default;
+the workbench's **Raw output** button reveals the recent captured entries.
+Live output keeps your scroll position while you read. An edit draft stays
+intact during a live refresh; if someone else changes the task, saving reports
+the conflict.
 
-The layout toggle (columns or a stacked list) and the density selector are
-remembered across reloads. Live board refreshes keep the focused card, its
-expanded tab, and column scroll positions, and wait until an in-flight drag or
-move has settled.
+Search by task title, ID, or #ID. Filters for **Needs me**, **Blocked**,
+**Running**, **Unassigned**, agent, and priority use pending approvals and the
+latest durable agent session where relevant. Matching counts and **Clear
+filters** distinguish an empty project from a filter with no results. The
+connection label shows when data is refreshing or reconnecting and returns to
+**Live** after a successful refresh.
 
-Server validation and authorization details are shown in the UI toast instead
-of being replaced by a generic “Failed” message. A rejected move is rolled back
-to its original column.
+Cards can be moved by drag-and-drop, the stage selector in the task panel,
+or keyboard. Press `Tab` until a card is focused, then use `Left Arrow` or
+`Right Arrow` to move it to the adjacent stage. Dialogs keep focus inside,
+close with `Escape`, and restore focus to their opener.
+
+**Board view** and **List view** are remembered across reloads. Choose
+**White** or **Night** and set density under **Appearance**. A rejected move
+returns the card to its original stage and shows the server's reason.
 
 ## CLI
 
@@ -128,14 +157,29 @@ The server does not choose which agent should do new work, but it does keep the
 standard role handoff moving once an assigned session finishes:
 
 1. A worker assignment starts from To Do or In Progress.
-2. When the agent marks `STATUS.md` with `handoff_ready: true` and `state: done`,
-   `completed`, or `review`, the session streamer marks the session done and
-   moves the card to Review.
+2. The agent session finishes successfully. A handoff submitted through
+   `POST /agents/sessions/{id}/handoff` or a verified `STATUS.md` can provide
+   the summary. The streamer also accepts a zero process exit without either
+   handoff and builds the summary from the terminal output before moving the
+   card to Review.
 3. Review-stage policy roles, normally `test` and `diff_review`, are assigned
-   and launched from Review when configured in `~/.kanban/preferences.yaml`.
+   and launched only when both a stage policy and role assignments in
+   `~/.kanban/preferences.yaml` are configured.
 4. When review/test sessions complete, the card moves to Done.
-5. Done-stage policy roles, normally `git_pr`, may launch from Done to prepare
-   PR or git contribution work.
+5. A Done-stage policy can launch `git_pr` to prepare Git or PR work. Moving a
+   card to Review alone does not commit, merge, or publish code.
+
+Task worktrees remain available after a session ends so reviewers and Git
+handoffs can inspect uncommitted changes. Automatic cleanup never removes a
+dirty worktree.
+
+Open a task's **Reviews** tab to inspect its Git changes file by file. The
+preview includes committed, staged, unstaged, and untracked text changes from
+the task worktree. If the worktree is gone, it shows committed task-branch
+changes or a saved review snapshot when available. An empty task branch cannot
+reconstruct uncommitted changes from a removed worktree. Pending saved reviews
+have **Approve** and **Reject** actions with optional notes. A decision closes
+the review record; it does not apply the patch, move the task, commit, or merge.
 
 Handoff follows each stage's `workflow_key` (`backlog`, `to_do`,
 `in_progress`, `review`, `done`), not its label, so stages can be renamed
@@ -144,9 +188,21 @@ it. The key is derived from the name when a stage is created and is kept when it
 is renamed; pass `workflow_key` when creating a custom stage to give it workflow
 meaning. Stages with no recognised key leave a moved task's status unchanged.
 
-The handoff source of truth is each worktree's `STATUS.md`. If an agent exits
-without updating it, the card may stay where it is because the runtime cannot
-reliably tell whether the work is ready for review.
+The database session is the durable handoff source of truth. `STATUS.md` is
+an optional, agent-readable input and can be deleted with the worktree after
+its verified contents are recorded. The streamer checks for a submitted
+handoff before it handles an exited process. A zero exit advances the card;
+a nonzero exit or a missing runner records an error and leaves the card in its
+current stage. The assignment launcher runs one agent session at a time in a
+non-Git workspace so tasks cannot overwrite a shared handoff.
+
+Chat planning records its decisions and cards in the database without writing
+to `STATUS.md`.
+
+An explicit handoff uses `POST /agents/sessions/{id}/handoff` with
+`project_id`, `task_id`, the session's `run_token`, `state`, and a
+non-empty `summary`, plus the named `outputs` produced by the run. The session
+agent or an owner/manager may submit it.
 
 ## Bundled agent adapters
 
@@ -182,17 +238,21 @@ already unaffected, since they run under tmux or a PTY.
 
 Agents run **supervised** by default: the CLI keeps its approval prompts, and
 risky actions (file writes, shell commands, git, network) surface in the
-Kanban approval queue for a human or the orchestrator.
+Kanban approval queue for a human or the orchestrator. Selectable CLI menus
+also enter the queue. For Claude's optional browser setup, **Approve** opens
+the extension installation page; **Reject** continues without browser tools.
+The agent stays blocked until the request is resolved.
 
 Auto mode is an explicit per-role opt-in. Set `autonomy: auto` on a role in
 `~/.kanban/preferences.yaml` (or answer `y` at the autonomy prompt in
 `kanban init`, or pass `--autonomy auto` to `kanban roles assign`). The
 launcher then appends the adapter's bypass flags — `claude
 --permission-mode bypassPermissions`, `agy --dangerously-skip-permissions`,
-`codex --full-auto`, `opencode --auto`, `aider --yes-always`, declared as
-`task_command.auto_args` in the adapter YAML — so the agent never pauses to
-ask. Combined with the per-task worktree, the blast radius is scoped to that
-worktree, and risky actions are expected to be recorded in `STATUS.md`.
+`codex --dangerously-bypass-approvals-and-sandbox`, `opencode --auto`,
+`aider --yes-always`, declared as `task_command.auto_args` in the adapter YAML
+— so the agent never pauses to ask. A per-task worktree isolates the task's
+repository files; the database activity log records the launched command and
+session, while a verified `STATUS.md` can supply a handoff summary.
 Critical review and approval records can still be created through the
 REST/MCP surfaces when an agent or human needs an explicit audit gate.
 
@@ -300,33 +360,15 @@ the packaged runtime.
 
 ## Roadmap
 
-See [PLAN.md](PLAN.md) for the full roadmap to a standalone, fully available
-release. Each phase is releasable on its own.
+Version `0.6.1` includes the guided UI workflow, durable launch scheduling,
+session handoffs, review controls, browser coverage, and the completed
+reliability follow-ups documented in [Plan.md](Plan.md).
+The next architectural work is to review
+service boundaries for projects, sessions, approvals, and transitions, and to
+decide when the tested versioned SQLite upgrades should move to Alembic.
 
-- [x] **Phase 0 — Stabilize** (done): failing UI test fixed, CI installs the
-  package and smoke-tests the built wheel, single-sourced dependencies,
-  `.env.example` documents real env vars, dev-artifact name heuristics
-  replaced with a `Project.is_demo` flag.
-- [x] **Phase 1 — Packaging correctness**: `src/` layout, declared `mcp`
-  dependency, install-safe data home.
-- [x] **Phase 2 — Security hardening**: `/ui` mutations require the token,
-  HttpOnly cookie + CSRF header, Host-header validation, token file is
-  `0600`, supervised-by-default autonomy with explicit `auto` opt-in,
-  WebSocket token verification.
-- [ ] **Phase 3 — Runtime correctness**: async subprocess handling, atomic
-  launch admission, MCP identity freshness, endpoint discovery, shutdown
-  cleanup, and a shared task-mutation service have landed. Project, session,
-  and approval services, MCP tool modularization, launcher decomposition, and
-  Alembic migrations are still outstanding.
-- [ ] **Phase 4 — Product surface & docs**: the support matrix, community
-  scaffolding, browser workflow coverage, and extraction of the board's
-  scripts and styles have landed. Landing-page visuals, the mkdocs site,
-  coverage reporting, and extracting the remaining templates are still
-  outstanding.
-- [ ] **Phase 5 — Release & distribution**: `0.4.0rc8` is on PyPI and GitHub,
-  published from a git tag by a workflow that authenticates through PyPI
-  trusted publishing, with a weekly job that installs the released package to
-  catch breakage. A stable `0.4.0` is what remains.
+Usage accounting, quota-aware model routing, and cross-CLI task continuation
+are planned separately in [USAGE_ROUTING_PLAN.md](USAGE_ROUTING_PLAN.md).
 
 ## Security
 

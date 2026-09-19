@@ -119,7 +119,8 @@ class TestStagePolicyHelpers:
 
     def test_default_policy_done_structure(self):
         done = DEFAULT_POLICIES["done"]
-        assert "git_pr" in done["on_enter_roles"]
+        assert done["on_enter_roles"] == []
+        assert "git_pr" in DEFAULT_POLICIES["review"]["on_enter_roles"]
         assert done["requires_orchestrator_move"] is True
 
     def test_policy_roles_from_json(self):
@@ -285,10 +286,13 @@ class TestArchitectureCleanup:
         assert "workspace_path = project.path" in source
         assert "project workspace" in source
 
-    def test_assignment_launcher_uses_assigned_role_env(self):
+    @pytest.mark.asyncio
+    async def test_assignment_event_preserves_explicit_role(self, monkeypatch):
         from agent_kanban_pm.runtime.assignment_launcher import AssignmentLauncher
-        import inspect
-        source = inspect.getsource(AssignmentLauncher.handle_event)
-        assert "assigned_role=data.get(\"role\")" in source
-        source = inspect.getsource(AssignmentLauncher._launch_for_assignment)
-        assert "env[\"KANBAN_AGENT_ROLE\"] = matching_role_name" in source
+        launcher = AssignmentLauncher()
+        calls = []
+        async def launch(task_id, agent_id, assigned_role=None, **kwargs):
+            calls.append((task_id, agent_id, assigned_role))
+        monkeypatch.setattr(launcher, "launch_for_assignment", launch)
+        await launcher.handle_event({"data": {"task_id": 7, "entity_id": 9, "role": "diff_review"}})
+        assert calls == [(7, 9, "diff_review")]

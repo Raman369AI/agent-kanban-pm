@@ -10,6 +10,9 @@ from agent_kanban_pm.runtime.process_launcher import (
     start_session,
     capture_pane,
     send_text,
+    session_state,
+    start_tmux_session,
+    tmux_session_state,
 )
 
 
@@ -95,3 +98,86 @@ def test_process_launcher_fallback():
             kill_session(session_name)
 
         assert has_session(session_name) is False
+
+
+def test_pty_exit_state_retains_code_and_output():
+    session_name = "test-pty-exit-state"
+    cmd = [sys.executable, "-c", "print(\"finished\"); raise SystemExit(7)"]
+
+    with mock.patch("agent_kanban_pm.runtime.process_launcher.tmux_available", return_value=False):
+        start_session(session_name=session_name, cwd=".", args=cmd)
+        try:
+            state = session_state(session_name)
+            for _ in range(30):
+                if state.status == "exited":
+                    break
+                time.sleep(0.1)
+                state = session_state(session_name)
+
+            assert state.status == "exited"
+            assert state.exit_code == 7
+            assert has_session(session_name) is False
+            assert "finished" in capture_pane(session_name)
+        finally:
+            kill_session(session_name)
+
+
+def test_tmux_state_reads_pane_exit_status(monkeypatch):
+    completed = mock.Mock(returncode=0, stdout="1:23\n")
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.process_launcher.subprocess.run",
+        lambda *args, **kwargs: completed,
+    )
+
+    state = tmux_session_state("task-pane")
+
+    assert state.status == "exited"
+    assert state.exit_code == 23
+
+    completed.stdout = "1:\n"
+    state = tmux_session_state("task-pane")
+    assert state.status == "exited"
+    assert state.exit_code == 0
+
+
+def test_tmux_launch_execs_cli_after_enabling_remain_on_exit(monkeypatch):
+    calls = []
+    sent = []
+
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.process_launcher.tmux_available", lambda: True
+    )
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.process_launcher.tmux_session_state",
+        lambda _: mock.Mock(status="missing"),
+    )
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.process_launcher.subprocess.run",
+        lambda args, **kwargs: calls.append(args) or mock.Mock(returncode=0),
+    )
+    monkeypatch.setattr(
+        "agent_kanban_pm.runtime.process_launcher.tmux_send_literal",
+        lambda name, text, check=False: sent.append((name, text, check)),
+    )
+
+    start_tmux_session(
+        session_name="task-pane", cwd=".", args=["agent-cli", "run"],
+        env={"KANBAN_SESSION_ID": "42"},
+    )
+
+    assert calls[0][:4] == ["tmux", "new-session", "-d", "-s"]
+    assert calls[1] == [
+        "tmux", "set-option", "-t", "task-pane", "remain-on-exit", "on"
+    ]
+    assert sent == [(
+        "task-pane", "KANBAN_SESSION_ID=42 exec agent-cli run", True
+    )]
+    assert calls[2] == ["tmux", "send-keys", "-t", "task-pane", "Enter"]
+
+
+def test_tmux_missing_socket_is_distinct_from_inaccessible_socket(monkeypatch):
+    completed = mock.Mock(returncode=1, stdout="", stderr="error connecting to /tmp/tmux-test (No such file or directory)")
+    monkeypatch.setattr("agent_kanban_pm.runtime.process_launcher.subprocess.run", lambda *a, **kw: completed)
+    assert tmux_session_state("reserved-run").status == "missing"
+    completed.stderr = "error connecting to /tmp/tmux-test (Permission denied)"
+    assert tmux_session_state("reserved-run").status == "unknown"

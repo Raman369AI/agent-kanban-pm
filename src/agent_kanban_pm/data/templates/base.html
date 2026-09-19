@@ -34,8 +34,8 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css">
-    <script src="/static/js/theme.js"></script>
+    <link rel="stylesheet" href="/static/css/style.css?v=7">
+    <script src="/static/js/theme.js?v=7"></script>
     {% block extra_css %}{% endblock %}
 </head>
 
@@ -107,11 +107,15 @@
                     </div>
                     <div class="header-actions">
                         <div class="preferences-controls">
-                            <button id="view-toggle" class="btn btn-secondary" type="button">Board view</button>
+                            <button id="view-toggle" class="btn btn-secondary" type="button">Switch to list</button>
                             <details class="appearance-menu">
                                 <summary class="btn btn-secondary">Appearance</summary>
                                 <div class="appearance-menu-content">
-                                    <button id="theme-toggle" class="btn" type="button" title="Change theme">Change theme <span class="icon" aria-hidden="true">🌙</span></button>
+                                    <span class="appearance-setting-label">Theme</span>
+                                    <div class="theme-choice" role="group" aria-label="Theme">
+                                        <button type="button" data-set-theme="light" aria-pressed="true">White</button>
+                                        <button type="button" data-set-theme="dark" aria-pressed="false">Night</button>
+                                    </div>
                                     <label for="density-select">Density</label>
                                     <select id="density-select" class="select-small">
                                         <option value="comfortable">Comfortable</option>
@@ -140,7 +144,7 @@
     </div>
 </div>
 
-<script src="/static/js/main.js"></script>
+<script src="/static/js/main.js?v=7"></script>
 {% block extra_js %}{% endblock %}
 </body>
 

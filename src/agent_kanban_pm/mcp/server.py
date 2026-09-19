@@ -235,7 +235,8 @@ class KanbanMCPServer:
                         "properties": {
                             "task_id": {"type": "integer"},
                             "stage_id": {"type": "integer", "description": "New stage ID (optional)"},
-                            "status": {"type": "string", "enum": ["pending", "in_progress", "in_review", "completed", "blocked"]}
+                            "status": {"type": "string", "enum": ["pending", "in_progress", "in_review", "completed", "blocked"]},
+                            "override_reason": {"type": "string", "description": "Required for a human override of unsatisfied workflow evidence"}
                         },
                         "required": ["task_id"]
                     }
@@ -722,21 +723,20 @@ class KanbanMCPServer:
                 approval_status=ApprovalStatus.PENDING
             )
             db.add(project)
-            await db.commit()
-            await db.refresh(project)
+            await db.flush()
 
             # Create default stages
             for stage_data in DEFAULT_STAGES:
                 stage = Stage(project_id=project.id, **stage_data)
                 db.add(stage)
 
-            await db.commit()
-
-            await event_bus.publish(
+            event_bus.enqueue(db,
                 EventType.PROJECT_CREATED.value,
                 {"project_id": project.id, "name": project.name},
                 project_id=project.id
             )
+            await db.commit()
+            await db.refresh(project)
 
             return {
                 "success": True,
@@ -844,13 +844,6 @@ class KanbanMCPServer:
                 return {"error": str(exc)}
             await db.commit()
             await db.refresh(task)
-
-            await event_bus.publish(
-                EventType.TASK_CREATED.value,
-                {"task_id": task.id, "title": task.title},
-                project_id=task.project_id,
-                entity_id=creator_id
-            )
 
             return {"success": True, "task_id": task.id, "title": task.title}
 
@@ -965,13 +958,12 @@ class KanbanMCPServer:
 
             project.approval_status = ApprovalStatus.APPROVED
             project.updated_at = datetime.now(UTC)
-            await db.commit()
-
-            await event_bus.publish(
+            event_bus.enqueue(db,
                 EventType.PROJECT_UPDATED.value,
                 {"project_id": project.id, "status": "approved"},
                 project_id=project.id
             )
+            await db.commit()
 
             return {"success": True, "project_id": args["project_id"], "status": "approved"}
 
@@ -996,22 +988,12 @@ class KanbanMCPServer:
                     changes={},
                     stage_id=stage_id,
                     status=status,
+                    override_reason=args.get("override_reason"),
                 )
             except (TaskReferenceError, TaskTransitionError, ValueError) as exc:
                 return {"error": str(exc), "transition_blocked": True}
             transition_state = mutation.transition
             await db.commit()
-
-            await event_bus.publish(
-                EventType.TASK_MOVED.value,
-                {
-                    "task_id": task.id,
-                    "from_stage_id": transition_state.old_stage_id,
-                    "stage_id": task.stage_id,
-                    "status": task.status.value,
-                },
-                project_id=task.project_id
-            )
 
             return {"success": True, "task_id": task_id, "new_stage_id": task.stage_id, "status": task.status.value}
 
@@ -1046,15 +1028,9 @@ class KanbanMCPServer:
             if not entity:
                 return {"error": "Entity not found"}
 
-            if entity not in task.assignees:
-                task.assignees.append(entity)
-                await db.commit()
-
-                await event_bus.publish(
-                    EventType.TASK_ASSIGNED.value,
-                    {"task_id": task.id, "entity_id": entity_id},
-                    project_id=task.project_id
-                )
+            from agent_kanban_pm.services.tasks import assign_task_record
+            await assign_task_record(db, task, self.caller_entity, entity, role=args.get("role"), override_reason=args.get("override_reason"))
+            await db.commit()
 
             return {"success": True, "task_id": task_id, "entity_id": entity_id, "entity_name": entity.name}
 
@@ -1073,14 +1049,14 @@ class KanbanMCPServer:
                 author_id=author_id
             )
             db.add(comment)
-            await db.commit()
-            await db.refresh(comment)
-
-            await event_bus.publish(
+            await db.flush()
+            event_bus.enqueue(db,
                 EventType.TASK_COMMENTED.value,
                 {"task_id": task.id, "comment": comment.content},
                 project_id=task.project_id
             )
+            await db.commit()
+            await db.refresh(comment)
 
             return {"success": True, "comment_id": comment.id, "task_id": args["task_id"]}
 
@@ -1205,10 +1181,7 @@ class KanbanMCPServer:
                 )
                 db.add(heartbeat)
 
-            await db.commit()
-            await db.refresh(heartbeat)
-
-            await event_bus.publish(
+            event_bus.enqueue(db,
                 EventType.AGENT_STATUS_UPDATED.value,
                 {
                     "agent_id": agent_id,
@@ -1218,6 +1191,8 @@ class KanbanMCPServer:
                 },
                 entity_id=agent_id
             )
+            await db.commit()
+            await db.refresh(heartbeat)
 
             return {"success": True, "agent_id": agent_id, "status_type": status_type.value}
 
@@ -1251,10 +1226,8 @@ class KanbanMCPServer:
                 command=args.get("command")
             )
             db.add(activity)
-            await db.commit()
-            await db.refresh(activity)
-
-            await event_bus.publish(
+            await db.flush()
+            event_bus.enqueue(db,
                 EventType.AGENT_ACTIVITY_LOGGED.value,
                 {
                     "agent_id": agent_id,
@@ -1272,6 +1245,8 @@ class KanbanMCPServer:
                 project_id=project_id,
                 entity_id=agent_id
             )
+            await db.commit()
+            await db.refresh(activity)
 
             return {"success": True, "activity_id": activity.id}
 
@@ -1317,6 +1292,22 @@ class KanbanMCPServer:
             )
             db.add(session)
             try:
+                await db.flush()
+                event_bus.enqueue(db,
+                    EventType.AGENT_ACTIVITY_LOGGED.value,
+                    {
+                        "agent_id": agent_id,
+                        "session_id": session.id,
+                        "project_id": project_id,
+                        "task_id": session.task_id,
+                        "activity_type": "session_started",
+                        "message": f"Session started in {workspace_path}",
+                        "workspace_path": workspace_path,
+                        "command": session.command,
+                    },
+                    project_id=project_id,
+                    entity_id=agent_id
+                )
                 await db.commit()
             except IntegrityError:
                 await db.rollback()
@@ -1335,22 +1326,6 @@ class KanbanMCPServer:
                         }
                 raise
             await db.refresh(session)
-
-            await event_bus.publish(
-                EventType.AGENT_ACTIVITY_LOGGED.value,
-                {
-                    "agent_id": agent_id,
-                    "session_id": session.id,
-                    "project_id": project_id,
-                    "task_id": session.task_id,
-                    "activity_type": "session_started",
-                    "message": f"Session started in {workspace_path}",
-                    "workspace_path": workspace_path,
-                    "command": session.command,
-                },
-                project_id=project_id,
-                entity_id=agent_id
-            )
 
             return {
                 "success": True,
@@ -1393,9 +1368,7 @@ class KanbanMCPServer:
                 )
                 db.add(activity)
 
-            await db.commit()
-
-            await event_bus.publish(
+            event_bus.enqueue(db,
                 EventType.AGENT_STATUS_UPDATED.value,
                 {
                     "agent_id": session.agent_id,
@@ -1409,6 +1382,7 @@ class KanbanMCPServer:
                 project_id=session.project_id,
                 entity_id=session.agent_id
             )
+            await db.commit()
 
             return {"success": True, "session_id": session.id, "status": session.status.value}
 
@@ -1489,10 +1463,8 @@ class KanbanMCPServer:
                 affected_agent_ids=json.dumps(affected_agent_ids) if affected_agent_ids is not None else None,
             )
             db.add(decision)
-            await db.commit()
-            await db.refresh(decision)
-
-            await event_bus.publish(
+            await db.flush()
+            event_bus.enqueue(db,
                 EventType.ORCHESTRATION_DECISION_LOGGED.value,
                 {
                     "decision_id": decision.id,
@@ -1505,6 +1477,8 @@ class KanbanMCPServer:
                 project_id=project_id,
                 entity_id=self.caller_entity.id
             )
+            await db.commit()
+            await db.refresh(decision)
             return {"success": True, "decision_id": decision.id}
 
     async def _handle_claim_task(self, args: dict) -> dict:
@@ -1551,10 +1525,8 @@ class KanbanMCPServer:
                 expires_at=now + timedelta(seconds=max(60, args.get("ttl_seconds", 1800))),
             )
             db.add(lease)
-            await db.commit()
-            await db.refresh(lease)
-
-            await event_bus.publish(
+            await db.flush()
+            event_bus.enqueue(db,
                 EventType.TASK_LEASE_UPDATED.value,
                 {
                     "lease_id": lease.id,
@@ -1567,6 +1539,8 @@ class KanbanMCPServer:
                 project_id=task.project_id,
                 entity_id=agent_id
             )
+            await db.commit()
+            await db.refresh(lease)
             return {"success": True, "lease_id": lease.id, "expires_at": lease.expires_at.isoformat()}
 
     async def _handle_release_task(self, args: dict) -> dict:
@@ -1580,14 +1554,13 @@ class KanbanMCPServer:
                 self._require_role(Role.MANAGER)
             lease.status = LeaseStatus.RELEASED
             lease.released_at = datetime.now(UTC)
-            await db.commit()
-
-            await event_bus.publish(
+            event_bus.enqueue(db,
                 EventType.TASK_LEASE_UPDATED.value,
                 {"lease_id": lease.id, "task_id": lease.task_id, "agent_id": lease.agent_id, "status": lease.status.value},
                 project_id=lease.task.project_id if lease.task else None,
                 entity_id=lease.agent_id
             )
+            await db.commit()
             return {"success": True, "lease_id": lease.id, "status": lease.status.value}
 
     async def _handle_summarize_activity(self, args: dict) -> dict:
@@ -1605,14 +1578,15 @@ class KanbanMCPServer:
                 to_activity_id=args.get("to_activity_id"),
             )
             db.add(summary)
-            await db.commit()
-            await db.refresh(summary)
-            await event_bus.publish(
+            await db.flush()
+            event_bus.enqueue(db,
                 EventType.ACTIVITY_SUMMARY_CREATED.value,
                 {"summary_id": summary.id, "project_id": summary.project_id, "summary": summary.summary},
                 project_id=summary.project_id,
                 entity_id=agent_id
             )
+            await db.commit()
+            await db.refresh(summary)
             return {"success": True, "summary_id": summary.id}
 
     async def _handle_log_contribution(self, args: dict) -> dict:
@@ -1632,9 +1606,8 @@ class KanbanMCPServer:
                 status=args.get("status"),
             )
             db.add(contribution)
-            await db.commit()
-            await db.refresh(contribution)
-            await event_bus.publish(
+            await db.flush()
+            event_bus.enqueue(db,
                 EventType.USER_CONTRIBUTION_LOGGED.value,
                 {
                     "contribution_id": contribution.id,
@@ -1648,6 +1621,8 @@ class KanbanMCPServer:
                 project_id=contribution.project_id,
                 entity_id=entity_id
             )
+            await db.commit()
+            await db.refresh(contribution)
             return {"success": True, "contribution_id": contribution.id}
 
     async def _handle_get_project_context(self, args: dict) -> dict:
@@ -1749,22 +1724,25 @@ class KanbanMCPServer:
         """Create a diff review request for critical code paths."""
         project_id = args["project_id"]
         async with async_session_maker() as db:
+            from agent_kanban_pm.services.coordination import review_evidence
+            evidence = await review_evidence(db, project_id, args.get("task_id"))
             review = DiffReview(
+                work_revision=evidence["work_revision"],
+                base_revision=evidence["base_revision"],
+                diff_sha256=evidence["diff_sha256"],
                 project_id=project_id,
                 task_id=args.get("task_id"),
                 reviewer_id=None,
                 requester_id=self.caller_entity.id,
-                diff_content=args["diff_content"],
+                diff_content=evidence["diff"] if evidence["diff"] is not None else args["diff_content"],
                 summary=args.get("summary"),
-                file_paths=args.get("file_paths"),
-                is_critical=args.get("is_critical", False),
+                file_paths=evidence["file_paths"] if evidence["file_paths"] is not None else args.get("file_paths"),
+                is_critical=evidence["is_critical"] if evidence["diff"] is not None else args.get("is_critical", False),
                 status=DiffReviewStatus.PENDING,
             )
             db.add(review)
-            await db.commit()
-            await db.refresh(review)
-
-            await event_bus.publish(
+            await db.flush()
+            event_bus.enqueue(db,
                 EventType.DIFF_REVIEW_REQUESTED.value,
                 {
                     "review_id": review.id,
@@ -1776,6 +1754,8 @@ class KanbanMCPServer:
                 project_id=project_id,
                 entity_id=self.caller_entity.id
             )
+            await db.commit()
+            await db.refresh(review)
             return {
                 "success": True,
                 "review_id": review.id,
@@ -1792,14 +1772,14 @@ class KanbanMCPServer:
             review = result.scalar_one_or_none()
             if not review:
                 return {"error": "Diff review not found"}
+            from agent_kanban_pm.services.coordination import authorize_review_update
+            authorize_review_update(review, self.caller_entity)
             review.status = new_status
             review.review_notes = args.get("review_notes")
             review.reviewer_id = self.caller_entity.id
             if new_status in (DiffReviewStatus.APPROVED, DiffReviewStatus.REJECTED, DiffReviewStatus.CHANGES_REQUESTED):
                 review.reviewed_at = datetime.now(UTC)
-            await db.commit()
-
-            await event_bus.publish(
+            event_bus.enqueue(db,
                 EventType.DIFF_REVIEW_COMPLETED.value,
                 {
                     "review_id": review.id,
@@ -1810,6 +1790,7 @@ class KanbanMCPServer:
                 project_id=review.project_id,
                 entity_id=self.caller_entity.id
             )
+            await db.commit()
             return {
                 "success": True,
                 "review_id": review.id,
@@ -1856,9 +1837,11 @@ class KanbanMCPServer:
         except ValueError:
             approval_type = ApprovalType.OTHER
         async with async_session_maker() as db:
+            from agent_kanban_pm.services.coordination import validate_approval_scope
+            task_id = await validate_approval_scope(db, project_id, args.get("task_id"), args.get("session_id"), self.caller_entity.id)
             approval = AgentApproval(
                 project_id=project_id,
-                task_id=args.get("task_id"),
+                task_id=task_id,
                 session_id=args.get("session_id"),
                 agent_id=self.caller_entity.id,
                 approval_type=approval_type,
@@ -1870,7 +1853,7 @@ class KanbanMCPServer:
                 status=AgentApprovalStatus.PENDING,
             )
             db.add(approval)
-            await db.commit()
+            await db.flush()
             await db.refresh(approval)
 
             session_id = args.get("session_id")
@@ -1880,9 +1863,8 @@ class KanbanMCPServer:
                 if session_row and session_row.status != AgentSessionStatus.BLOCKED:
                     session_row.status = AgentSessionStatus.BLOCKED
                     session_row.last_seen_at = datetime.now(UTC)
-                    await db.commit()
 
-            await event_bus.publish(
+            event_bus.enqueue(db,
                 EventType.AGENT_APPROVAL_REQUESTED.value,
                 {
                     "approval_id": approval.id,
@@ -1898,6 +1880,8 @@ class KanbanMCPServer:
                 project_id=project_id,
                 entity_id=approval.agent_id
             )
+            await db.commit()
+            await db.refresh(approval)
             return {
                 "success": True,
                 "approval_id": approval.id,
@@ -1994,10 +1978,7 @@ class KanbanMCPServer:
                     session_row.status = AgentSessionStatus.ACTIVE
                     session_row.last_seen_at = datetime.now(UTC)
 
-            await db.commit()
-            await db.refresh(approval)
-
-            await event_bus.publish(
+            event_bus.enqueue(db,
                 EventType.AGENT_APPROVAL_RESOLVED.value,
                 {
                     "approval_id": approval.id,
@@ -2013,6 +1994,8 @@ class KanbanMCPServer:
                 project_id=approval.project_id,
                 entity_id=approval.agent_id
             )
+            await db.commit()
+            await db.refresh(approval)
             return {
                 "success": True,
                 "approval_id": approval.id,
@@ -2052,9 +2035,8 @@ class KanbanMCPServer:
                 affected_agent_ids=None,
             )
             db.add(decision)
-            await db.commit()
-            await db.refresh(decision)
-            await event_bus.publish(
+            await db.flush()
+            event_bus.enqueue(db,
                 EventType.STAGE_POLICY_UPDATED.value,
                 {
                     "project_id": project_id,
@@ -2067,6 +2049,8 @@ class KanbanMCPServer:
                 project_id=project_id,
                 entity_id=self.caller_entity.id,
             )
+            await db.commit()
+            await db.refresh(decision)
             return {
                 "success": True,
                 "decision_id": decision.id,

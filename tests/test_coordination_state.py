@@ -92,6 +92,21 @@ def test_coordination_state_and_terminal_feed():
         assert terminal["session"]["id"] == session["id"]
         assert any(a["command"] == "pytest -q" for a in terminal["activities"])
 
+        for number in range(3):
+            response = client.post(f"/agents/{agent['id']}/activity", json={
+                "project_id": project["id"],
+                "session_id": session["id"],
+                "task_id": task["id"],
+                "activity_type": "observation",
+                "source": "tmux_pane",
+                "message": f"pane update {number}",
+            }, headers=agent_headers)
+            assert response.status_code == 201
+        recent = client.get(f"/agents/sessions/{session['id']}/terminal?limit=2").json()
+        assert [entry["message"] for entry in recent["activities"]] == [
+            "pane update 1", "pane update 2",
+        ]
+
         summary_response = client.post(f"/agents/projects/{project['id']}/summaries", json={
             "project_id": project["id"],
             "task_id": task["id"],

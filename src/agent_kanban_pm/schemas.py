@@ -110,6 +110,7 @@ class TaskUpdate(BaseModel):
     priority: Optional[int] = None
     sequence_order: Optional[int] = None
     version: Optional[int] = None  # For optimistic locking
+    override_reason: Optional[str] = Field(default=None, max_length=2000)
 
 
 class TaskResponse(TaskBase):
@@ -261,12 +262,14 @@ class AgentSessionResponse(BaseModel):
     project_id: int
     task_id: Optional[int] = None
     workspace_path: str
+    run_token: Optional[str] = None
     status: AgentSessionStatus
     command: Optional[str] = None
     model: Optional[str] = None
     mode: Optional[str] = None
     started_at: datetime
     ended_at: Optional[datetime] = None
+    exit_code: Optional[int] = None
     last_seen_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -449,6 +452,9 @@ class DiffReviewUpdate(BaseModel):
 
 
 class DiffReviewResponse(BaseModel):
+    diff_sha256: Optional[str] = None
+    work_revision: Optional[str] = None
+    base_revision: Optional[str] = None
     id: int
     project_id: int
     task_id: Optional[int] = None

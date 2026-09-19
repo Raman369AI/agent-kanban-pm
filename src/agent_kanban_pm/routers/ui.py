@@ -22,7 +22,7 @@ from agent_kanban_pm.models import (
 from agent_kanban_pm.schemas import ProjectResponse, ChatPlanRequest, TaskCreate, TaskUpdate
 from agent_kanban_pm.auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
 from agent_kanban_pm.events import event_bus, EventType
-from agent_kanban_pm.runtime.task_transitions import coerce_task_status
+from agent_kanban_pm.runtime.task_transitions import coerce_task_status, validate_task_transition
 from agent_kanban_pm.services.tasks import (
     TaskReferenceError,
     TaskTransitionError,
@@ -31,7 +31,6 @@ from agent_kanban_pm.services.tasks import (
 )
 from agent_kanban_pm.runtime.default_stages import DEFAULT_STAGES
 from agent_kanban_pm.runtime.stage_identity import normalize_stage_key, STAGE_STATUSES
-from agent_kanban_pm.runtime.handoff_protocol import update_status_file
 from agent_kanban_pm.runtime.instance import get_csrf_token
 from agent_kanban_pm.runtime.paths import templates_dir
 
@@ -244,34 +243,6 @@ def _plan_items_from_chat(text: str) -> list[dict]:
         for index, item in enumerate(items)
     ]
 
-
-def _write_chat_plan_status(project: Project, request_text: str, created_tasks: list[Task]) -> Optional[str]:
-    if not project.path:
-        return None
-    root = Path(project.path).expanduser().resolve()
-    if not root.exists() or not root.is_dir():
-        return None
-    try:
-        path = update_status_file(root, {
-            "state": "planned",
-            "handoff_ready": True,
-            "project_id": project.id,
-            "task_id": None,
-            "current_agent": "human",
-            "assigned_role": "orchestrator",
-            "summary": f"Chat request decomposed into {len(created_tasks)} backlog card(s).",
-            "outputs": [f"task:{task.id} {task.title}" for task in created_tasks],
-            "signals_to_next": (
-                f"Original request:\n{request_text.strip()}\n\n"
-                "Created backlog cards:\n"
-                + "\n".join(f"- #{task.id}: {task.title}" for task in created_tasks)
-            ),
-            "blockers": "none",
-        })
-        return str(path)
-    except OSError as exc:
-        logger.warning("Could not write chat plan STATUS.md for %s: %s", root, exc)
-        return None
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
@@ -595,6 +566,22 @@ async def project_settings(
     })
 
 
+@router.get("/ui/tasks/{task_id}/completion-gates")
+async def ui_task_completion_gates(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    """Explain the server-observed evidence required before a task reaches Done."""
+    task = await db.scalar(select(Task).where(Task.id == task_id))
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if current_entity:
+        await require_task_access(task, current_entity, db, require_write=False)
+    from agent_kanban_pm.runtime.review_gate import completion_gate_status
+    return await completion_gate_status(db, task)
+
+
 @router.patch("/ui/tasks/{task_id}/move")
 async def ui_move_task(
     task_id: int,
@@ -611,7 +598,12 @@ async def ui_move_task(
     if new_stage_id is None:
         raise HTTPException(status_code=422, detail="stage_id is required")
     new_status = body.get("status")
-    move_summary = (body.get("summary") or "").strip() or "Manual move"
+    override_reason = (body.get("override_reason") or "").strip()
+    move_summary = (
+        (body.get("summary") or "").strip()
+        or override_reason
+        or "Manual move"
+    )
 
     result = await db.execute(
         select(Task)
@@ -641,6 +633,7 @@ async def ui_move_task(
             stage_id=new_stage_id,
             status=new_status,
             allow_human_policy_warning=True,
+            override_reason=override_reason,
         )
     except TaskReferenceError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -667,39 +660,8 @@ async def ui_move_task(
     ))
     auto_policy_hint = await _notify_stage_policy_for_todo(task, current_entity, db)
 
-    await db.commit()
-
-    logger.info(f"Task moved via UI: {task.title} by {current_entity.name}")
-
-    await event_bus.publish(
-        EventType.TASK_MOVED.value,
-        {
-            "task_id": task_id,
-            "title": task.title,
-            "from_stage_id": transition_state.old_stage_id,
-            "to_stage_id": new_stage_id,
-            "status": task.status.value,
-            "summary": move_summary,
-        },
-        project_id=task.project_id,
-        entity_id=current_entity.id
-    )
-
-    if _stage_name_matches(task.stage, "to do", "todo"):
-        for assignee in task.assignees:
-            await event_bus.publish(
-                EventType.TASK_ASSIGNED.value,
-                {
-                    "task_id": task.id,
-                    "entity_id": assignee.id,
-                    "trigger": "manual_todo_move",
-                },
-                project_id=task.project_id,
-                entity_id=current_entity.id,
-            )
-
     if auto_policy_hint:
-        await event_bus.publish(
+        event_bus.enqueue(db,
             EventType.STAGE_POLICY_CREATED.value,
             {
                 "task_id": task_id,
@@ -710,6 +672,8 @@ async def ui_move_task(
             project_id=task.project_id,
             entity_id=current_entity.id,
         )
+    await db.commit()
+    logger.info(f"Task moved via UI: {task.title} by {current_entity.name}")
 
     return {
         "ok": True,
@@ -1017,17 +981,6 @@ async def ui_create_task(
     await db.commit()
     await db.refresh(task, ["assignees"])
 
-    log = TaskLog(task_id=task.id, message=f"Task created by {current_entity.name}", log_type="action")
-    db.add(log)
-    await db.commit()
-
-    await event_bus.publish(
-        EventType.TASK_CREATED.value,
-        {"task_id": task.id, "title": task.title},
-        project_id=task.project_id,
-        entity_id=current_entity.id
-    )
-
     return {
         "ok": True,
         "task": {
@@ -1091,7 +1044,7 @@ async def ui_create_chat_plan(
     db: AsyncSession = Depends(get_db),
     current_entity: Optional[Entity] = Depends(get_current_entity)
 ):
-    """Turn a chat request into backlog cards and write the plan to STATUS.md.
+    """Turn a chat request into durable backlog cards and a planning decision.
 
     Two modes:
       * Regex fallback (browser chat bar) — body = {project_id, message}.
@@ -1182,10 +1135,10 @@ async def ui_create_chat_plan(
             log_type="action",
         ))
 
-    status_path = _write_chat_plan_status(project, message, created_tasks)
     rationale = (
-        "Created backlog cards from chat request and wrote the plan "
-        f"to {status_path or 'STATUS.md was unavailable'}."
+        f"Created {len(created_tasks)} backlog cards from chat request: "
+        + ", ".join(f"#{task.id} {task.title}" for task in created_tasks)
+        + f"\n\nOriginal request:\n{message}"
     )
     if chat_req.transcript:
         rationale = f"{rationale}\n\n--- transcript ---\n{chat_req.transcript[:8000]}"
@@ -1198,10 +1151,8 @@ async def ui_create_chat_plan(
         affected_task_ids=",".join(str(task.id) for task in created_tasks),
     ))
 
-    await db.commit()
-
     for task in created_tasks:
-        await event_bus.publish(
+        event_bus.enqueue(db,
             EventType.TASK_CREATED.value,
             {
                 "task_id": task.id,
@@ -1212,17 +1163,18 @@ async def ui_create_chat_plan(
             project_id=project.id,
             entity_id=current_entity.id,
         )
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.CHAT_TASK_CREATED.value,
         {
             "project_id": project.id,
             "task_ids": [task.id for task in created_tasks],
-            "status_path": status_path,
+            "status_path": None,
             "from_designer": from_designer,
         },
         project_id=project.id,
         entity_id=current_entity.id,
     )
+    await db.commit()
 
     return {
         "project_id": project.id,
@@ -1230,7 +1182,7 @@ async def ui_create_chat_plan(
             {"id": t.id, "title": t.title, "priority": t.priority}
             for t in created_tasks
         ],
-        "status_path": status_path,
+        "status_path": None,
         "from_designer": from_designer,
     }
 
@@ -1252,6 +1204,7 @@ async def ui_edit_task(
         raise HTTPException(status_code=422, detail=f"Invalid task update: {exc}")
     update_data = task_update.model_dump(exclude_unset=True)
     expected_version = update_data.pop("version", None)
+    override_reason = update_data.pop("override_reason", None)
 
     result = await db.execute(
         select(Task).filter(Task.id == task_id).options(selectinload(Task.assignees))
@@ -1276,24 +1229,13 @@ async def ui_edit_task(
             changes=update_data,
             status=new_status if "status" in update_data else None,
             allow_human_policy_warning=True,
+            override_reason=override_reason,
         )
     except TaskReferenceError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except TaskTransitionError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     await db.commit()
-
-    await event_bus.publish(
-        EventType.TASK_UPDATED.value,
-        {
-            "task_id": task.id,
-            "title": task.title,
-            "status": task.status,
-            "stage_id": task.stage_id
-        },
-        project_id=task.project_id,
-        entity_id=current_entity.id
-    )
 
     return {"ok": True}
 
@@ -1320,14 +1262,13 @@ async def ui_delete_task(
     task_id_to_delete = task.id
     project_id = task.project_id
     await db.delete(task)
-    await db.commit()
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.TASK_DELETED.value,
         {"task_id": task_id_to_delete},
         project_id=project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
 
     return {"ok": True}
 
@@ -1369,29 +1310,11 @@ async def ui_assign_task(
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    if action == "assign" and entity not in task.assignees:
-        task.assignees.append(entity)
-        task.version += 1
-    elif action == "unassign" and entity in task.assignees:
-        task.assignees.remove(entity)
-        task.version += 1
-
+    if action not in {"assign", "unassign"}:
+        raise HTTPException(status_code=422, detail="action must be assign or unassign")
+    from agent_kanban_pm.services.tasks import assign_task_record
+    await assign_task_record(db, task, current_entity, entity, unassign=action == "unassign")
     await db.commit()
-
-    if action == "assign":
-        await event_bus.publish(
-            EventType.TASK_ASSIGNED.value,
-            {"task_id": task.id, "entity_id": entity_id},
-            project_id=task.project_id,
-            entity_id=current_entity.id
-        )
-    else:
-        await event_bus.publish(
-            EventType.TASK_UNASSIGNED.value,
-            {"task_id": task.id, "entity_id": entity_id},
-            project_id=task.project_id,
-            entity_id=current_entity.id
-        )
 
     return {"ok": True}
 
@@ -1411,6 +1334,7 @@ async def ui_assign_task_role(
 
     body = await request.json()
     role_name = body.get("role")
+    override_reason = (body.get("override_reason") or "").strip()
     if not role_name:
         raise HTTPException(status_code=422, detail="role is required")
 
@@ -1430,18 +1354,38 @@ async def ui_assign_task_role(
     if not entity.is_active:
         raise HTTPException(status_code=422, detail=f"CLI for role '{role_name}' is not installed")
 
-    if entity not in task.assignees:
-        task.assignees.append(entity)
-        task.version += 1
+    current_stage = await db.get(Stage, task.stage_id) if task.stage_id else None
+    if current_stage and current_stage.key == "to_do":
+        execution_stage = await db.scalar(
+            select(Stage).where(
+                Stage.project_id == task.project_id,
+                Stage.workflow_key == "in_progress",
+            ).limit(1)
+        )
+        if execution_stage:
+            warning = await validate_task_transition(
+                db,
+                task,
+                current_entity,
+                new_stage_id=execution_stage.id,
+                new_status=TaskStatus.IN_PROGRESS,
+            )
+            if warning and len(override_reason) < 3:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{warning}. A human override reason is required to start work",
+                )
 
-    await db.commit()
-
-    await event_bus.publish(
-        EventType.TASK_ASSIGNED.value,
-        {"task_id": task.id, "entity_id": entity.id, "role": role_name},
-        project_id=task.project_id,
-        entity_id=current_entity.id
+    from agent_kanban_pm.services.tasks import assign_task_record
+    await assign_task_record(
+        db,
+        task,
+        current_entity,
+        entity,
+        role=role_name,
+        override_reason=override_reason,
     )
+    await db.commit()
     return {"ok": True, "entity_id": entity.id, "agent": entity.name, "role": role_name}
 
 
@@ -1476,14 +1420,13 @@ async def ui_edit_project(
             setattr(project, field, body[field])
 
     project.updated_at = datetime.now(UTC)
-    await db.commit()
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.PROJECT_UPDATED.value,
         {"project_id": project.id, "name": project.name},
         project_id=project.id,
         entity_id=current_entity.id
     )
+    await db.commit()
 
     return {"ok": True}
 
@@ -1508,14 +1451,13 @@ async def ui_delete_project(
 
     project_id_to_delete = project.id
     await db.delete(project)
-    await db.commit()
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.PROJECT_DELETED.value,
         {"project_id": project_id_to_delete},
         project_id=project_id_to_delete,
         entity_id=current_entity.id
     )
+    await db.commit()
 
     return {"ok": True}
 
@@ -1567,14 +1509,13 @@ async def ui_create_project(
             project_id=project.id
         )
         db.add(stage)
-    await db.commit()
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.PROJECT_CREATED.value,
         {"project_id": project.id, "name": project.name},
         project_id=project.id,
         entity_id=current_entity.id
     )
+    await db.commit()
 
     return project
 

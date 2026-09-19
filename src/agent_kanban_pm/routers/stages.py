@@ -32,17 +32,16 @@ async def create_stage(
 
     db_stage = Stage(project_id=project_id, **stage.model_dump())
     db.add(db_stage)
-    await db.commit()
-    await db.refresh(db_stage)
-
-    logger.info(f"Stage created: {db_stage.name} in project {project_id} by {current_entity.name}")
-
-    await event_bus.publish(
+    await db.flush()
+    event_bus.enqueue(db,
         EventType.PROJECT_UPDATED.value,
         {"project_id": project_id, "action": "stage_created", "stage_name": db_stage.name},
         project_id=project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(db_stage)
+    logger.info(f"Stage created: {db_stage.name} in project {project_id} by {current_entity.name}")
 
     return db_stage
 
@@ -67,17 +66,15 @@ async def update_stage(
     for field, value in update_data.items():
         setattr(stage, field, value)
 
-    await db.commit()
-    await db.refresh(stage)
-
-    logger.info(f"Stage updated: {stage.name} by {current_entity.name}")
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.PROJECT_UPDATED.value,
         {"project_id": stage.project_id, "action": "stage_updated", "stage_id": stage.id},
         project_id=stage.project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(stage)
+    logger.info(f"Stage updated: {stage.name} by {current_entity.name}")
 
     return stage
 
@@ -96,14 +93,13 @@ async def delete_stage(
         raise HTTPException(status_code=404, detail="Stage not found")
 
     project_id = stage.project_id
+    stage_name = stage.name
     await db.delete(stage)
-    await db.commit()
-
-    logger.info(f"Stage deleted: {stage.name} by {current_entity.name}")
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.PROJECT_UPDATED.value,
         {"project_id": project_id, "action": "stage_deleted", "stage_id": stage_id},
         project_id=project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    logger.info(f"Stage deleted: {stage_name} by {current_entity.name}")

@@ -7,6 +7,8 @@ and turns them into concrete runtime instructions for CLI agents.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import UTC, datetime
@@ -15,7 +17,7 @@ from typing import Any, Iterable, List, Optional
 import yaml
 from pydantic import BaseModel, Field
 
-from agent_kanban_pm.runtime.adapter_loader import AdapterSpec, discover_popular_clis
+from agent_kanban_pm.runtime.adapter_loader import AdapterSpec, BUNDLED_ADAPTERS_DIR, discover_popular_clis, load_adapter
 from agent_kanban_pm.runtime.preferences import Preferences, load_preferences
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,8 @@ state: assigned
 handoff_ready: false
 task_id: null
 project_id: null
+session_id: null
+run_token: null
 current_agent: null
 assigned_role: null
 workspace_path: null
@@ -39,6 +43,7 @@ summary: |
   What remains or was deliberately left out.
 outputs:
   - path/to/file.ts
+artifacts: []
 signals_to_next: |
   Write exact facts here, not pointers to code.
   e.g. POST /login -> {token: JWT, expiresIn: 3600}
@@ -60,11 +65,14 @@ class StatusFrontmatter(BaseModel):
     handoff_ready: bool = False
     task_id: Optional[int] = None
     project_id: Optional[int] = None
+    session_id: Optional[int] = None
+    run_token: Optional[str] = None
     current_agent: Optional[str] = None
     assigned_role: Optional[str] = None
     workspace_path: Optional[str] = None
     summary: str = ""
     outputs: List[str] = Field(default_factory=list)
+    artifacts: List[dict[str, Any]] = Field(default_factory=list)
     signals_to_next: str = ""
     blockers: str = "none"
     updated_at: Optional[str] = None
@@ -179,6 +187,29 @@ def render_status_frontmatter(data: dict[str, Any]) -> str:
     return "---\n" + yaml.safe_dump(data, sort_keys=False, allow_unicode=False) + "---\n"
 
 
+def _status_body(content: str) -> str:
+    parts = content.split("---", 2)
+    return parts[2] if len(parts) == 3 and content.startswith("---") else ""
+
+
+def _write_status(path: Path, data: dict[str, Any], body: str = "") -> None:
+    """Replace the handoff atomically while retaining notes below its header."""
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(render_status_frontmatter(data) + body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
 def read_status_state(path: Path) -> Optional[str]:
     if not path.exists():
         return None
@@ -216,6 +247,29 @@ def read_status_file(workspace_path: str | Path) -> dict[str, Any]:
     }
 
 
+def status_identity_matches_session(status_data: dict[str, Any], session: Any) -> bool:
+    """Check file ownership independently of whether the handoff is ready."""
+    frontmatter = status_data.get("validated")
+    return bool(
+        status_data.get("exists")
+        and frontmatter
+        and frontmatter.project_id == session.project_id
+        and frontmatter.task_id == session.task_id
+        and frontmatter.session_id == session.id
+        and session.run_token
+        and frontmatter.run_token == session.run_token
+    )
+
+
+def status_matches_session(status_data: dict[str, Any], session: Any) -> bool:
+    """Accept a completion signal only for the exact active run."""
+    return bool(
+        status_identity_matches_session(status_data, session)
+        and status_data.get("handoff_ready")
+        and status_data.get("state") in {"done", "completed", "review"}
+    )
+
+
 def ensure_instruction_aliases(workspace_path: str | Path) -> dict[str, str]:
     """Best-effort `CLAUDE.md`/`CODEX.md` symlinks to AGENTS.md.
 
@@ -251,6 +305,8 @@ def initialize_status_file(
     current_agent: str,
     assigned_role: str,
     task_title: Optional[str] = None,
+    session_id: Optional[int] = None,
+    run_token: Optional[str] = None,
     overwrite: bool = False,
 ) -> Path:
     """Create or update the worktree-local STATUS.md assignment header."""
@@ -259,14 +315,24 @@ def initialize_status_file(
 
     existing = read_status_file(workspace_path)
     data = dict(existing["frontmatter"]) if existing["exists"] else {}
-    if existing["exists"] and data.get("state") == "done" and not overwrite:
+    same_assignment = (
+        data.get("task_id") == task_id
+        and data.get("project_id") == project_id
+        and (session_id is None or data.get("session_id") == session_id)
+        and (run_token is None or data.get("run_token") == run_token)
+    )
+    if existing["exists"] and same_assignment and data.get("state") == "done" and not overwrite:
         return path
+    if not same_assignment or overwrite:
+        data = {}
 
     data.update({
         "state": data.get("state") or "assigned",
         "handoff_ready": bool(data.get("handoff_ready", False)),
         "task_id": task_id,
         "project_id": project_id,
+        "session_id": session_id,
+        "run_token": run_token,
         "current_agent": current_agent,
         "assigned_role": assigned_role,
         "workspace_path": str(Path(workspace_path)),
@@ -276,9 +342,10 @@ def initialize_status_file(
         data["task_title"] = task_title
     data.setdefault("summary", "Task assigned; agent has not written a handoff summary yet.")
     data.setdefault("outputs", [])
+    data.setdefault("artifacts", [])
     data.setdefault("signals_to_next", "")
     data.setdefault("blockers", "none")
-    path.write_text(render_status_frontmatter(data), encoding="utf-8")
+    _write_status(path, data, _status_body(existing["content"]) if same_assignment and not overwrite else "")
     return path
 
 
@@ -291,7 +358,7 @@ def update_status_file(workspace_path: str | Path, updates: dict[str, Any]) -> P
     data.update(updates)
     data["workspace_path"] = str(Path(workspace_path))
     data["updated_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    path.write_text(render_status_frontmatter(data), encoding="utf-8")
+    _write_status(path, data, _status_body(existing["content"]))
     return path
 
 
@@ -307,7 +374,12 @@ def available_handoff_agents(
     """
     _normalize = lambda n: (n or "").strip().lower()
     names: set[str] = set()
-    # Seed from adapter YAMLs (replaces legacy DEFAULT_AGENT_PROFILES)
+    # Bundled choices must be visible even before the user's adapter cache is seeded.
+    for path in BUNDLED_ADAPTERS_DIR.glob("*.yaml"):
+        spec = load_adapter(path)
+        if spec and not spec.deprecated:
+            names.add(_normalize(spec.name))
+    # Include locally installed/custom adapters.
     try:
         from agent_kanban_pm.runtime.adapter_loader import load_all_adapters
         names.update(_normalize(a.name) for a in load_all_adapters())
@@ -337,10 +409,12 @@ def build_handoff_instructions(agent_name: str, workspace_path: str | Path) -> s
         "- Agent-specific instruction aliases CLAUDE.md and CODEX.md should be symlinks to AGENTS.md.\n"
         f"- Agent profile: {profile.agent} -> {profile.role}.\n"
         f"- Owned paths: {owns}.\n"
-        "- The handoff/reporting source of truth for this task is this worktree's STATUS.md.\n"
+        "- The Kanban session record is the durable handoff source of truth; this worktree's STATUS.md is a readable report imported for this run.\n"
         f"- Read and update {status_path}; do not write sibling worktree STATUS.md files.\n"
         "- On takeover, read STATUS.md first to understand state, outputs, blockers, and signals_to_next.\n"
         f"- {review_line}\n"
-        "- Fill STATUS.md with state, handoff_ready, current_agent, summary, outputs, self-contained signals_to_next, and blockers.\n"
-        "- When your task is ready for another agent or the human, set handoff_ready: true and state: done or blocked."
+        "- Keep task_id, project_id, session_id, and run_token unchanged; they identify this exact run.\n"
+        "- Fill STATUS.md with state, handoff_ready, current_agent, summary, outputs, artifacts, self-contained signals_to_next, and blockers.\n"
+        "- A git_pr handoff must include an artifact like {kind: pull_request, provider: github, url: https://github.com/owner/repo/pull/123}; the server verifies its merged state and head revision.\n"
+        "- When work is ready for another agent or the human, set handoff_ready: true and state: done, completed, or review. If blocked, record blockers and leave handoff_ready: false."
     )

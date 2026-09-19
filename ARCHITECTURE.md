@@ -59,15 +59,15 @@ Assignment launcher starts task session
   ├─► creates/reuses per-task git worktree and branch
   ├─► rebases from detected base ref when possible
   ├─► starts CLI in tmux or PTY fallback
-  └─► writes/updates STATUS.md handoff file
+  └─► writes run-scoped STATUS.md handoff file
         │
         ▼
-Session streamer watches terminal + STATUS.md
+Session streamer watches terminal + verified STATUS.md / submitted handoffs
   │
   ├─► writes terminal output to AgentActivity
   ├─► updates AgentHeartbeat / AgentCheckpoint
   ├─► captures approval prompts into AgentApproval
-  └─► on handoff_ready=true:
+  └─► after durable handoff submission:
         ├─ worker complete: move In Progress/To Do -> Review
         ├─ assign Review-stage roles (test, diff_review) when configured
         ├─ review complete: move Review -> Done
@@ -89,7 +89,8 @@ Agent session
   ├─ AgentActivity: append-only terminal/tool/activity feed
   ├─ AgentCheckpoint: restart context and terminal tail
   ├─ AgentApproval: durable approval prompt queue
-  └─ STATUS.md: worktree-local handoff summary and completion signal
+  ├─ AgentSession handoff fields: durable, run-scoped completion record
+  └─ STATUS.md: optional worktree-local handoff input and readable notes
 ```
 
 ## Boundaries
@@ -116,9 +117,9 @@ Human owns:
 ## Trust and Security Model
 
 The statements in this section and the following consistency/recovery sections
-are required architectural invariants. Where the current alpha does not yet
-enforce one, the gap is tracked explicitly in `PLAN.md`; these are not claims
-that every hardening item is already implemented.
+are required architectural invariants. Some hardening work is still planned,
+as summarized in the README roadmap; these are not claims that every item is
+already implemented.
 
 The supported topology is a single-user process on one trusted local machine.
 The HTTP server should bind to loopback by default. The browser, server, and

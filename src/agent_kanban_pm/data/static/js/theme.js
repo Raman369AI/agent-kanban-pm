@@ -1,29 +1,22 @@
-// Theme and Preferences Management
+// Apply saved appearance before the page paints.
 (function() {
     'use strict';
 
-    // Load saved preferences on page load
-    function loadPreferences() {
-        const theme = localStorage.getItem('theme') || 'light';
-        const density = localStorage.getItem('density') || 'comfortable';
-        const view = localStorage.getItem('view') || 'grid';
-        
-        document.documentElement.setAttribute('data-theme', theme);
-        document.documentElement.setAttribute('data-density', density);
-        document.documentElement.setAttribute('data-view', view);
-        
-        // Add transition class after initial paint to prevent flash
+    const savedTheme = localStorage.getItem('theme');
+    const theme = savedTheme === 'dark' || savedTheme === 'blue' ? 'dark' : 'light';
+    if (savedTheme !== theme) localStorage.setItem('theme', theme);
+    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.setAttribute('data-density', localStorage.getItem('density') || 'comfortable');
+    document.documentElement.setAttribute('data-view', localStorage.getItem('view') || 'grid');
+
+    function enableTransitions() {
         requestAnimationFrame(function() {
             document.body.classList.add('theme-transition');
         });
-        
-        return { theme, density, view };
     }
-
-    // Initialize preferences on DOM load
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', loadPreferences);
+        document.addEventListener('DOMContentLoaded', enableTransitions);
     } else {
-        loadPreferences();
+        enableTransitions();
     }
 })();

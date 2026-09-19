@@ -26,8 +26,10 @@ from agent_kanban_pm.runtime.assignment_launcher import (
     _detect_base_ref,
     _sync_worktree_with_base,
     _task_branch_name,
+    prune_git_worktree,
 )
 from agent_kanban_pm.runtime.adapter_loader import load_adapter
+from agent_kanban_pm.services.git_diff import read_task_git_diff
 
 
 GIT = shutil.which("git")
@@ -341,7 +343,7 @@ async def test_launch_admission_is_serialized(monkeypatch):
     running = 0
     peak = 0
 
-    async def fake_launch(task_id, entity_id, assigned_role=None):
+    async def fake_launch(task_id, entity_id, assigned_role=None, **kwargs):
         nonlocal running, peak
         running += 1
         peak = max(peak, running)
@@ -357,3 +359,147 @@ async def test_launch_admission_is_serialized(monkeypatch):
 
     assert results == [1, 2]
     assert peak == 1
+
+
+def test_prune_refuses_uncommitted_worktree(tmp_path):
+    project = tmp_path / "proj"
+    _init_repo(project)
+    wt = tmp_path / "task-worktree"
+    assert _create_git_worktree(str(project), wt, branch_name="kanban/task-1-test")
+    (wt / "README.md").write_text("agent changed this\n")
+    (wt / "new-scene.tsx").write_text("export const scene = true;\n")
+
+    assert prune_git_worktree(str(project), wt) is False
+    assert (wt / "README.md").read_text() == "agent changed this\n"
+    assert (wt / "new-scene.tsx").exists()
+
+
+def test_prune_removes_only_clean_worktree(tmp_path):
+    project = tmp_path / "proj"
+    _init_repo(project)
+    wt = tmp_path / "clean-worktree"
+    assert _create_git_worktree(str(project), wt, branch_name="kanban/task-2-test")
+
+    assert prune_git_worktree(str(project), wt) is True
+    assert not wt.exists()
+
+
+@pytest.mark.asyncio
+async def test_gc_retains_finished_session_worktree_for_review(tmp_path):
+    from datetime import UTC, datetime
+
+    from agent_kanban_pm.db import async_session_maker, init_db
+    from agent_kanban_pm.models import (
+        AgentSession, AgentSessionStatus, ApprovalStatus,
+        Entity, EntityType, Project, Role, Task, TaskStatus,
+    )
+    from agent_kanban_pm.runtime.session_streamer import gc_leak_worktrees
+
+    await init_db()
+    project_path = tmp_path / "proj"
+    _init_repo(project_path)
+    wt = tmp_path / "finished-task"
+    assert _create_git_worktree(str(project_path), wt, branch_name="kanban/task-3-test")
+
+    async with async_session_maker() as db:
+        owner = Entity(name="retention-owner", entity_type=EntityType.HUMAN, role=Role.OWNER)
+        agent = Entity(name="retention-agent", entity_type=EntityType.AGENT, role=Role.WORKER)
+        db.add_all([owner, agent])
+        await db.flush()
+        project = Project(
+            name="retention-project", creator_id=owner.id,
+            approval_status=ApprovalStatus.APPROVED, path=str(project_path),
+        )
+        db.add(project)
+        await db.flush()
+        task = Task(
+            title="Retain for review", project_id=project.id,
+            status=TaskStatus.IN_REVIEW, created_by=owner.id,
+        )
+        db.add(task)
+        await db.flush()
+        db.add(AgentSession(
+            agent_id=agent.id, project_id=project.id, task_id=task.id,
+            workspace_path=str(wt), status=AgentSessionStatus.DONE,
+            command="agent", ended_at=datetime.now(UTC),
+        ))
+        await db.commit()
+
+    await gc_leak_worktrees()
+    assert wt.exists()
+
+
+
+def test_task_git_diff_includes_committed_staged_unstaged_and_untracked(tmp_path):
+    project = tmp_path / "project"
+    _init_repo(project)
+    workspace = tmp_path / "task-worktree"
+    branch = "kanban/task-7-claude"
+    assert _create_git_worktree(str(project), workspace, branch_name=branch, base_ref="main")
+
+    (workspace / "README.md").write_text("committed\n")
+    _run(GIT, "-C", str(workspace), "add", "README.md")
+    _run(GIT, "-C", str(workspace), "commit", "-m", "task commit")
+    (workspace / "README.md").write_text("unstaged\n")
+    (workspace / "staged.txt").write_text("staged\n")
+    _run(GIT, "-C", str(workspace), "add", "staged.txt")
+    (workspace / "new.txt").write_text("untracked\n")
+
+    snapshot = read_task_git_diff(str(project), str(workspace), branch)
+    assert snapshot["source"] == "worktree"
+    assert snapshot["base_ref"] == "main"
+    assert "+unstaged" in snapshot["diff"]
+    assert "+staged" in snapshot["diff"]
+    assert "+untracked" in snapshot["diff"]
+    assert "diff --git a/new.txt b/new.txt" in snapshot["diff"]
+
+    _run(GIT, "-C", str(workspace), "reset", "--hard", "HEAD")
+    (workspace / "new.txt").unlink()
+    snapshot = read_task_git_diff(str(project), str(workspace), branch)
+    assert snapshot["source"] == "worktree"
+    assert "+committed" in snapshot["diff"]
+
+
+def test_task_git_diff_falls_back_to_branch_and_rejects_unrelated_repo(tmp_path):
+    project = tmp_path / "project"
+    _init_repo(project)
+    workspace = tmp_path / "task-worktree"
+    branch = "kanban/task-8-claude"
+    assert _create_git_worktree(str(project), workspace, branch_name=branch, base_ref="main")
+    (workspace / "README.md").write_text("task commit\n")
+    _run(GIT, "-C", str(workspace), "add", "README.md")
+    _run(GIT, "-C", str(workspace), "commit", "-m", "task commit")
+    _run(GIT, "-C", str(project), "worktree", "remove", str(workspace))
+
+    snapshot = read_task_git_diff(str(project), str(workspace), branch)
+    assert snapshot["source"] == "branch"
+    assert "+task commit" in snapshot["diff"]
+
+    unrelated = tmp_path / "unrelated"
+    _init_repo(unrelated)
+    assert read_task_git_diff(str(project), str(unrelated), None) is None
+
+
+def test_task_git_diff_keeps_original_base_after_default_branch_advances(tmp_path):
+    project = tmp_path / "project"
+    _init_repo(project)
+    workspace = tmp_path / "task-worktree"
+    branch = "kanban/task-9-claude"
+    assert _create_git_worktree(str(project), workspace, branch_name=branch, base_ref="main")
+    (workspace / "README.md").write_text("reviewed implementation\n")
+    _run(GIT, "-C", str(workspace), "add", "README.md")
+    _run(GIT, "-C", str(workspace), "commit", "-m", "implementation")
+
+    original = read_task_git_diff(str(project), str(workspace), branch)
+    assert original is not None and "+reviewed implementation" in original["diff"]
+
+    # Advancing the default branch to the task head changes a fresh merge-base
+    # calculation, but must not change evidence captured from the stored base.
+    _run(GIT, "-C", str(project), "merge", "--ff-only", branch)
+    moving = read_task_git_diff(str(project), str(workspace), branch)
+    pinned = read_task_git_diff(
+        str(project), str(workspace), branch, original["base_revision"],
+    )
+    assert moving is not None and moving["diff"] == ""
+    assert pinned is not None and pinned["diff"] == original["diff"]
+    assert pinned["base_revision"] == original["base_revision"]
