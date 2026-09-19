@@ -4,7 +4,7 @@ Date: 2026-09-19
 
 Reviewed implementation: `259f8ec31558641fba002aed510e949624ba7120`
 
-Release preparation: `0.6.0`
+Release preparation: `0.6.1` follow-up
 
 ## Scope and evidence
 
@@ -223,4 +223,5 @@ Completed verification on 2026-09-19:
 
 The documented explicit human override remains intentional and is not one of
 these defects. The existing `v0.6.0` tag still points to the pre-fix release;
-these changes require a subsequent release rather than moving that tag.
+these changes ship in the subsequent `v0.6.1` release rather than moving that
+tag.
