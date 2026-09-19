@@ -72,15 +72,19 @@ class WebSocketAdapter:
             return
 
         disconnected = set()
+        failures = []
         for ws in self._connections[entity_id]:
             try:
                 await ws.send_json(message)
-            except Exception:
+            except Exception as exc:
                 disconnected.add(ws)
+                failures.append(exc)
 
         # Clean up disconnected
         for ws in disconnected:
             self.disconnect(entity_id, ws)
+        if failures:
+            raise RuntimeError(f"{len(failures)} WebSocket delivery attempt(s) failed")
 
 
 class WebhookAdapter:
@@ -95,18 +99,14 @@ class WebhookAdapter:
         return self._client
 
     async def send_webhook(self, webhook_url: str, payload: dict):
-        """Send a POST request to a webhook URL"""
-        try:
-            client = await self._get_client()
-            response = await client.post(
-                webhook_url,
-                json=payload,
-                headers={"Content-Type": "application/json", "User-Agent": "KanbanPM-Webhook/1.0"}
-            )
-            if response.status_code >= 400:
-                logger.warning(f"Webhook failed with status {response.status_code}: {webhook_url}")
-        except Exception as e:
-            logger.error(f"Error sending webhook to {webhook_url}: {e}")
+        """Send a POST request and fail the delivery until the receiver accepts it."""
+        client = await self._get_client()
+        response = await client.post(
+            webhook_url,
+            json=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "KanbanPM-Webhook/1.0"}
+        )
+        response.raise_for_status()
 
     async def close(self):
         if self._client and not self._client.is_closed:
@@ -119,51 +119,45 @@ webhook_adapter = WebhookAdapter()
 
 
 async def handle_event_for_adapters(event: dict):
-    """
-    Handle incoming events and dispatch to appropriate adapters.
-    This is called by the event bus for each published event.
-    """
+    """Deliver each subscribed external connection once per durable event."""
     event_type = event.get("event_type")
     project_id = event.get("project_id")
+    event_id = event.get("event_id")
 
     async with async_session_maker() as session:
-        # Get all agent connections that should receive this event
         result = await session.execute(
-            select(AgentConnection).filter(
-                AgentConnection.status == ConnectionStatus.ONLINE
-            )
+            select(AgentConnection).filter(AgentConnection.status == ConnectionStatus.ONLINE)
         )
         connections = result.scalars().all()
 
-        for conn in connections:
-            try:
-                # Check subscription
-                subscribed_events = json.loads(conn.subscribed_events or "[]")
-                subscribed_projects = json.loads(conn.subscribed_projects or "null")
+    errors = []
+    for conn in connections:
+        try:
+            subscribed_events = json.loads(conn.subscribed_events or "[]")
+            subscribed_projects = json.loads(conn.subscribed_projects or "null")
+            if event_type not in subscribed_events and EventType.ALL.value not in subscribed_events:
+                continue
+            if subscribed_projects and project_id not in subscribed_projects:
+                continue
 
-                # Skip if not subscribed to this event ("*" means all)
-                if event_type not in subscribed_events and EventType.ALL.value not in subscribed_events:
-                    continue
-
-                # Skip if project filter doesn't match (null = all projects)
-                if subscribed_projects and project_id not in subscribed_projects:
-                    continue
-
-                # Dispatch based on protocol
-                if conn.protocol == ProtocolType.WEBSOCKET:
-                    await ws_adapter.send_to_agent(conn.entity_id, event)
-
-                elif conn.protocol == ProtocolType.WEBHOOK:
-                    config = json.loads(conn.config or "{}")
+            async def deliver(connection=conn):
+                if connection.protocol == ProtocolType.WEBSOCKET:
+                    await ws_adapter.send_to_agent(connection.entity_id, event)
+                elif connection.protocol == ProtocolType.WEBHOOK:
+                    config = json.loads(connection.config or "{}")
                     webhook_url = config.get("webhook_url")
                     if webhook_url:
                         await webhook_adapter.send_webhook(webhook_url, event)
 
-                # MCP events are handled by _persist_for_agents in event_bus.py
-                # A2A events are handled by a2a.py router
-
-            except Exception as e:
-                logger.error(f"Error dispatching event to agent {conn.entity_id}: {e}")
+            if event_id is None:
+                await deliver()
+            else:
+                await event_bus._deliver_channel(event_id, f"adapter:{conn.id}", deliver)
+        except Exception as exc:
+            logger.error("Error dispatching event to agent %s: %s", conn.entity_id, exc)
+            errors.append(exc)
+    if errors:
+        raise RuntimeError("; ".join(str(error) for error in errors))
 
 
 def register_adapters():

@@ -1,7 +1,3 @@
-    var folderPickerTarget = null;
-    var folderPickerCurrent = '';
-    var folderPickerParent = null;
-    var folderPickerHome = '';
     var expandedCards = {};
     var expandedCardTabs = {};
     var draggedTask = null;
@@ -225,7 +221,63 @@
         if (n <= 8) return 'High';
         return 'Urgent';
     }
-    function renderTaskOverview(taskId, task, sessions, approvals) {
+    function updateReviewGateBadge(taskId, completion) {
+        var card = document.getElementById('task-card-' + taskId);
+        if (!card) return;
+        var meta = card.querySelector('.task-meta-revamp');
+        if (!meta) return;
+        var badge = card.querySelector('.task-review-progress');
+        if (!completion || (completion.stage !== 'review' && completion.stage !== 'done')) {
+            if (badge) badge.remove();
+            return;
+        }
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'badge task-review-progress';
+            meta.append(badge);
+        }
+        badge.textContent = 'Review ' + completion.completed + '/' + completion.total;
+        badge.classList.toggle(
+            'is-complete',
+            completion.total > 0 && completion.completed === completion.total
+        );
+        badge.title = completion.blocker || 'All completion evidence is present';
+    }
+
+    function renderCompletionGates(completion) {
+        if (!completion || (completion.stage !== 'review' && completion.stage !== 'done')) return '';
+        var gates = (completion.gates || []).map(function(gate) {
+            var stateLabel = gate.state === 'complete'
+                ? 'Complete'
+                : gate.state === 'not_required' ? 'Not required' : 'Waiting';
+            return '<li class="completion-gate completion-gate-' + escapeHtml(gate.state) + '">' +
+                '<span class="completion-gate-mark" aria-hidden="true">' +
+                    (gate.state === 'complete' ? '✓' : gate.state === 'not_required' ? '–' : '○') +
+                '</span><span><strong>' + escapeHtml(gate.label) + '</strong>' +
+                '<small>' + escapeHtml(stateLabel + ' · ' + gate.detail) + '</small></span></li>';
+        }).join('');
+        var blocker = completion.blocker
+            ? '<p class="completion-gate-blocker"><strong>Waiting:</strong> ' +
+                escapeHtml(completion.blocker) + '</p>'
+            : '<p class="completion-gate-ready">All required completion evidence is present.</p>';
+        return '<section class="task-overview-section completion-gates-section">' +
+            '<div class="completion-gates-heading"><h3>Completion gates</h3>' +
+            '<span class="badge task-review-progress' +
+                (completion.completed === completion.total ? ' is-complete' : '') + '">' +
+                completion.completed + '/' + completion.total + '</span></div>' +
+            '<ul class="completion-gates-list">' + gates + '</ul>' + blocker + '</section>';
+    }
+
+    function loadReviewGateBadges() {
+        document.querySelectorAll('.kanban-task-revamp[data-status="in_review"], .kanban-task-revamp[data-status="completed"]').forEach(function(card) {
+            var taskId = Number(card.dataset.taskId);
+            apiFetch('/ui/tasks/' + taskId + '/completion-gates', {}, 'Could not load completion gates')
+                .then(function(data) { updateReviewGateBadge(taskId, data); })
+                .catch(function() {});
+        });
+    }
+
+    function renderTaskOverview(taskId, task, sessions, approvals, completion) {
         if (activeTaskId !== taskId) return;
         var overview = document.getElementById('task-overview-' + taskId);
         var logs = document.getElementById('task-logs-' + taskId);
@@ -245,9 +297,11 @@
         var latest = sessions && sessions.length ? sessions[0] : null;
         var execution = latest ? latest.status.charAt(0).toUpperCase() + latest.status.slice(1) : 'Not started';
         var blocker = approvals && approvals.length ? 'Approval requested' :
+            completion && completion.stage === 'review' && completion.blocker ? completion.blocker :
             latest && latest.status === 'error' ? 'Last agent session failed' :
             latest && latest.status === 'blocked' ? 'Agent session blocked' :
             task.status === 'blocked' ? 'Task marked blocked' : 'None';
+        updateReviewGateBadge(taskId, completion);
         var nextAction = approvals && approvals.length
             ? '<button class="btn btn-primary" type="button" onclick="openApprovalPopup(' + approvals[0].id + ')">Review approval</button>'
             : !(task.assignees || []).length
@@ -258,6 +312,7 @@
         overview.innerHTML =
             '<section class="task-overview-section"><h3>Description</h3><p class="task-overview-description">' +
                 escapeHtml(task.description || 'No description yet.') + '</p></section>' +
+            renderCompletionGates(completion) +
             '<dl class="task-overview-facts">' +
                 '<div><dt>Owner</dt><dd>' + escapeHtml(owners.join(', ') || 'Unassigned') + '</dd></div>' +
                 '<div><dt>Priority</dt><dd>' + priorityName(task.priority) + ' (' + Number(task.priority) + ')</dd></div>' +
@@ -297,7 +352,8 @@
         var results = await Promise.allSettled([
             apiFetch('/tasks/' + taskId, {}, 'Could not load task'),
             apiFetch('/agents/sessions?task_id=' + taskId + '&limit=1', {}, 'Could not load sessions'),
-            apiFetch('/agents/approvals?task_id=' + taskId + '&status_filter=pending&limit=10', {}, 'Could not load approvals')
+            apiFetch('/agents/approvals?task_id=' + taskId + '&status_filter=pending&limit=10', {}, 'Could not load approvals'),
+            apiFetch('/ui/tasks/' + taskId + '/completion-gates', {}, 'Could not load completion gates')
         ]);
         if (serial !== panelLoadSerial || activeTaskId !== taskId) return;
         if (results[0].status !== 'fulfilled') {
@@ -307,7 +363,8 @@
         }
         renderTaskOverview(taskId, results[0].value,
             results[1].status === 'fulfilled' ? results[1].value : [],
-            results[2].status === 'fulfilled' ? results[2].value : []);
+            results[2].status === 'fulfilled' ? results[2].value : [],
+            results[3].status === 'fulfilled' ? results[3].value : null);
     }
     function editSelectedTask() {
         var card = activeTaskId && document.getElementById('task-card-' + activeTaskId);
@@ -666,7 +723,10 @@
             showToast(error.message, 'error');
         }
     }
+    var reviewFetchVersions = {};
     async function fetchTaskReviews(taskId) {
+        var requestVersion = (reviewFetchVersions[taskId] || 0) + 1;
+        reviewFetchVersions[taskId] = requestVersion;
         var el = document.getElementById('task-reviews-list-' + taskId);
         if (!el) return;
         try {
@@ -674,6 +734,12 @@
                 '/agents/projects/' + PROJECT_ID + '/diff-reviews?task_id=' + taskId + '&limit=20',
                 {}, 'Could not load reviews'
             );
+            if (reviewFetchVersions[taskId] !== requestVersion) return;
+            var drafts = {};
+            el.querySelectorAll('.task-review-card').forEach(function(card) {
+                var note = card.querySelector('.task-review-note');
+                if (note) drafts[card.id] = note.value;
+            });
             var taskReviews = reviews.filter(function(r) { return r.task_id === taskId; });
             if (!taskReviews.length) {
                 el.innerHTML = '<p class="text-secondary" style="font-size:0.8rem;">No reviews for this task yet.</p>';
@@ -685,7 +751,7 @@
                 taskReviewRecords[reviewId] = r;
                 var color = statusColors[r.status] || '#9ca3af';
                 var actions = r.status === 'pending'
-                    ? '<textarea class="task-review-note" aria-label="Review note for review ' + reviewId + '" placeholder="Optional review note"></textarea>' +
+                    ? '<textarea class="task-review-note" aria-label="Review note for review ' + reviewId + '" placeholder="Optional review note">' + escapeHtml(drafts['task-review-' + reviewId] || '') + '</textarea>' +
                       '<div class="task-review-actions">' +
                       '<button type="button" class="btn btn-sm btn-primary" onclick="decideTaskReview(' + taskId + ',' + reviewId + ',\'approved\')">Approve</button>' +
                       '<button type="button" class="btn btn-sm task-review-reject" onclick="decideTaskReview(' + taskId + ',' + reviewId + ',\'rejected\')">Reject</button></div>'
@@ -783,42 +849,6 @@
         }
     }
 
-    function closeFolderPicker() { closeModal('folder-picker-modal'); }
-    function openFolderPicker(targetInputId) {
-        folderPickerTarget = document.getElementById(targetInputId);
-        openModal('folder-picker-modal');
-        loadFolder(folderPickerTarget.value || '');
-    }
-    function loadFolderFromInput() { loadFolder(document.getElementById('folder-picker-current').value); }
-    var folderRequestSequence = 0;
-    function loadFolder(path) {
-        var requestId = ++folderRequestSequence;
-        var input = document.getElementById('folder-picker-current');
-        var inputAtRequest = input.value;
-        var url = '/ui/api/folders' + (path ? '?path=' + encodeURIComponent(path) : '');
-        document.getElementById('folder-picker-list').innerHTML = '<p class="text-secondary">Loading...</p>';
-        apiFetch(url, {}, 'Failed to load folders')
-            .then(function(data) {
-                if (requestId !== folderRequestSequence || input.value !== inputAtRequest) return;
-                folderPickerCurrent = data.path;
-                folderPickerParent = data.parent;
-                folderPickerHome = data.home;
-                document.getElementById('folder-picker-current').value = data.path;
-                var list = document.getElementById('folder-picker-list');
-                if (!data.folders.length) { list.innerHTML = '<p class="text-secondary">No folders found here.</p>'; return; }
-                list.innerHTML = data.folders.map(function(folder) {
-                    return '<button type="button" class="entity-item" style="width:100%;text-align:left;border:0;background:transparent;cursor:pointer;" onclick="loadFolder(' + escapeHtml(JSON.stringify(folder.path)) + ')"><strong>' + escapeHtml(folder.name) + '</strong><div class="text-secondary"><small>' + escapeHtml(folder.path) + '</small></div></button>';
-                }).join('');
-            })
-            .catch(function(err) {
-                if (requestId !== folderRequestSequence) return;
-                document.getElementById('folder-picker-list').innerHTML = '<p class="text-danger">' + escapeHtml(err.message) + '</p>';
-            });
-    }
-    function selectCurrentFolder() { if (folderPickerTarget) folderPickerTarget.value = folderPickerCurrent; closeFolderPicker(); }
-    function escapeHtml(value) {
-        return String(value || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-    }
     var STATUS_LABELS = {
         pending: 'Pending',
         in_progress: 'In progress',
@@ -904,13 +934,110 @@
             draggedTask = null;
         });
     }
-    function moveTaskCard(card, targetZone) {
+    var pendingDoneOverrideResolve = null;
+
+    function closeDoneOverrideModal(result) {
+        closeModal('done-override-modal');
+        var resolve = pendingDoneOverrideResolve;
+        pendingDoneOverrideResolve = null;
+        if (resolve) resolve(result);
+    }
+
+    function cancelDoneOverride() {
+        closeDoneOverrideModal(null);
+    }
+
+    function submitDoneOverride() {
+        var reason = document.getElementById('done-override-reason').value.trim();
+        var error = document.getElementById('done-override-error');
+        if (reason.length < 3) {
+            error.textContent = 'Enter a short reason for overriding the workflow gate.';
+            error.style.display = 'block';
+            return;
+        }
+        closeDoneOverrideModal({proceed: true, reason: reason});
+    }
+
+    function requestPolicyOverride(options) {
+        options = options || {};
+        document.getElementById('done-override-title').textContent =
+            options.title || 'Override workflow gate?';
+        document.getElementById('done-override-submit').textContent =
+            options.actionLabel || 'Continue anyway';
+        document.getElementById('done-override-blocker').textContent =
+            options.blocker || 'Required workflow evidence is missing.';
+        document.getElementById('done-override-evidence-label').textContent =
+            options.evidenceLabel || 'The following required evidence is still missing:';
+        var list = document.getElementById('done-override-gates');
+        list.replaceChildren();
+        (options.gates || []).forEach(function(gate) {
+            var item = document.createElement('li');
+            var title = document.createElement('strong');
+            title.textContent = gate.label || 'Workflow gate';
+            var detail = document.createElement('span');
+            detail.textContent = gate.detail || '';
+            item.append(title, detail);
+            list.append(item);
+        });
+        if (!list.children.length) {
+            var item = document.createElement('li');
+            var title = document.createElement('strong');
+            title.textContent = 'Policy evidence';
+            var detail = document.createElement('span');
+            detail.textContent = options.blocker || 'This transition does not meet the configured workflow policy.';
+            item.append(title, detail);
+            list.append(item);
+        }
+        document.getElementById('done-override-reason').value = '';
+        document.getElementById('done-override-error').style.display = 'none';
+        openModal('done-override-modal');
+        document.getElementById('done-override-reason').focus();
+        return new Promise(function(resolve) {
+            pendingDoneOverrideResolve = resolve;
+        });
+    }
+
+    function requestDoneTransition(taskId) {
+        return apiFetch(
+            '/ui/tasks/' + taskId + '/completion-gates',
+            {},
+            'Could not check completion gates'
+        ).then(function(completion) {
+            updateReviewGateBadge(taskId, completion);
+            if (completion.can_complete_automatically) {
+                return {proceed: true, reason: ''};
+            }
+            return requestPolicyOverride({
+                title: 'Move to Done anyway?',
+                actionLabel: 'Move to Done anyway',
+                blocker: completion.blocker || 'Required completion evidence is missing.',
+                gates: (completion.gates || []).filter(function(gate) {
+                    return gate.required && gate.state !== 'complete';
+                })
+            });
+        }).catch(function(err) {
+            showToast('Could not check completion gates: ' + err.message, 'error');
+            return null;
+        });
+    }
+
+    function moveTaskCard(card, targetZone, moveOptions) {
         if (!card || !targetZone || card.dataset.moving === 'true') return Promise.resolve(false);
         var taskId = card.dataset.taskId;
         var oldStageId = card.dataset.currentStage;
         var newStageId = targetZone.dataset.stageId;
         if (oldStageId === newStageId) return Promise.resolve(false);
         var column = targetZone.closest('.kanban-column-revamp');
+        moveOptions = moveOptions || {};
+        if (column.dataset.stageKey === 'done' && !moveOptions.preflighted) {
+            return requestDoneTransition(taskId).then(function(decision) {
+                if (!decision || !decision.proceed) return false;
+                return moveTaskCard(card, targetZone, {
+                    preflighted: true,
+                    overrideReason: decision.reason || ''
+                });
+            });
+        }
         var stageName = column.dataset.stageName;
         var newStatus = column.dataset.stageStatus || card.dataset.status;
         var oldStatus = card.dataset.status;
@@ -935,7 +1062,12 @@
         return apiFetch('/ui/tasks/' + taskId + '/move', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
-            body: JSON.stringify({ stage_id: parseInt(newStageId), status: newStatus, summary: '' })
+            body: JSON.stringify({
+                stage_id: parseInt(newStageId),
+                status: newStatus,
+                summary: moveOptions.overrideReason || '',
+                override_reason: moveOptions.overrideReason || ''
+            })
         }, 'Failed to update task').then(function() {
             card.setAttribute('aria-label', 'Task ' +
                 (card.querySelector('.task-title-revamp') || {}).textContent + ' in ' + stageName +
@@ -957,6 +1089,23 @@
             addPlaceholderIfEmpty(targetZone);
             updateColumnCount(oldStageId, 1);
             updateColumnCount(newStageId, -1);
+            if (!moveOptions.overrideReason &&
+                    err.message.toLowerCase().indexOf('override reason is required') !== -1) {
+                return requestPolicyOverride({
+                    title: 'Override workflow gate?',
+                    actionLabel: 'Move to ' + stageName + ' anyway',
+                    blocker: err.message.replace(/\.? A human override reason is required to continue$/i, ''),
+                    evidenceLabel: 'This transition is blocked by:',
+                    gates: []
+                }).then(function(decision) {
+                    if (!decision || !decision.proceed) return false;
+                    delete card.dataset.moving;
+                    return moveTaskCard(card, targetZone, {
+                        preflighted: true,
+                        overrideReason: decision.reason
+                    });
+                });
+            }
             showToast('Failed to move task: ' + err.message, 'error');
             return false;
         }).finally(function() {
@@ -1003,18 +1152,11 @@
         if (!card) { showToast('Task card not found', 'error'); return; }
         if (card.dataset.currentStage === todoStageId) return;
         if (btn) btn.disabled = true;
-        expectLocalMove(taskId, todoStageId);
-        apiFetch('/ui/tasks/' + taskId + '/move', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
-            body: JSON.stringify({ stage_id: parseInt(todoStageId), status: 'pending', summary: 'Moved from Backlog to To Do' })
-        }, 'Failed to move task').then(function() {
-            return refreshBoardFromServer();
-        }).then(function() {
-            showToast('Task moved to To Do. Assign a worker to start it.', 'success');
-        }).catch(function(err) {
-            forgetLocalMove(taskId, todoStageId);
-            showToast('Failed: ' + err.message, 'error');
+        moveTaskCard(card, todoZone).then(function(moved) {
+            if (!moved) return null;
+            return refreshBoardFromServer().then(function() {
+                showToast('Task is ready in To Do. Assign a worker to start it.', 'success');
+            });
         }).finally(function() {
             if (btn && btn.isConnected) btn.disabled = false;
         });
@@ -1170,6 +1312,7 @@
                 }
                 initDragDrop();
                 initExpandedCards();
+                loadReviewGateBadges();
                 updateAgentFilterChoices();
                 applyBoardFilters(true);
                 fetchAgentApprovals();
@@ -1225,17 +1368,59 @@
                 return;
             }
             data.version = Number(version);
-            request = apiFetch('/ui/tasks/' + taskId + '/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify(data) }, 'Failed to update task')
-                .then(function() { showToast('Task updated!', 'success'); closeModal('task-modal'); return refreshBoardFromServer(); })
-                .catch(function(err) { setTaskFormError(err.message); showToast('Error: ' + err.message, 'error'); });
+            function saveEdit(reason) {
+                data.override_reason = reason || '';
+                return apiFetch('/ui/tasks/' + taskId + '/edit', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
+                    body: JSON.stringify(data)
+                }, 'Failed to update task');
+            }
+            function finishEdit() {
+                showToast('Task updated!', 'success');
+                closeModal('task-modal');
+                return refreshBoardFromServer();
+            }
+            function editError(err) {
+                setTaskFormError(err.message);
+                showToast('Error: ' + err.message, 'error');
+                return false;
+            }
+            request = saveEdit('').then(finishEdit).catch(function(err) {
+                if (err.message.toLowerCase().indexOf('override reason is required') === -1) {
+                    return editError(err);
+                }
+                var decisionRequest = data.status === 'completed'
+                    ? requestDoneTransition(taskId)
+                    : requestPolicyOverride({
+                        title: 'Override workflow gate?',
+                        actionLabel: 'Save transition anyway',
+                        blocker: err.message.replace(/\.? A human override reason is required to continue$/i, ''),
+                        evidenceLabel: 'This task update is blocked by:',
+                        gates: []
+                    });
+                return decisionRequest.then(function(decision) {
+                    if (!decision || !decision.proceed) {
+                        setTaskFormError('The task was not changed.');
+                        return false;
+                    }
+                    return saveEdit(decision.reason).then(finishEdit).catch(editError);
+                });
+            });
         }
         request.finally(function() {
             taskFormPending = false;
             if (btn) { btn.disabled = false; }
         });
     };
-    window.deleteTask = function(taskId, taskEl) {
-        if (!confirm('Delete this task?')) return;
+    window.deleteTask = async function(taskId, taskEl) {
+        var confirmed = await confirmAction({
+            title: 'Delete task?',
+            message: 'This permanently deletes the task and its recorded work history.',
+            confirmLabel: 'Delete task',
+            danger: true
+        });
+        if (!confirmed) return;
         var stageId = taskEl.dataset.currentStage;
         apiFetch('/ui/tasks/' + taskId, { method: 'DELETE', headers: { 'x-entity-id': CURRENT_ENTITY_ID } }, 'Failed to delete task')
             .then(function() { if (activeTaskId === Number(taskId)) closeTaskPanel(); var dropZone = taskEl.parentElement; taskEl.remove(); addPlaceholderIfEmpty(dropZone); updateColumnCount(stageId, -1); showToast('Task deleted', 'success'); })
@@ -1278,11 +1463,36 @@
         editProject();
         openFolderPicker('project-form-path');
     };
-    window.assignRoleToTask = function(taskId, roleName, btn) {
+    window.assignRoleToTask = function(taskId, roleName, btn, overrideReason) {
         btn.disabled = true; btn.textContent = '...';
-        apiFetch('/ui/tasks/' + taskId + '/assign-role', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID }, body: JSON.stringify({ role: roleName }) }, 'Failed to assign role')
-            .then(function() { showToast('Assigned to ' + roleName, 'success'); closeModal('assign-modal'); return refreshBoardFromServer(); })
-            .catch(function(err) { showToast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Assign'; });
+        apiFetch('/ui/tasks/' + taskId + '/assign-role', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-entity-id': CURRENT_ENTITY_ID },
+            body: JSON.stringify({ role: roleName, override_reason: overrideReason || '' })
+        }, 'Failed to assign role')
+            .then(function() {
+                showToast('Assigned to ' + roleName, 'success');
+                closeModal('assign-modal');
+                return refreshBoardFromServer();
+            })
+            .catch(function(err) {
+                if (!overrideReason && err.message.toLowerCase().indexOf('override reason is required') !== -1) {
+                    btn.disabled = false; btn.textContent = 'Assign';
+                    return requestPolicyOverride({
+                        title: 'Start work anyway?',
+                        actionLabel: 'Assign and start anyway',
+                        blocker: err.message.replace(/\.? A human override reason is required to start work$/i, ''),
+                        evidenceLabel: 'Starting this worker is blocked by:',
+                        gates: []
+                    }).then(function(decision) {
+                        if (decision && decision.proceed) {
+                            return window.assignRoleToTask(taskId, roleName, btn, decision.reason);
+                        }
+                    });
+                }
+                showToast('Error: ' + err.message, 'error');
+                btn.disabled = false; btn.textContent = 'Assign';
+            });
     };
     window.assignEntity = function(taskId, entityId, btn) {
         btn.disabled = true; btn.textContent = '...';
@@ -1352,6 +1562,7 @@
     // --- Approval Queue ---
     var allPendingApprovals = [];
     var currentApprovalId = null;
+    var boardLoadedAt = Date.now();
     async function fetchAgentApprovals() {
         try {
             var response = await fetch('/agents/approvals?project_id=' + PROJECT_ID + '&status_filter=pending&limit=50', { headers: {'X-Entity-ID': CURRENT_ENTITY_ID || ''} });
@@ -1752,7 +1963,11 @@
                 });
             }
             if (msg.event_type === 'agent_approval_requested') {
-                openApprovalPopupFromEvent(msg.data);
+                // Durable events may predate this page. Existing approvals
+                // belong in the bell queue, without taking focus on page load.
+                if (!msg.timestamp || Date.parse(msg.timestamp) >= boardLoadedAt) {
+                    openApprovalPopupFromEvent(msg.data);
+                }
                 showToast('Approval needed: ' + (msg.data.title || msg.data.approval_type), 'warning');
                 fetchAgentApprovals();
                 setTimeout(refreshBoardFromServer, 300);
@@ -1768,7 +1983,7 @@
                     toastEl.appendChild(linkBtn);
                 }
             } else if (msg.event_type === 'agent_approval_resolved') {
-                showToast('Approval #' + msg.data.approval_id + ' ' + msg.data.status, 'info');
+                showToast('Approval ' + msg.data.status + ' (#' + msg.data.approval_id + ')', 'info');
                 fetchAgentApprovals();
                 setTimeout(refreshBoardFromServer, 300);
                 if (msg.data.task_id) fetchTaskApprovals(msg.data.task_id);
@@ -1784,6 +1999,7 @@
     initDragDrop();
     initWebSocket();
     initExpandedCards();
+    loadReviewGateBadges();
     initBoardFilters();
     initNotificationSettings();
     fetchAgentApprovals();

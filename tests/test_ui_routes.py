@@ -90,7 +90,9 @@ def test_ui_routes_and_board_render():
 
         workbench_response = client.get(f"/ui/projects/{project['id']}/workbench")
         assert workbench_response.status_code == 200
-        assert f"{project['name']} — Workbench" in workbench_response.text
+        assert f"{project['name']} — Activity" in workbench_response.text
+        assert 'data-tab="sessions"' in workbench_response.text
+        assert 'id="wb-pane-sessions"' in workbench_response.text
         assert 'data-tab="approvals"' in workbench_response.text
         assert "Approvals" in workbench_response.text
 
@@ -191,7 +193,11 @@ def test_board_phase1_interaction_fixes():
         # Readable status labels instead of raw enum values.
         move = client.patch(
             f"/ui/tasks/{task['id']}/move",
-            json={"stage_id": stages["In Progress"], "status": "in_progress"},
+            json={
+                "stage_id": stages["In Progress"],
+                "status": "in_progress",
+                "override_reason": "Move directly to verify readable status labels.",
+            },
             headers=headers,
         )
         assert move.status_code == 200, move.text

@@ -121,7 +121,8 @@ def tmux_session_state(session_name: str) -> RunnerState:
         if result.returncode != 0:
             error = (result.stderr or "").lower()
             missing_markers = ("can't find session", "no server running", "no sessions")
-            if any(marker in error for marker in missing_markers):
+            socket_missing = "error connecting to" in error and "no such file or directory" in error
+            if socket_missing or any(marker in error for marker in missing_markers):
                 return RunnerState("missing")
             logger.warning("tmux state query failed for %s: %s", session_name, error.strip())
             return RunnerState("unknown")

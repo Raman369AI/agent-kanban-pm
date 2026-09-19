@@ -153,25 +153,62 @@ folder directly with no git isolation.
 ## Stage handoff
 
 The default board stages are Backlog, To Do, In Progress, Review, and Done.
-The server does not choose which agent should do new work, but it does keep the
-standard role handoff moving once an assigned session finishes:
+Assignments and stage handoffs are durable database transactions:
 
-1. A worker assignment starts from To Do or In Progress.
-2. The agent session finishes successfully. A handoff submitted through
-   `POST /agents/sessions/{id}/handoff` or a verified `STATUS.md` can provide
-   the summary. The streamer also accepts a zero process exit without either
-   handoff and builds the summary from the terminal output before moving the
-   card to Review.
-3. Review-stage policy roles, normally `test` and `diff_review`, are assigned
-   and launched only when both a stage policy and role assignments in
-   `~/.kanban/preferences.yaml` are configured.
-4. When review/test sessions complete, the card moves to Done.
-5. A Done-stage policy can launch `git_pr` to prepare Git or PR work. Moving a
-   card to Review alone does not commit, merge, or publish code.
+1. An assignment records who authorized it. A queued worker starts from To Do
+   or In Progress only while the project remains approved, the assignment is
+   current, and its transition policy permits the move.
+2. Completion requires a run-scoped handoff through
+   `POST /agents/sessions/{id}/handoff` or a verified `STATUS.md`. A zero exit
+   alone is an error, not a completion signal. Git implementations must be
+   committed before handoff; launch prompts state the expected output labels.
+3. Entering Review, by a permitted manual move or an automatic handoff, records
+   configured `test`, `diff_review`, and `git_pr` assignments in the same
+   transaction. Review roles run serially on the recorded implementation
+   workspace/revision.
+4. Automatic completion waits for every configured review role. Built-in outputs
+   are checked against server-observed session role, revision, exit status, and
+   summary; a formal diff-review decision must match the server-generated Git
+   snapshot and its digest. A newer pending, rejected, or changes-requested
+   decision supersedes an older approval for the same revision.
+5. The task enters Done only after the Git/PR role submits one GitHub pull
+   request artifact and the server verifies through `gh pr view` that it is
+   merged and its head SHA is the reviewed implementation revision. Moving a
+   card still never implicitly merges or publishes code.
 
-Task worktrees remain available after a session ends so reviewers and Git
-handoffs can inspect uncommitted changes. Automatic cleanup never removes a
-dirty worktree.
+REST, UI, MCP, and runtime execution starts share task-transition validation.
+Stage-only and status-only moves cross the same policy boundary. Agent authority
+comes from its stored role, not its name. Explicit human moves may override
+missing workflow evidence, with the reason recorded in the task audit; they
+cannot bypass authorization, project references, status/stage consistency, or
+unfinished predecessors. Required output names describe evidence produced in
+the stage being left, not work that must already exist before entering it.
+
+Queued launches reserve an immutable command, workspace, and runner name tied
+to the run token. A portable execution guard atomically records a durable claim
+under `~/.kanban/runs/` before invoking the CLI. Receipts include host, guard,
+child process identity, exit status, and a heartbeat. A server on the owning
+host validates the live process without trusting a recycled PID; a server
+reading a shared receipt from another host can recognize a fresh heartbeat and
+later observe the recorded exit. Unknown or stale remote claims remain
+fail-closed and are never replayed. The same receipt implementation supports
+native Windows process identity, although the full application still requires
+WSL because other terminal paths use Unix PTY semantics. This is at-most-once
+execution per run token, not a guarantee that arbitrary external side effects
+completed exactly once. Renewable database claim leases prevent multiple
+dispatcher loops from concurrently owning the same event or launch request.
+Preserve execution receipts while their sessions may be recovered.
+
+Managers can inspect, cancel, retry, and archive launch requests from the
+Activity workbench's **Launch queue** tab or through
+`GET /agents/launch-requests` and the corresponding action endpoints. Cleanup
+is non-destructive: archived requests remain available with
+`include_archived=true`.
+
+Task worktrees remain available after sessions end, including failed runs with
+uncommitted changes. Automatic handoffs require committed implementation work;
+the human review preview can still inspect unfinished work. Automatic cleanup
+never removes a dirty worktree or an unowned manual worktree.
 
 Open a task's **Reviews** tab to inspect its Git changes file by file. The
 preview includes committed, staged, unstaged, and untracked text changes from
@@ -189,19 +226,20 @@ is renamed; pass `workflow_key` when creating a custom stage to give it workflow
 meaning. Stages with no recognised key leave a moved task's status unchanged.
 
 The database session is the durable handoff source of truth. `STATUS.md` is
-an optional, agent-readable input and can be deleted with the worktree after
-its verified contents are recorded. The streamer checks for a submitted
-handoff before it handles an exited process. A zero exit advances the card;
-a nonzero exit or a missing runner records an error and leaves the card in its
-current stage. The assignment launcher runs one agent session at a time in a
-non-Git workspace so tasks cannot overwrite a shared handoff.
+an optional input mechanism and may be deleted after its verified contents are
+recorded. A known nonzero exit prevents success even if a handoff exists. A
+surviving child remains active if its guard or terminal transport is lost, so
+its workspace cannot be handed to another agent. Legacy sessions without a
+stored launch specification are not automatically reconstructed. Task sessions
+sharing a non-Git workspace are serialized.
 
 Chat planning records its decisions and cards in the database without writing
 to `STATUS.md`.
 
 An explicit handoff uses `POST /agents/sessions/{id}/handoff` with
 `project_id`, `task_id`, the session's `run_token`, `state`, and a
-non-empty `summary`. The session agent or an owner/manager may submit it.
+non-empty `summary`, plus the named `outputs` produced by the run. The session
+agent or an owner/manager may submit it.
 
 ## Bundled agent adapters
 

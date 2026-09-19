@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased — reliability hardening
+
+- Consolidate Activity session details and refresh durable handoffs without stale-session responses overwriting the selection.
+- Honor configured completion policies in the task drawer, preserve completion notifications across interfaces, and prevent cancelled queue requests from starting during workspace preparation.
+- Preserve manual Git worktrees; automatic cleanup requires explicit runtime ownership and an age guard.
+- Enforce SQLite foreign keys on each connection and database-level task version checks.
+- Persist events in a shared outbox and consume assignments through a durable scheduler.
+- Commit task create/update/assignment audit records and events together through shared services.
+- Commit project setup and its default stage policies atomically.
+- Apply shared task authorization to MCP mutations and validate approval ownership across REST/MCP.
+- Preserve Review/Done when launching their agents; require the Git/PR role to finish in Review before Done.
+- Move terminal process polling off the async event loop and fix project WebSocket audiences.
+- Preserve draft review notes during background refresh and prevent historical approvals from opening a modal on page load.
+- Keep approval outcome notifications consistent and prevent delayed folder browsing from overwriting an edit.
+- Add behavioral regression tests for concurrency, rollback, retry, ownership and coordination permissions.
+
+- Require durable handoffs and committed Git revisions for automatic completion; reject nonzero exits and changed review work.
+- Run configured review roles serially on the implementation workspace, preserving revision identity through durable launch requests.
+- Enforce current-revision role/output gates and human/orchestrator movement requirements; record review revisions through REST and MCP.
+- Add a real-Git, deterministic-CLI lifecycle regression and migration-13 upgrade coverage.
+
+- Recover durable launch reservations using stored commands, run identities, and POSIX execution receipts; never blindly replay claimed work after a crash.
+- Track reservation/start/completion/failure outcomes and revalidate approval immediately before execution.
+- Apply shared evidence and authority checks to REST, UI, MCP, automatic handoffs, and execution-start moves; audit human decisions consistently.
+- Normalize status-only moves, enforce predecessors, and share transactional Review/Done role assignments across interfaces.
+- Add migration 14 plus crash-injection and cross-interface policy regressions.
+- Bind reviews to server-generated Git snapshots and digests; newer decisions supersede older approvals on the same revision.
+- Verify built-in handoff outputs from recorded session outcomes and require Git/PR completion before Done.
+- Add per-channel outbox receipts, database dispatcher leases, MCP pending-event deduplication, and launch queue manager controls.
+- Add migrations 15-16 for evidence/delivery metadata and PR-before-Done default policies.
+- Require a server-verified, merged GitHub pull request whose head SHA matches the reviewed implementation revision before Git/PR completion can enter Done.
+- Replace the POSIX lock-only run guard with portable atomic receipts, process identity checks, and cross-host heartbeats; remote or uncertain claims remain fail-closed.
+- Add workbench launch-queue controls for inspection, cancel, retry, and archival, with a browser regression covering action state and escaped errors.
+- Move all remaining REST, UI, MCP, streamer, and sweeper mutation notifications into their domain transactions; renew slow dispatcher and scheduler claims and deduplicate external adapter delivery per connection.
+- Add migration 17 for durable, server-verified handoff artifacts.
+
+The approved lifecycle integration is applied. Remaining engineering work and verification limits are documented in `review/LIFECYCLE_REVIEW.md`.
+
 All notable changes to Agent Kanban PM are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

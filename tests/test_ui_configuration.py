@@ -136,7 +136,7 @@ def test_renaming_stage_preserves_transition_semantics():
         created = client.post('/ui/tasks/create', json={"project_id": project_id, "stage_id": stages[0]['id'], "title": "Ship it"}, headers=headers)
         assert created.status_code == 200, created.text
         task = created.json()["task"]
-        moved = client.patch(f'/ui/tasks/{task["id"]}/move', json={"stage_id": done["id"]}, headers=headers)
+        moved = client.patch(f'/ui/tasks/{task["id"]}/move', json={"stage_id": done["id"], "override_reason": "Verify renamed Done stage semantics."}, headers=headers)
         assert moved.status_code == 200, moved.text
         assert client.get(f'/tasks/{task["id"]}').json()["status"] == "completed"
         custom = client.post(f'/projects/{project_id}/stages', json={"name": "Waiting externally", "order": 6}, headers=headers).json()

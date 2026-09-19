@@ -7,6 +7,8 @@ from agent_kanban_pm.events import EventBus
 
 @pytest.mark.asyncio
 async def test_stop_async_drains_queued_events(monkeypatch):
+    from agent_kanban_pm.db import init_db
+    await init_db()
     bus = EventBus()
     handled = []
 
@@ -14,7 +16,7 @@ async def test_stop_async_drains_queued_events(monkeypatch):
         await asyncio.sleep(0.01)
         handled.append(payload["data"]["value"])
 
-    async def skip_persistence(event_type, payload, project_id):
+    async def skip_persistence(event_type, payload, project_id, outbox_event_id):
         return None
 
     monkeypatch.setattr(bus, "_persist_for_agents", skip_persistence)

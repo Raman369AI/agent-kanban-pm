@@ -45,11 +45,11 @@ class ConnectionManager:
     
     async def broadcast_to_project(self, message: dict, project_id: int):
         """Broadcast a message to all connections watching a project"""
-        if project_id not in self.active_connections:
-            return
-        
+        project_connections = self.active_connections.get(project_id, set())
+        scoped = set().union(*self.active_connections.values()) if self.active_connections else set()
+        recipients = project_connections | (self.all_connections - scoped)
         disconnected = set()
-        for connection in self.active_connections[project_id]:
+        for connection in tuple(recipients):
             try:
                 await connection.send_json(message)
             except Exception as e:
@@ -63,7 +63,7 @@ class ConnectionManager:
     async def broadcast_to_all(self, message: dict):
         """Broadcast a message to all connections"""
         disconnected = set()
-        for connection in self.all_connections:
+        for connection in tuple(self.all_connections):
             try:
                 await connection.send_json(message)
             except Exception as e:

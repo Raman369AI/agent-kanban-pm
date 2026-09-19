@@ -19,7 +19,7 @@ from agent_kanban_pm.models import (
     OrchestrationDecision, TaskLease, ActivitySummary, AgentCheckpoint, UserContribution,
     LeaseStatus, ContributionType, DiffReview, DiffReviewStatus,
     AgentApproval, AgentApprovalStatus, ApprovalType,
-    StagePolicy, ReviewMode, DecisionType
+    StagePolicy, ReviewMode, DecisionType, LaunchRequest
 )
 from agent_kanban_pm.schemas import (
     AgentHeartbeatResponse, AgentActivityResponse, AgentActivityCreate,
@@ -242,10 +242,8 @@ async def log_project_decision(
     if db_decision.manager_agent_id is None and current_entity.entity_type.value == "agent":
         db_decision.manager_agent_id = current_entity.id
     db.add(db_decision)
-    await db.commit()
-    await db.refresh(db_decision)
-
-    await event_bus.publish(
+    await db.flush()
+    event_bus.enqueue(db,
         EventType.ORCHESTRATION_DECISION_LOGGED.value,
         {
             "decision_id": db_decision.id,
@@ -258,6 +256,8 @@ async def log_project_decision(
         project_id=project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(db_decision)
     return db_decision
 
 
@@ -292,15 +292,15 @@ async def create_activity_summary(
 
     db_summary = ActivitySummary(**summary.model_dump())
     db.add(db_summary)
-    await db.commit()
-    await db.refresh(db_summary)
-
-    await event_bus.publish(
+    await db.flush()
+    event_bus.enqueue(db,
         EventType.ACTIVITY_SUMMARY_CREATED.value,
         {"summary_id": db_summary.id, "project_id": project_id, "summary": db_summary.summary},
         project_id=project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(db_summary)
     return db_summary
 
 
@@ -533,9 +533,7 @@ async def sync_github_contributions(
     for contribution_type, external_id, item in pending_contributions:
         await _upsert(contribution_type, external_id, item)
 
-    await db.commit()
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.USER_CONTRIBUTION_LOGGED.value,
         {
             "project_id": project_id,
@@ -548,6 +546,7 @@ async def sync_github_contributions(
         project_id=project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
 
     return {
         "project_id": project_id,
@@ -579,10 +578,8 @@ async def log_project_contribution(
 
     db_contribution = UserContribution(**contribution.model_dump())
     db.add(db_contribution)
-    await db.commit()
-    await db.refresh(db_contribution)
-
-    await event_bus.publish(
+    await db.flush()
+    event_bus.enqueue(db,
         EventType.USER_CONTRIBUTION_LOGGED.value,
         {
             "contribution_id": db_contribution.id,
@@ -596,6 +593,8 @@ async def log_project_contribution(
         project_id=project_id,
         entity_id=db_contribution.entity_id
     )
+    await db.commit()
+    await db.refresh(db_contribution)
     return db_contribution
 
 
@@ -627,6 +626,8 @@ class SessionHandoffSubmit(BaseModel):
     run_token: str = Field(min_length=1)
     state: Literal["done", "completed", "review"]
     summary: str = Field(min_length=1, max_length=4000)
+    outputs: list[str] = Field(default_factory=list)
+    artifacts: list[dict] = Field(default_factory=list)
 
 
 @router.post("/sessions/{session_id}/handoff")
@@ -665,6 +666,8 @@ async def submit_agent_session_handoff(
         )
         .values(
             handoff_state=handoff.state,
+            handoff_outputs_json=json.dumps(handoff.outputs),
+            handoff_artifacts_json=json.dumps(handoff.artifacts),
             handoff_summary=handoff.summary.strip(),
             handoff_received_at=datetime.now(UTC),
         )
@@ -678,6 +681,8 @@ async def submit_agent_session_handoff(
         existing and existing.ended_at is None
         and existing.handoff_state == handoff.state
         and existing.handoff_summary == handoff.summary.strip()
+        and json.loads(existing.handoff_outputs_json or "[]") == handoff.outputs
+        and json.loads(existing.handoff_artifacts_json or "[]") == handoff.artifacts
     ):
         return {"session_id": session_id, "accepted": True}
     raise HTTPException(status_code=409, detail="A different handoff was already submitted")
@@ -699,6 +704,8 @@ async def get_agent_session_handoff(
     status_data["durable"] = {
         "state": session.handoff_state,
         "summary": session.handoff_summary,
+        "outputs": json.loads(session.handoff_outputs_json or "[]"),
+        "artifacts": json.loads(session.handoff_artifacts_json or "[]"),
         "received_at": session.handoff_received_at.isoformat() if session.handoff_received_at else None,
     }
     return status_data
@@ -873,10 +880,8 @@ async def claim_task_lease(
         expires_at=now + timedelta(seconds=max(60, lease.ttl_seconds)),
     )
     db.add(db_lease)
-    await db.commit()
-    await db.refresh(db_lease)
-
-    await event_bus.publish(
+    await db.flush()
+    event_bus.enqueue(db,
         EventType.TASK_LEASE_UPDATED.value,
         {
             "lease_id": db_lease.id,
@@ -889,6 +894,8 @@ async def claim_task_lease(
         project_id=task.project_id,
         entity_id=agent_id
     )
+    await db.commit()
+    await db.refresh(db_lease)
     return db_lease
 
 
@@ -909,15 +916,14 @@ async def release_task_lease(
 
     lease.status = LeaseStatus.RELEASED
     lease.released_at = datetime.now(UTC)
-    await db.commit()
-    await db.refresh(lease)
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.TASK_LEASE_UPDATED.value,
         {"lease_id": lease.id, "task_id": lease.task_id, "agent_id": lease.agent_id, "status": lease.status.value},
         project_id=lease.task.project_id if lease.task else None,
         entity_id=lease.agent_id
     )
+    await db.commit()
+    await db.refresh(lease)
     return lease
 
 
@@ -1049,6 +1055,21 @@ async def start_agent_session(
     )
     db.add(db_session)
     try:
+        await db.flush()
+        event_bus.enqueue(db,
+            EventType.AGENT_ACTIVITY_LOGGED.value,
+            {
+                "agent_id": agent_id,
+                "session_id": db_session.id,
+                "project_id": db_session.project_id,
+                "task_id": db_session.task_id,
+                "activity_type": "session_started",
+                "message": f"Session started in {db_session.workspace_path}",
+                "workspace_path": db_session.workspace_path,
+            },
+            project_id=db_session.project_id,
+            entity_id=agent_id
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -1067,22 +1088,6 @@ async def start_agent_session(
                 )
         raise
     await db.refresh(db_session)
-
-    await event_bus.publish(
-        EventType.AGENT_ACTIVITY_LOGGED.value,
-        {
-            "agent_id": agent_id,
-            "session_id": db_session.id,
-            "project_id": db_session.project_id,
-            "task_id": db_session.task_id,
-            "activity_type": "session_started",
-            "message": f"Session started in {db_session.workspace_path}",
-            "workspace_path": db_session.workspace_path,
-        },
-        project_id=db_session.project_id,
-        entity_id=agent_id
-    )
-
     return db_session
 
 
@@ -1111,9 +1116,6 @@ async def update_agent_session(
     if update.status in (AgentSessionStatus.DONE, AgentSessionStatus.ERROR):
         db_session.ended_at = datetime.now(UTC)
 
-    await db.commit()
-    await db.refresh(db_session)
-
     if update.message:
         activity = AgentActivity(
             agent_id=db_session.agent_id,
@@ -1126,9 +1128,8 @@ async def update_agent_session(
             workspace_path=db_session.workspace_path,
         )
         db.add(activity)
-        await db.commit()
 
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.AGENT_STATUS_UPDATED.value,
         {
             "agent_id": db_session.agent_id,
@@ -1142,6 +1143,8 @@ async def update_agent_session(
         project_id=db_session.project_id,
         entity_id=db_session.agent_id
     )
+    await db.commit()
+    await db.refresh(db_session)
 
     return db_session
 
@@ -1184,10 +1187,7 @@ async def update_agent_status(
         )
         db.add(heartbeat)
 
-    await db.commit()
-    await db.refresh(heartbeat)
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.AGENT_STATUS_UPDATED.value,
         {
             "agent_id": agent_id,
@@ -1197,6 +1197,8 @@ async def update_agent_status(
         },
         entity_id=agent_id
     )
+    await db.commit()
+    await db.refresh(heartbeat)
 
     return heartbeat
 
@@ -1232,8 +1234,6 @@ async def log_agent_activity(
         command=activity.command,
     )
     db.add(db_activity)
-    await db.commit()
-    await db.refresh(db_activity)
 
     # Derive project_id from task_id for per-project filtering
     project_id = activity.project_id
@@ -1244,9 +1244,9 @@ async def log_agent_activity(
             project_id = task.project_id
             if db_activity.project_id is None:
                 db_activity.project_id = project_id
-                await db.commit()
 
-    await event_bus.publish(
+    await db.flush()
+    event_bus.enqueue(db,
         EventType.AGENT_ACTIVITY_LOGGED.value,
         {
             "agent_id": agent_id,
@@ -1264,6 +1264,8 @@ async def log_agent_activity(
         project_id=project_id,
         entity_id=agent_id
     )
+    await db.commit()
+    await db.refresh(db_activity)
 
     return db_activity
 
@@ -1357,22 +1359,24 @@ async def create_diff_review(
     if review.project_id != project_id:
         raise HTTPException(status_code=422, detail="Path project_id and body project_id must match")
 
+    from agent_kanban_pm.services.coordination import review_evidence
+    evidence = await review_evidence(db, project_id, review.task_id)
     db_review = DiffReview(
+        work_revision=evidence["work_revision"],
+        diff_sha256=evidence["diff_sha256"],
         project_id=project_id,
         task_id=review.task_id,
         reviewer_id=review.reviewer_id or current_entity.id,
         requester_id=review.requester_id or current_entity.id,
-        diff_content=review.diff_content,
+        diff_content=evidence["diff"] if evidence["diff"] is not None else review.diff_content,
         summary=review.summary,
-        file_paths=review.file_paths,
-        is_critical=review.is_critical,
+        file_paths=evidence["file_paths"] if evidence["file_paths"] is not None else review.file_paths,
+        is_critical=evidence["is_critical"] if evidence["diff"] is not None else review.is_critical,
         status=DiffReviewStatus.PENDING,
     )
     db.add(db_review)
-    await db.commit()
-    await db.refresh(db_review)
-
-    await event_bus.publish(
+    await db.flush()
+    event_bus.enqueue(db,
         EventType.DIFF_REVIEW_REQUESTED.value,
         {
             "review_id": db_review.id,
@@ -1384,6 +1388,8 @@ async def create_diff_review(
         project_id=project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(db_review)
     return db_review
 
 
@@ -1402,16 +1408,15 @@ async def update_diff_review(
     if not review:
         raise HTTPException(status_code=404, detail="Diff review not found")
 
+    from agent_kanban_pm.services.coordination import authorize_review_update
+    authorize_review_update(review, current_entity)
     review.status = update.status
     review.review_notes = update.review_notes
     if update.status in (DiffReviewStatus.APPROVED, DiffReviewStatus.REJECTED, DiffReviewStatus.CHANGES_REQUESTED):
         review.reviewer_id = current_entity.id
         review.reviewed_at = datetime.now(UTC)
 
-    await db.commit()
-    await db.refresh(review)
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.DIFF_REVIEW_COMPLETED.value,
         {
             "review_id": review.id,
@@ -1422,11 +1427,128 @@ async def update_diff_review(
         project_id=review.project_id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(review)
     return review
 
 
 # ---------------------------------------------------------------------------
 # Approval Queue
+class LaunchQueueAction(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+def _launch_request_payload(row: LaunchRequest) -> dict:
+    return {
+        "id": row.id, "event_id": row.event_id, "actor_id": row.actor_id,
+        "task_id": row.task_id, "agent_id": row.agent_id, "role": row.role,
+        "source_session_id": row.source_session_id, "stage_id": row.stage_id,
+        "status": row.status, "attempts": row.attempts,
+        "retry_at": row.retry_at.isoformat() if row.retry_at else None,
+        "last_error": row.last_error, "session_id": row.session_id,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "archived_at": row.archived_at.isoformat() if row.archived_at else None,
+    }
+
+
+@router.get("/launch-requests")
+async def list_launch_requests(
+    project_id: Optional[int] = None, status_filter: Optional[str] = None,
+    include_archived: bool = False, limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    if not current_entity or not is_owner_or_manager(current_entity):
+        raise HTTPException(status_code=403, detail="Manager access required")
+    query = select(LaunchRequest).join(Task, Task.id == LaunchRequest.task_id)
+    if project_id is not None:
+        query = query.where(Task.project_id == project_id)
+    if status_filter:
+        query = query.where(LaunchRequest.status == status_filter)
+    if not include_archived:
+        query = query.where(LaunchRequest.archived_at.is_(None))
+    rows = list((await db.execute(query.order_by(desc(LaunchRequest.id)).limit(min(max(limit, 1), 500)))).scalars())
+    return [_launch_request_payload(row) for row in rows]
+
+
+@router.post("/launch-requests/{request_id}/cancel")
+async def cancel_launch_request(
+    request_id: int, action: LaunchQueueAction = LaunchQueueAction(),
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    if not current_entity or not is_owner_or_manager(current_entity):
+        raise HTTPException(status_code=403, detail="Manager access required")
+    row = await db.get(LaunchRequest, request_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Launch request not found")
+    if row.session_id is not None or row.status in {"starting", "started", "completed"}:
+        raise HTTPException(status_code=409, detail="A started session must be stopped through session controls")
+    row.status = "cancelled"
+    row.last_error = action.reason or f"Cancelled by {current_entity.name}"
+    row.retry_at = None
+    row.claimed_at = None
+    row.claim_token = None
+    await db.commit()
+    return _launch_request_payload(row)
+
+
+@router.post("/launch-requests/{request_id}/retry")
+async def retry_launch_request(
+    request_id: int, action: LaunchQueueAction = LaunchQueueAction(),
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    if not current_entity or not is_owner_or_manager(current_entity):
+        raise HTTPException(status_code=403, detail="Manager access required")
+    old = await db.get(LaunchRequest, request_id)
+    if old is None:
+        raise HTTPException(status_code=404, detail="Launch request not found")
+    if old.status not in {"blocked", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="Only blocked, failed, or cancelled requests can be retried")
+    if old.session_id is not None:
+        session = await db.get(AgentSession, old.session_id)
+        if session is not None and session.ended_at is None:
+            raise HTTPException(status_code=409, detail="The prior session is still active")
+    task = await db.get(Task, old.task_id)
+    if task is None:
+        raise HTTPException(status_code=409, detail="The task no longer exists")
+    event = event_bus.enqueue(db, EventType.TASK_ASSIGNED.value, {
+        "task_id": old.task_id, "entity_id": old.agent_id, "role": old.role,
+        "stage_id": task.stage_id, "source_session_id": old.source_session_id,
+    }, project_id=task.project_id, entity_id=current_entity.id)
+    await db.flush()
+    retried = LaunchRequest(
+        event_id=event.id, actor_id=current_entity.id, task_id=old.task_id,
+        agent_id=old.agent_id, role=old.role, source_session_id=old.source_session_id,
+        stage_id=task.stage_id, status="queued",
+        override_reason=action.reason,
+        last_error=f"Retried from request #{old.id} by {current_entity.name}",
+    )
+    db.add(retried)
+    await db.commit()
+    await db.refresh(retried)
+    return _launch_request_payload(retried)
+
+
+@router.post("/launch-requests/cleanup")
+async def cleanup_launch_requests(
+    older_than_days: int = 30, db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    if not current_entity or not is_owner_or_manager(current_entity):
+        raise HTTPException(status_code=403, detail="Manager access required")
+    cutoff = datetime.now(UTC) - timedelta(days=max(1, older_than_days))
+    rows = list((await db.execute(select(LaunchRequest).where(
+        LaunchRequest.status.in_(["completed", "failed", "cancelled"]),
+        LaunchRequest.archived_at.is_(None), LaunchRequest.created_at < cutoff,
+    ))).scalars())
+    now = datetime.now(UTC)
+    for row in rows:
+        row.archived_at = now
+    await db.commit()
+    return {"archived": len(rows), "older_than_days": max(1, older_than_days)}
+
 # ---------------------------------------------------------------------------
 
 
@@ -1452,9 +1574,11 @@ async def request_agent_approval(
             detail="You can only request approval for yourself"
         )
 
+    from agent_kanban_pm.services.coordination import validate_approval_scope
+    task_id = await validate_approval_scope(db, payload.project_id, payload.task_id, payload.session_id, agent_id)
     approval = AgentApproval(
         project_id=payload.project_id,
-        task_id=payload.task_id,
+        task_id=task_id,
         session_id=payload.session_id,
         agent_id=agent_id,
         approval_type=payload.approval_type,
@@ -1466,7 +1590,7 @@ async def request_agent_approval(
         status=AgentApprovalStatus.PENDING,
     )
     db.add(approval)
-    await db.commit()
+    await db.flush()
     await db.refresh(approval)
 
     if payload.session_id:
@@ -1475,9 +1599,8 @@ async def request_agent_approval(
         if session_row and session_row.status != AgentSessionStatus.BLOCKED:
             session_row.status = AgentSessionStatus.BLOCKED
             session_row.last_seen_at = datetime.now(UTC)
-            await db.commit()
 
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.AGENT_APPROVAL_REQUESTED.value,
         {
             "approval_id": approval.id,
@@ -1493,6 +1616,7 @@ async def request_agent_approval(
         project_id=approval.project_id,
         entity_id=approval.agent_id
     )
+    await db.commit()
     return approval
 
 
@@ -1603,10 +1727,7 @@ async def resolve_agent_approval(
             session_row.status = AgentSessionStatus.ACTIVE
             session_row.last_seen_at = datetime.now(UTC)
 
-    await db.commit()
-    await db.refresh(approval)
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.AGENT_APPROVAL_RESOLVED.value,
         {
             "approval_id": approval.id,
@@ -1622,6 +1743,8 @@ async def resolve_agent_approval(
         project_id=approval.project_id,
         entity_id=approval.agent_id
     )
+    await db.commit()
+    await db.refresh(approval)
     return approval
 
 
@@ -1684,11 +1807,8 @@ async def update_stage_policy(
     if update.requires_orchestrator_move is not None:
         policy.requires_orchestrator_move = update.requires_orchestrator_move
     policy.updated_at = datetime.now(UTC)
-
-    await db.commit()
-    await db.refresh(policy)
-
-    await event_bus.publish(
+    await db.flush()
+    event_bus.enqueue(db,
         EventType.STAGE_POLICY_UPDATED.value,
         {"project_id": project_id, "stage_id": stage_id, "policy_id": policy.id},
         project_id=project_id,
@@ -1705,6 +1825,7 @@ async def update_stage_policy(
         affected_agent_ids=None,
     ))
     await db.commit()
+    await db.refresh(policy)
 
     return StagePolicyResponse.from_model(policy)
 

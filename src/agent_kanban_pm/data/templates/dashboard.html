@@ -95,7 +95,9 @@
     </div>
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.25rem;">
         {% for task in recent_tasks %}
-        <div class="kanban-task static" data-priority="P{{ task.priority }}" style="margin-bottom: 0;">
+        <a class="kanban-task static dashboard-task-link" data-priority="P{{ task.priority }}"
+            href="/ui/projects/{{ task.project_id }}/board?task={{ task.id }}" style="margin-bottom: 0;"
+            aria-label="Open task {{ task.title }}">
             <div class="mb-2">
                 <strong class="task-title" style="font-size: 0.95rem;">{{ task.title }}</strong>
             </div>
@@ -108,7 +110,7 @@
             <div class="text-secondary">
                 <p style="font-size: 0.82rem; line-height: 1.5;">{{ (task.description or '')[:120] }}{% if task.description and task.description|length > 120 %}...{% endif %}</p>
             </div>
-        </div>
+        </a>
         {% endfor %}
     </div>
 </div>

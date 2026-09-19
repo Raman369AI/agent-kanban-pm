@@ -83,30 +83,55 @@ async def validate_task_transition(
     if new_stage_id is None or new_stage_id == task.stage_id:
         return None
 
-    try:
-        from agent_kanban_pm.runtime.stage_policy import (
-            gather_transition_context,
-            get_stage_policy_for_stage,
-            validate_transition,
-        )
-    except ImportError:
-        return None
+    from agent_kanban_pm.models import AgentSession, AgentSessionStatus
+    from agent_kanban_pm.runtime.review_gate import implementation_for_task, completion_blocker, is_reopening
+    current = await db.get(Stage, task.stage_id) if task.stage_id else None
+    target = await db.get(Stage, new_stage_id)
+    implementation = await implementation_for_task(db, task.id)
+    evidence = implementation
+    if current and current.key == "review" and implementation:
+        evidence = await db.scalar(select(AgentSession).where(
+            AgentSession.task_id == task.id,
+            AgentSession.source_session_id == implementation.id,
+            AgentSession.work_revision == implementation.work_revision,
+            AgentSession.status == AgentSessionStatus.DONE,
+            AgentSession.assigned_role.in_(["test", "diff_review", "git_pr"]),
+            AgentSession.handoff_received_at.is_not(None),
+        ).order_by(AgentSession.id.desc()).limit(1))
+    if implementation and not is_reopening(current, target):
+        import asyncio
+        from agent_kanban_pm.runtime.workspaces import git_revision, WorkspacePreparationError
+        try:
+            revision = await asyncio.to_thread(git_revision, implementation.workspace_path)
+        except WorkspacePreparationError as exc:
+            return str(exc)
+        if revision != implementation.work_revision:
+            return "Implementation changed after handoff"
+    return await completion_blocker(db, evidence, task, current, target, actor=actor)
 
-    from_policy = await get_stage_policy_for_stage(db, task.project_id, task.stage_id)
-    to_policy = await get_stage_policy_for_stage(db, task.project_id, new_stage_id)
-    move_initiator = "human" if actor.entity_type == EntityType.HUMAN else actor.name
-    ctx = await gather_transition_context(db, task.id, task.project_id)
-    warning = validate_transition(
-        from_policy=from_policy,
-        to_policy=to_policy,
-        move_initiator=move_initiator,
-        has_diff_review=ctx["has_diff_review"],
-        has_required_outputs=True,
-        is_critical=ctx["is_critical"],
-    )
-    if warning and not (allow_human_policy_warning and actor.entity_type == EntityType.HUMAN):
-        return warning
-    return warning
+
+async def resolve_transition_target(db, task, stage_id, status):
+    """Stage-only and status-only moves have identical policy boundaries."""
+    from agent_kanban_pm.runtime.stage_identity import STAGE_STATUSES
+    status = coerce_task_status(status)
+    stage = await db.get(Stage, stage_id) if stage_id is not None else None
+    if stage is not None:
+        expected = STAGE_STATUSES.get(stage.key)
+        if status is None and expected:
+            status = TaskStatus(expected)
+        elif expected and status != TaskStatus.BLOCKED and status.value != expected:
+            raise ValueError("Task status does not match the destination stage")
+    elif stage_id is None and status is not None and status != TaskStatus.BLOCKED:
+        current = await db.get(Stage, task.stage_id) if task.stage_id else None
+        if not current or STAGE_STATUSES.get(current.key) != status.value:
+            keys = [key for key, value in STAGE_STATUSES.items() if value == status.value]
+            stage = await db.scalar(select(Stage).where(
+                Stage.project_id == task.project_id, Stage.workflow_key.in_(keys),
+            ).order_by(Stage.order).limit(1))
+            if not stage:
+                raise ValueError("No workflow stage is configured for this status")
+            stage_id = stage.id
+    return stage_id, status
 
 
 async def apply_task_transition_fields(

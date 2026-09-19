@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table, Enum as SQLEnum, Index, text
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table, Enum as SQLEnum, Index, UniqueConstraint, text
 from sqlalchemy.orm import relationship, declarative_base
 import enum
 from agent_kanban_pm.runtime.stage_identity import default_stage_key, normalize_stage_key
@@ -143,6 +143,7 @@ class Task(Base):
     sequence_order = Column(Integer, nullable=True)
     created_by = Column(Integer, ForeignKey('entities.id'), nullable=True)
     version = Column(Integer, default=0, nullable=False)
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": lambda value: 0 if value is None else value + 1}
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
     completed_at = Column(DateTime, nullable=True)
@@ -151,7 +152,8 @@ class Task(Base):
     project = relationship("Project", back_populates="tasks")
     stage = relationship("Stage", back_populates="tasks")
     assignees = relationship("Entity", secondary=task_assignments, back_populates="assigned_tasks")
-    subtasks = relationship("Task", backref="parent_task", remote_side=[id])
+    parent_task = relationship("Task", remote_side=[id], back_populates="subtasks")
+    subtasks = relationship("Task", back_populates="parent_task")
     comments = relationship("Comment", back_populates="task", cascade="all, delete-orphan")
     logs = relationship("TaskLog", back_populates="task", cascade="all, delete-orphan")
 
@@ -259,6 +261,12 @@ class AgentSession(Base):
     workspace_path = Column(Text, nullable=False)
     assigned_role = Column(String(100), nullable=True)
     run_token = Column(String(64), nullable=True)
+    launch_request_id = Column(Integer, nullable=True, unique=True)
+    launch_spec_json = Column(Text, nullable=True)
+    source_session_id = Column(Integer, nullable=True)
+    work_revision = Column(String(64), nullable=True)
+    handoff_outputs_json = Column(Text, nullable=True)
+    handoff_artifacts_json = Column(Text, nullable=True)
     handoff_state = Column(String(32), nullable=True)
     handoff_summary = Column(Text, nullable=True)
     handoff_received_at = Column(DateTime, nullable=True)
@@ -428,6 +436,7 @@ class PendingEvent(Base):
     __tablename__ = "pending_events"
 
     id = Column(Integer, primary_key=True, index=True)
+    outbox_event_id = Column(Integer, ForeignKey('outbox_events.id', ondelete='CASCADE'), nullable=True)
     agent_id = Column(Integer, ForeignKey('entities.id', ondelete='CASCADE'), index=True)
     event_type = Column(String(100), nullable=False)
     payload = Column(Text, nullable=False)  # JSON
@@ -504,6 +513,8 @@ class DiffReview(Base):
     task_id = Column(Integer, ForeignKey('tasks.id', ondelete='SET NULL'), nullable=True, index=True)
     reviewer_id = Column(Integer, ForeignKey('entities.id', ondelete='SET NULL'), nullable=True, index=True)
     requester_id = Column(Integer, ForeignKey('entities.id', ondelete='SET NULL'), nullable=True)
+    work_revision = Column(String(64), nullable=True)
+    diff_sha256 = Column(String(64), nullable=True)
     diff_content = Column(Text, nullable=False)
     summary = Column(Text, nullable=True)
     file_paths = Column(Text, nullable=True)
@@ -560,3 +571,50 @@ class Comment(Base):
     # Relationships
     task = relationship("Task", back_populates="comments")
     author = relationship("Entity")
+
+
+class OutboxEvent(Base):
+    """Committed notifications shared by HTTP and MCP writers."""
+    __tablename__ = 'outbox_events'
+    id = Column(Integer, primary_key=True)
+    payload = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
+    delivered_at = Column(DateTime, nullable=True, index=True)
+    attempts = Column(Integer, default=0, nullable=False)
+    retry_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    claimed_at = Column(DateTime, nullable=True, index=True)
+    claim_token = Column(String(64), nullable=True)
+
+
+class OutboxDelivery(Base):
+    """Per-channel receipt so one failed delivery does not replay successful channels."""
+    __tablename__ = 'outbox_deliveries'
+    __table_args__ = (UniqueConstraint('event_id', 'channel', name='uq_outbox_delivery_channel'),)
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey('outbox_events.id', ondelete='CASCADE'), nullable=False, index=True)
+    channel = Column(String(255), nullable=False)
+    delivered_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
+
+
+class LaunchRequest(Base):
+    """Durable execution intent, independent of notification delivery."""
+    __tablename__ = 'launch_requests'
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, unique=True, nullable=False)
+    actor_id = Column(Integer, ForeignKey('entities.id', ondelete='SET NULL'), nullable=True)
+    task_id = Column(Integer, ForeignKey('tasks.id', ondelete='CASCADE'), nullable=False)
+    agent_id = Column(Integer, ForeignKey('entities.id', ondelete='CASCADE'), nullable=False)
+    role = Column(String(100), nullable=True)
+    source_session_id = Column(Integer, nullable=True)
+    stage_id = Column(Integer, nullable=True)
+    override_reason = Column(Text, nullable=True)
+    status = Column(String(32), default='queued', nullable=False, index=True)
+    attempts = Column(Integer, default=0, nullable=False)
+    retry_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    session_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
+    claimed_at = Column(DateTime, nullable=True, index=True)
+    claim_token = Column(String(64), nullable=True)
+    archived_at = Column(DateTime, nullable=True, index=True)

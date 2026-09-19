@@ -40,7 +40,7 @@ async def create_project(
         approval_status=ApprovalStatus.PENDING
     )
     db.add(db_project)
-    await db.commit()
+    await db.flush()
     await db.refresh(db_project)
 
     if db_project.path:
@@ -56,24 +56,18 @@ async def create_project(
         stage = Stage(project_id=db_project.id, **stage_data)
         db.add(stage)
 
-    await db.commit()
+    await db.flush()
 
     from agent_kanban_pm.runtime.stage_policy import seed_default_policies as _seed_policies
-    try:
-        await _seed_policies(db, db_project.id)
-    except Exception:
-        logger.warning("Could not seed default stage policies for project %s", db_project.id)
-
-    await db.refresh(db_project)
-
-    logger.info(f"Project created: {db_project.name} by {current_entity.name}")
-
-    await event_bus.publish(
+    await _seed_policies(db, db_project.id)
+    event_bus.enqueue(db,
         EventType.PROJECT_CREATED.value,
         {"project_id": db_project.id, "name": db_project.name},
         project_id=db_project.id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(db_project)
 
     return db_project
 
@@ -152,17 +146,15 @@ async def update_project(
         setattr(project, field, value)
 
     project.updated_at = datetime.now(UTC)
-    await db.commit()
-    await db.refresh(project)
-
-    logger.info(f"Project updated: {project.name} by {current_entity.name}")
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.PROJECT_UPDATED.value,
         {"project_id": project.id, "name": project.name},
         project_id=project.id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(project)
+    logger.info(f"Project updated: {project.name} by {current_entity.name}")
 
     return project
 
@@ -182,16 +174,14 @@ async def delete_project(
 
     project_id_to_delete = project.id
     await db.delete(project)
-    await db.commit()
-
-    logger.info(f"Project deleted: {project.name} by {current_entity.name}")
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.PROJECT_DELETED.value,
         {"project_id": project_id_to_delete},
         project_id=project_id_to_delete,
         entity_id=current_entity.id
     )
+    await db.commit()
+    logger.info(f"Project deleted: {project.name} by {current_entity.name}")
 
 
 @router.post("/{project_id}/approve", response_model=ProjectResponse)
@@ -209,17 +199,15 @@ async def approve_project(
 
     project.approval_status = ApprovalStatus.APPROVED
     project.updated_at = datetime.now(UTC)
-    await db.commit()
-    await db.refresh(project)
-
-    logger.info(f"Project approved: {project.name} by {current_entity.name}")
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.PROJECT_APPROVED.value,
         {"project_id": project.id, "name": project.name, "status": "APPROVED"},
         project_id=project.id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(project)
+    logger.info(f"Project approved: {project.name} by {current_entity.name}")
 
     return project
 
@@ -239,16 +227,14 @@ async def reject_project(
 
     project.approval_status = ApprovalStatus.REJECTED
     project.updated_at = datetime.now(UTC)
-    await db.commit()
-    await db.refresh(project)
-
-    logger.info(f"Project rejected: {project.name} by {current_entity.name}")
-
-    await event_bus.publish(
+    event_bus.enqueue(db,
         EventType.PROJECT_REJECTED.value,
         {"project_id": project.id, "name": project.name, "status": "REJECTED"},
         project_id=project.id,
         entity_id=current_entity.id
     )
+    await db.commit()
+    await db.refresh(project)
+    logger.info(f"Project rejected: {project.name} by {current_entity.name}")
 
     return project

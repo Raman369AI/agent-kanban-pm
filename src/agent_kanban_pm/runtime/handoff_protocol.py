@@ -43,6 +43,7 @@ summary: |
   What remains or was deliberately left out.
 outputs:
   - path/to/file.ts
+artifacts: []
 signals_to_next: |
   Write exact facts here, not pointers to code.
   e.g. POST /login -> {token: JWT, expiresIn: 3600}
@@ -71,6 +72,7 @@ class StatusFrontmatter(BaseModel):
     workspace_path: Optional[str] = None
     summary: str = ""
     outputs: List[str] = Field(default_factory=list)
+    artifacts: List[dict[str, Any]] = Field(default_factory=list)
     signals_to_next: str = ""
     blockers: str = "none"
     updated_at: Optional[str] = None
@@ -340,6 +342,7 @@ def initialize_status_file(
         data["task_title"] = task_title
     data.setdefault("summary", "Task assigned; agent has not written a handoff summary yet.")
     data.setdefault("outputs", [])
+    data.setdefault("artifacts", [])
     data.setdefault("signals_to_next", "")
     data.setdefault("blockers", "none")
     _write_status(path, data, _status_body(existing["content"]) if same_assignment and not overwrite else "")
@@ -411,6 +414,7 @@ def build_handoff_instructions(agent_name: str, workspace_path: str | Path) -> s
         "- On takeover, read STATUS.md first to understand state, outputs, blockers, and signals_to_next.\n"
         f"- {review_line}\n"
         "- Keep task_id, project_id, session_id, and run_token unchanged; they identify this exact run.\n"
-        "- Fill STATUS.md with state, handoff_ready, current_agent, summary, outputs, self-contained signals_to_next, and blockers.\n"
+        "- Fill STATUS.md with state, handoff_ready, current_agent, summary, outputs, artifacts, self-contained signals_to_next, and blockers.\n"
+        "- A git_pr handoff must include an artifact like {kind: pull_request, provider: github, url: https://github.com/owner/repo/pull/123}; the server verifies its merged state and head revision.\n"
         "- When work is ready for another agent or the human, set handoff_ready: true and state: done, completed, or review. If blocked, record blockers and leave handoff_ready: false."
     )

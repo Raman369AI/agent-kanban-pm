@@ -343,7 +343,7 @@ async def test_launch_admission_is_serialized(monkeypatch):
     running = 0
     peak = 0
 
-    async def fake_launch(task_id, entity_id, assigned_role=None):
+    async def fake_launch(task_id, entity_id, assigned_role=None, **kwargs):
         nonlocal running, peak
         running += 1
         peak = max(peak, running)

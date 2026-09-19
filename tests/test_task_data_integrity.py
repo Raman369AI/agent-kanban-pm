@@ -113,7 +113,7 @@ def test_reopening_task_clears_completion_timestamp():
 
         completed = client.patch(
             f"/tasks/{task['id']}",
-            json={"status": "completed"},
+            json={"status": "completed", "override_reason": "Complete directly for timestamp integrity coverage."},
             headers=headers,
         )
         assert completed.status_code == 200, completed.text

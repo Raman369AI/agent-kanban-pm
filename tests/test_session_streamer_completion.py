@@ -1,4 +1,5 @@
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,7 @@ async def test_worker_completion_moves_task_to_review_and_assigns_review_roles(t
             stage_key="review",
             on_enter_roles_json='["test", "diff_review"]',
             required_outputs_json="[]",
+            requires_orchestrator_move=False,
         ))
         task = Task(
             title="Implement handoff",
@@ -113,6 +115,8 @@ async def test_worker_completion_moves_task_to_review_and_assigns_review_roles(t
             workspace_path=str(workspace),
             status=AgentSessionStatus.ACTIVE,
             command="worker",
+            handoff_received_at=datetime.now(UTC),
+            handoff_state="done",
         )
         db.add(session)
         await db.commit()
@@ -190,6 +194,7 @@ async def test_review_completion_moves_task_to_done_and_assigns_git_pr(tmp_path,
             stage_key="done",
             on_enter_roles_json='["git_pr"]',
             required_outputs_json="[]",
+            requires_orchestrator_move=False,
         ))
         task = Task(
             title="Review handoff",
@@ -201,12 +206,21 @@ async def test_review_completion_moves_task_to_done_and_assigns_git_pr(tmp_path,
         db.add(task)
         await db.flush()
         await db.execute(task_assignments.insert().values(task_id=task.id, entity_id=reviewer.id))
+        source = AgentSession(agent_id=reviewer.id, project_id=project.id, task_id=task.id,
+                              workspace_path=str(workspace), assigned_role="worker",
+                              status=AgentSessionStatus.DONE, ended_at=datetime.now(UTC),
+                              handoff_received_at=datetime.now(UTC))
+        db.add(source)
+        await db.flush()
         session = AgentSession(
             agent_id=reviewer.id,
             project_id=project.id,
             task_id=task.id,
             workspace_path=str(workspace),
             assigned_role="diff_review",
+            source_session_id=source.id,
+            handoff_received_at=datetime.now(UTC),
+            handoff_state="done",
             status=AgentSessionStatus.ACTIVE,
             command="review",
         )
@@ -381,8 +395,8 @@ async def _create_exit_driven_session(tmp_path, suffix):
 
 
 @pytest.mark.asyncio
-async def test_zero_exit_completes_without_status_file(tmp_path, monkeypatch):
-    session, task_id, _ = await _create_exit_driven_session(tmp_path, "success")
+async def test_zero_exit_without_handoff_is_error_and_does_not_advance(tmp_path, monkeypatch):
+    session, task_id, progress_stage_id = await _create_exit_driven_session(tmp_path, "success")
 
     async def publish_noop(*args, **kwargs):
         return None
@@ -407,10 +421,11 @@ async def test_zero_exit_completes_without_status_file(tmp_path, monkeypatch):
     async with async_session_maker() as db:
         saved_session = await db.get(AgentSession, session.id)
         task = await db.get(Task, task_id)
-    assert saved_session.status == AgentSessionStatus.DONE
+    assert saved_session.status == AgentSessionStatus.ERROR
     assert saved_session.exit_code == 0
-    assert saved_session.handoff_summary.startswith("CLI exited successfully.")
-    assert task.status == TaskStatus.IN_REVIEW
+    assert saved_session.handoff_received_at is None
+    assert task.stage_id == progress_stage_id
+    assert task.status == TaskStatus.IN_PROGRESS
 
 
 @pytest.mark.asyncio

@@ -208,6 +208,8 @@ async def _completion_for_session(session: AgentSession) -> Optional[str]:
             )
             .values(
                 handoff_state=state,
+                handoff_outputs_json=json.dumps(status_data['validated'].outputs),
+                handoff_artifacts_json=json.dumps(status_data['validated'].artifacts),
                 handoff_summary=summary,
                 handoff_received_at=datetime.now(UTC),
             )
@@ -236,47 +238,6 @@ async def _assigned_role_for_session(session: AgentSession) -> str:
     return (session.assigned_role or "worker").strip().lower()
 
 
-async def _assign_stage_entry_roles(db, task: Task, stage: Stage, *, skip_agent_id: Optional[int] = None) -> list[dict]:
-    from agent_kanban_pm.runtime.preferences import load_preferences
-    from agent_kanban_pm.runtime.stage_policy import get_stage_policy_for_stage, policy_roles
-    from agent_kanban_pm.models import Entity, EntityType
-
-    policy = await get_stage_policy_for_stage(db, task.project_id, stage.id)
-    roles = policy_roles(policy) if policy else []
-    if not roles:
-        return []
-
-    prefs = load_preferences()
-    assignments = prefs.get_role_assignments() if prefs else {}
-    assigned: list[dict] = []
-    for role_name in roles:
-        assignment = assignments.get(role_name)
-        if not assignment or not assignment.agent:
-            continue
-        entity = (await db.execute(
-            select(Entity).filter(
-                Entity.name == assignment.agent,
-                Entity.entity_type == EntityType.AGENT,
-                Entity.is_active == True,
-            )
-        )).scalar_one_or_none()
-        if not entity or entity.id == skip_agent_id:
-            continue
-
-        exists = await db.execute(
-            select(task_assignments.c.task_id).where(
-                task_assignments.c.task_id == task.id,
-                task_assignments.c.entity_id == entity.id,
-            )
-        )
-        if exists.first():
-            assigned.append({"role": role_name, "entity_id": entity.id, "agent": entity.name, "already_assigned": True})
-            continue
-        await db.execute(task_assignments.insert().values(task_id=task.id, entity_id=entity.id))
-        assigned.append({"role": role_name, "entity_id": entity.id, "agent": entity.name, "already_assigned": False})
-    return assigned
-
-
 async def _advance_task_after_session(db, session: AgentSession, task: Task) -> tuple[Optional[dict], list[dict]]:
 
     current_stage = None
@@ -290,13 +251,18 @@ async def _advance_task_after_session(db, session: AgentSession, task: Task) -> 
     if current_key in {"to_do", "in_progress"}:
         target_stage = await _stage_for_key(db, task.project_id, {"review"})
         target_status = TaskStatus.IN_REVIEW
-    elif current_key == "review" and assigned_role in {"test", "diff_review"}:
+    elif current_key == "review" and assigned_role in {"test", "diff_review", "git_pr"}:
         target_stage = await _stage_for_key(db, task.project_id, {"done"})
         target_status = TaskStatus.COMPLETED
 
     if not target_stage or target_stage.id == task.stage_id:
         return None, []
 
+    from agent_kanban_pm.runtime.review_gate import completion_blocker
+    blocker = await completion_blocker(db, session, task, current_stage, target_stage)
+    if blocker:
+        db.add(TaskLog(task_id=task.id, log_type="handoff", message=f"Automatic transition blocked: {blocker}"))
+        return None, []
     old_stage_id = task.stage_id
     old_stage_name = current_stage.name if current_stage else None
     task.stage_id = target_stage.id
@@ -307,7 +273,16 @@ async def _advance_task_after_session(db, session: AgentSession, task: Task) -> 
     if target_status == TaskStatus.COMPLETED and task.completed_at is None:
         task.completed_at = datetime.now(UTC)
 
-    assigned = await _assign_stage_entry_roles(db, task, target_stage, skip_agent_id=session.agent_id)
+    from agent_kanban_pm.runtime.stage_entry import enqueue_stage_entry
+    assigned = await enqueue_stage_entry(db, task, target_stage, actor_id=session.agent_id,
+                                         source_session_id=session.source_session_id or session.id)
+    event_bus.enqueue(db, EventType.TASK_MOVED.value,
+                      {"task_id": task.id, "from_stage_id": old_stage_id, "to_stage_id": target_stage.id,
+                       "status": target_status.value}, project_id=task.project_id, entity_id=session.agent_id)
+    if target_status == TaskStatus.COMPLETED:
+        event_bus.enqueue(db, EventType.TASK_COMPLETED.value,
+                          {"task_id": task.id, "title": task.title, "status": target_status.value,
+                           "stage_id": task.stage_id}, project_id=task.project_id, entity_id=session.agent_id)
     return {
         "task_id": task.id,
         "title": task.title,
@@ -325,6 +300,29 @@ async def _finalize_completed_session(
     session: AgentSession, pane: str, summary: str, exit_code: Optional[int] = None
 ) -> bool:
     """Mark the session DONE, record handoff, and advance the card to the next collaboration stage."""
+    async with async_session_maker() as db:
+        persisted = await db.get(AgentSession, session.id)
+        if not persisted or persisted.ended_at or not persisted.handoff_received_at:
+            return False
+        session = persisted
+    from agent_kanban_pm.runtime.integration_evidence import (
+        IntegrationEvidenceError,
+        verify_pull_request_handoff,
+    )
+    from agent_kanban_pm.runtime.review_gate import verify_handoff_revision
+    from agent_kanban_pm.runtime.workspaces import WorkspacePreparationError
+    try:
+        revision = await asyncio.to_thread(verify_handoff_revision, session)
+        if (session.assigned_role or "").strip().lower() == "git_pr":
+            verified = await asyncio.to_thread(
+                verify_pull_request_handoff, session.workspace_path,
+                json.loads(session.handoff_artifacts_json or "[]"),
+                session.work_revision or revision,
+            )
+            session.handoff_artifacts_json = json.dumps([verified])
+    except (WorkspacePreparationError, IntegrationEvidenceError, ValueError, TypeError) as exc:
+        await _finalize_failed_session(session, pane, exit_code, str(exc))
+        return True
     now = datetime.now(UTC)
     async with async_session_maker() as db:
         claimed = await db.execute(
@@ -340,10 +338,12 @@ async def _finalize_completed_session(
             )
             .values(
                 status=AgentSessionStatus.DONE,
+                work_revision=revision,
                 ended_at=now,
                 last_seen_at=now,
                 exit_code=exit_code,
                 handoff_summary=summary,
+                handoff_artifacts_json=session.handoff_artifacts_json,
                 handoff_state=func.coalesce(AgentSession.handoff_state, "done"),
                 handoff_received_at=func.coalesce(AgentSession.handoff_received_at, now),
             )
@@ -357,6 +357,13 @@ async def _finalize_completed_session(
             return False
 
         transition_event, assigned_stage_roles = await _advance_task_after_session(db, row, task)
+        if row.launch_request_id:
+            from agent_kanban_pm.models import LaunchRequest
+            request = await db.get(LaunchRequest, row.launch_request_id)
+            if request:
+                request.status = "completed"
+                request.last_error = None
+                request.retry_at = None
 
         leases = (await db.execute(
             select(TaskLease).filter(
@@ -428,63 +435,22 @@ async def _finalize_completed_session(
             workspace_path=session.workspace_path,
             created_at=now,
         ))
+        if transition_event:
+            event_bus.enqueue(db, EventType.TASK_UPDATED.value, {
+                "task_id": transition_event["task_id"], "title": transition_event["title"],
+                "status": transition_event["status"], "stage_id": transition_event["to_stage_id"],
+            }, project_id=transition_event["project_id"], entity_id=session.agent_id)
+        destination = transition_event["to_stage_name"] if transition_event else None
+        event_bus.enqueue(db, EventType.AGENT_STATUS_UPDATED.value, {
+            "agent_id": session.agent_id, "session_id": session.id,
+            "project_id": session.project_id, "task_id": session.task_id,
+            "status_type": "done",
+            "message": (f"Session completed; task #{session.task_id} advanced to {destination}"
+                        if destination else
+                        f"Session completed; task #{session.task_id} awaiting review decision"),
+        }, project_id=session.project_id, entity_id=session.agent_id)
         await db.commit()
 
-    if transition_event:
-        await event_bus.publish(
-            EventType.TASK_MOVED.value,
-            {
-                "task_id": transition_event["task_id"],
-                "title": transition_event["title"],
-                "from_stage_id": transition_event["from_stage_id"],
-                "to_stage_id": transition_event["to_stage_id"],
-                "status": transition_event["status"],
-                "summary": "Agent session completed and handed off",
-            },
-            project_id=transition_event["project_id"],
-            entity_id=session.agent_id,
-        )
-        await event_bus.publish(
-            EventType.TASK_UPDATED.value,
-            {
-                "task_id": transition_event["task_id"],
-                "title": transition_event["title"],
-                "status": transition_event["status"],
-                "stage_id": transition_event["to_stage_id"],
-            },
-            project_id=transition_event["project_id"],
-            entity_id=session.agent_id,
-        )
-        for assignment in assigned_stage_roles:
-            await event_bus.publish(
-                EventType.TASK_ASSIGNED.value,
-                {
-                    "task_id": transition_event["task_id"],
-                    "entity_id": assignment["entity_id"],
-                    "role": assignment["role"],
-                    "trigger": "stage_entry",
-                },
-                project_id=transition_event["project_id"],
-                entity_id=session.agent_id,
-            )
-
-    await event_bus.publish(
-        EventType.AGENT_STATUS_UPDATED.value,
-        {
-            "agent_id": session.agent_id,
-            "session_id": session.id,
-            "project_id": session.project_id,
-            "task_id": session.task_id,
-            "status_type": "done",
-            "message": (
-                f"Session completed; task #{session.task_id} advanced to {transition_event['to_stage_name']}"
-                if transition_event else
-                f"Session completed; task #{session.task_id} awaiting review decision"
-            ),
-        },
-        project_id=session.project_id,
-        entity_id=session.agent_id,
-    )
     return True
 
 
@@ -514,6 +480,13 @@ async def _finalize_failed_session(
         )
         if claimed.rowcount != 1:
             return False
+        if session.launch_request_id:
+            from agent_kanban_pm.models import LaunchRequest
+            request = await db.get(LaunchRequest, session.launch_request_id)
+            if request:
+                request.status = "failed"
+                request.last_error = reason
+                request.retry_at = None
 
         leases = (await db.execute(
             select(TaskLease).filter(
@@ -556,22 +529,13 @@ async def _finalize_failed_session(
             payload_json=json.dumps({"exit_code": exit_code, "terminal_tail": pane[-2000:]}),
             created_at=now,
         ))
+        event_bus.enqueue(db, EventType.AGENT_STATUS_UPDATED.value, {
+            "agent_id": session.agent_id, "session_id": session.id,
+            "project_id": session.project_id, "task_id": session.task_id,
+            "status_type": "error", "message": reason, "exit_code": exit_code,
+        }, project_id=session.project_id, entity_id=session.agent_id)
         await db.commit()
 
-    await event_bus.publish(
-        EventType.AGENT_STATUS_UPDATED.value,
-        {
-            "agent_id": session.agent_id,
-            "session_id": session.id,
-            "project_id": session.project_id,
-            "task_id": session.task_id,
-            "status_type": "error",
-            "message": reason,
-            "exit_code": exit_code,
-        },
-        project_id=session.project_id,
-        entity_id=session.agent_id,
-    )
     return True
 
 
@@ -601,6 +565,7 @@ async def gc_leak_worktrees() -> None:
     """Prune only worktrees never referenced by a session, and only if clean."""
     try:
         from agent_kanban_pm.runtime.assignment_launcher import prune_git_worktree
+        from agent_kanban_pm.runtime.workspaces import owns_workspace
         from agent_kanban_pm.models import Project
         from pathlib import Path
         import shutil
@@ -649,7 +614,8 @@ async def gc_leak_worktrees() -> None:
                         wt_path = Path(wt_path_str).resolve()
                         project_path_resolved = Path(project.path).resolve()
 
-                        if wt_path != project_path_resolved and wt_path not in recorded_worktree_paths:
+                        if (wt_path != project_path_resolved and wt_path not in recorded_worktree_paths
+                                and owns_workspace(project.path, wt_path, minimum_age=86400)):
                             logger.info("GC pruning orphaned worktree: %s", wt_path_str)
                             await loop.run_in_executor(None, prune_git_worktree, project.path, wt_path_str)
             except Exception as e:
@@ -659,37 +625,43 @@ async def gc_leak_worktrees() -> None:
 
 
 async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
-    tmux_session = _tmux_session_name(agent_name, session.task_id)
+    from agent_kanban_pm.runtime.task_runner import runner_name, receipt_state
+    tmux_session = runner_name(session, _tmux_session_name(agent_name, session.task_id))
 
     # Agents may submit the handoff and exit between polls. Persist and
     # finalize that handoff before interpreting the missing runner as failure.
+    runner = await asyncio.to_thread(_runner_state, tmux_session)
+    receipt = await asyncio.to_thread(receipt_state, session)
+    if receipt and receipt.status == "missing" and session.status == AgentSessionStatus.STARTING:
+        # The scheduler owns reserved/unstarted runs, including restart recovery.
+        return
+    if receipt and receipt.status == "running" and runner.status != "running":
+        # The child may survive its guard/PTY transport. Do not release its
+        # workspace or finalize an early handoff while we cannot stop it.
+        return
+    if receipt and receipt.status != "missing" and not (runner.status == "exited" and runner.exit_code != 0):
+        runner = receipt
     early_summary = await _completion_for_session(session)
+    if runner.status == "exited" and runner.exit_code != 0:
+        early_summary = None
     if early_summary and await _finalize_completed_session(session, "", early_summary):
-        if _tmux_has_session(tmux_session):
-            kill_session(tmux_session)
+        if await asyncio.to_thread(_tmux_has_session, tmux_session):
+            await asyncio.to_thread(kill_session, tmux_session)
         _pane_cursor.pop(session.id, None)
         _pending_approvals.pop(session.id, None)
         return
 
-    runner = _runner_state(tmux_session)
     if runner.status != "running":
-        pane = capture_pane(tmux_session, lines=200)
+        pane = await asyncio.to_thread(capture_pane, tmux_session, lines=200)
         if runner.status == "exited" and runner.exit_code == 0:
-            summary = _checkpoint_summary(pane)
-            if summary.startswith("Session is active;"):
-                summary = "CLI exited successfully."
-            else:
-                summary = f"CLI exited successfully.\n{summary}"
-            await _finalize_completed_session(
-                session, pane, summary, exit_code=runner.exit_code
-            )
-            kill_session(tmux_session)
+            await _finalize_failed_session(session, pane, 0, "CLI exited without a verified completion handoff; task was not advanced.")
+            await asyncio.to_thread(kill_session, tmux_session)
         elif runner.status == "exited":
             await _finalize_failed_session(
                 session, pane, runner.exit_code,
                 f"CLI exited with status {runner.exit_code}.",
             )
-            kill_session(tmux_session)
+            await asyncio.to_thread(kill_session, tmux_session)
         elif runner.status == "missing":
             await _finalize_failed_session(
                 session, pane, None,
@@ -730,9 +702,8 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
                 message=message,
                 updated_at=now,
             ))
-        await db.commit()
-    await event_bus.publish(
-        EventType.AGENT_STATUS_UPDATED.value,
+        event_bus.enqueue(db,
+            EventType.AGENT_STATUS_UPDATED.value,
         {
             "agent_id": session.agent_id,
             "session_id": session.id,
@@ -744,13 +715,14 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
         },
         project_id=session.project_id,
         entity_id=session.agent_id,
-    )
+        )
+        await db.commit()
 
-    pane = capture_pane(tmux_session, lines=200)
+    pane = await asyncio.to_thread(capture_pane, tmux_session, lines=200)
     await _upsert_checkpoint(session, pane, status_type)
     summary = await _completion_for_session(session)
     if summary and await _finalize_completed_session(session, pane, summary):
-        kill_session(tmux_session)
+        await asyncio.to_thread(kill_session, tmux_session)
         _pane_cursor.pop(session.id, None)
         _pending_approvals.pop(session.id, None)
         return
@@ -775,9 +747,8 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
             )).scalar_one_or_none()
             if row:
                 row.last_seen_at = datetime.now(UTC)
-            await db.commit()
-        await event_bus.publish(
-            EventType.AGENT_ACTIVITY_LOGGED.value,
+            event_bus.enqueue(db,
+                EventType.AGENT_ACTIVITY_LOGGED.value,
             {
                 "agent_id": session.agent_id,
                 "session_id": session.id,
@@ -789,7 +760,8 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
             },
             project_id=session.project_id,
             entity_id=session.agent_id,
-        )
+            )
+            await db.commit()
 
     if pane:
         _pane_cursor[session.id] = pane[-400:]
@@ -828,7 +800,7 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
                     reply = no_reply if menu_reply else response_message.strip() or no_reply
                 else:
                     reply = no_reply
-                send_prompt_reply(tmux_session, reply)
+                await asyncio.to_thread(send_prompt_reply, tmux_session, reply)
                 _delivered_approvals[session.id] = pending_id
                 _pending_approvals.pop(session.id, None)
             return
@@ -854,10 +826,8 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
         if row and row.status != AgentSessionStatus.BLOCKED:
             row.status = AgentSessionStatus.BLOCKED
             row.last_seen_at = datetime.now(UTC)
-        await db.commit()
-        await db.refresh(approval)
-        approval_id = approval.id
-        await event_bus.publish(
+        await db.flush()
+        event_bus.enqueue(db,
             EventType.AGENT_APPROVAL_REQUESTED.value,
             {
                 "approval_id": approval.id,
@@ -873,6 +843,9 @@ async def _stream_one_session(session: AgentSession, agent_name: str) -> None:
             project_id=session.project_id,
             entity_id=session.agent_id,
         )
+        await db.commit()
+        await db.refresh(approval)
+        approval_id = approval.id
     _pending_approvals[session.id] = approval_id
     logger.info(
         "Filed approval #%s for task session #%s (type=%s): %r",

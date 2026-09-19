@@ -500,6 +500,7 @@ class TestAssignmentLauncher:
                         status=TaskStatus.PENDING,
                     )
                     task.stage = todo_stage
+                    task.assignees = [agent]
                     db_session.add(task)
                     await db_session.flush()
 
