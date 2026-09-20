@@ -183,12 +183,21 @@ async def test_durable_scheduler_retries_capacity_and_cancels_removed_assignment
     payload = {'event_id': event_id, 'data': {'task_id': task_id, 'entity_id': owner_id}}
     await request_launch(payload)
     await request_launch(payload)
+    async with async_session_maker() as db:
+        target_request_id = await db.scalar(
+            select(LaunchRequest.id).where(LaunchRequest.event_id == event_id)
+        )
     class Launcher:
         result = None
         calls = 0
         async def launch_for_assignment(self, *args, **kwargs):
-            self.calls += 1
-            return self.result
+            # dispatch_launches reconciles the global queue. Other tests can
+            # legitimately leave unrelated requests pending, so only count
+            # and resolve the request this test created.
+            if kwargs.get('launch_request_id') == target_request_id:
+                self.calls += 1
+                return self.result
+            return None
     launcher = Launcher()
     await dispatch_launches(launcher)
     async with async_session_maker() as db:

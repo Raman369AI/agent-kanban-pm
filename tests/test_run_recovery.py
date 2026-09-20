@@ -230,6 +230,18 @@ def test_guard_crash_does_not_make_surviving_child_replayable(tmp_path):
         while not ready.exists() and time.monotonic() < deadline:
             time.sleep(.01)
         assert ready.exists()
+        # The child can touch ``ready`` before the guard has persisted its
+        # child PID. Killing the guard in that window leaves only the initial
+        # ``claimed`` receipt, which correctly looks uncertain. Wait for the
+        # durable running receipt before testing orphan recovery.
+        while time.monotonic() < deadline:
+            try:
+                if json.loads(Path(receipt).read_text()).get('status') == 'running':
+                    break
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+            time.sleep(.01)
+        assert json.loads(Path(receipt).read_text()).get('status') == 'running'
         guard.kill()
         guard.wait(timeout=5)
         assert execution_state(receipt) == ('running', None)
