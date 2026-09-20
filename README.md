@@ -2,7 +2,7 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
-Status: stable release (`0.7.0`) for local, single-user development.
+Status: stable release (`0.8.0`) for local, single-user development.
 The local runtime, board UI, per-task agent sessions, and MCP surface work and
 are covered by tests, including a database upgrade path. It is a single-operator
 tool by design: one shared token guards the local server, so do not expose it to
@@ -368,9 +368,10 @@ the packaged runtime.
 
 ## Roadmap
 
-Version `0.7.0` adds the public project site and a cohesive, responsive visual
-system across the application shell and board while retaining the guided UI
-workflow, durable launch scheduling, session handoffs, and review controls.
+Version `0.8.0` adds live agent activity directly on task cards, assignment-
+gated one-click Start actions, an idempotent Git/PR handoff control for Review,
+and a zero-install `uvx` path while retaining the durable launch scheduler,
+current-revision evidence, and completion gates.
 The next architectural work is to review
 service boundaries for projects, sessions, approvals, and transitions, and to
 decide when the tested versioned SQLite upgrades should move to Alembic.
