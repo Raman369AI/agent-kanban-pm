@@ -4,7 +4,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/kanban_premium.css?v=7">
-<link rel="stylesheet" href="/static/css/board.css?v=9">
+<link rel="stylesheet" href="/static/css/board.css?v=10">
 {% endblock %}
 
 {% block content %}
@@ -271,6 +271,7 @@
           {% for task in stage.tasks %}
           {% set latest_activity = latest_activity_by_task.get(task.id) %}
           {% set start_state = start_state_by_task.get(task.id) %}
+          {% set git_pr_state = git_pr_state_by_task.get(task.id) %}
           <div class="kanban-task-revamp" draggable="true" tabindex="0" role="group"
             aria-label="Task {{ task.title }} in {{ stage.name }}. Use left and right arrow keys to move."
             aria-keyshortcuts="ArrowLeft ArrowRight" onkeydown="handleTaskKeydown(event, this)"
@@ -348,6 +349,30 @@
                 </button>
                 {% else %}
                 <span class="task-start-state task-start-state-{{ start_state.state }}">{{ start_state.label }}</span>
+                {% endif %}
+              </div>
+              {% endif %}
+              {% if git_pr_state %}
+              <div class="task-git-pr-row">
+                {% if git_pr_state.state == 'request' %}
+                <button class="btn btn-sm btn-primary task-git-pr-button" type="button"
+                  onclick="event.stopPropagation();requestGitPr({{ task.id }}, this)"
+                  aria-label="Request Git/PR handoff for task {{ task.title }}"
+                  title="Queue the configured Git/PR agent for the current implementation revision">
+                  &#128279; {{ git_pr_state.label }}
+                </button>
+                {% elif git_pr_state.state == 'configure' %}
+                <button class="btn btn-sm btn-secondary task-git-pr-button" type="button"
+                  onclick="event.stopPropagation();openTeamModal()"
+                  aria-label="Configure Git/PR agent for task {{ task.title }}">
+                  &#9881; {{ git_pr_state.label }}
+                </button>
+                {% elif git_pr_state.state in ('queued', 'blocked', 'reserved', 'starting', 'started', 'active', 'completed', 'policy_queued') %}
+                <a class="task-git-pr-state task-git-pr-state-{{ git_pr_state.state }}"
+                  href="/ui/projects/{{ project.id }}/workbench#launch-queue"
+                  onclick="event.stopPropagation()" title="Open the Activity launch queue">{{ git_pr_state.label }}</a>
+                {% else %}
+                <span class="task-git-pr-state task-git-pr-state-{{ git_pr_state.state }}">{{ git_pr_state.label }}</span>
                 {% endif %}
               </div>
               {% endif %}
@@ -752,5 +777,5 @@
 <script src="/static/js/role-settings.js?v=7"></script>
 <script src="/static/js/terminal-feed.js?v=7"></script>
 <script src="/static/js/folder-picker.js?v=7"></script>
-<script src="/static/js/board.js?v=9"></script>
+<script src="/static/js/board.js?v=10"></script>
 {% endblock %}

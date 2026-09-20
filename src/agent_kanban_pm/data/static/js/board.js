@@ -1219,6 +1219,33 @@
         });
     };
 
+    window.requestGitPr = function(taskId, btn) {
+        if (!btn || btn.disabled) return;
+        var originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Requesting\u2026';
+        apiFetch('/ui/tasks/' + taskId + '/request-git-pr', {
+            method: 'POST',
+            headers: {'x-entity-id': CURRENT_ENTITY_ID}
+        }, 'Failed to request Git/PR handoff')
+            .then(function(result) {
+                var message = result.created
+                    ? 'Git/PR handoff queued.'
+                    : result.state === 'completed'
+                        ? 'Git/PR handoff is already complete.'
+                        : 'Git/PR handoff is already ' + String(result.state || 'queued').replace(/_/g, ' ') + '.';
+                showToast(message, result.created ? 'success' : 'info');
+                return refreshBoardFromServer();
+            })
+            .catch(function(err) {
+                showToast('Git/PR request failed: ' + err.message, 'error');
+                if (btn.isConnected) {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            });
+    };
+
     // --- Task CRUD ---
     function setTaskFormError(message) {
         var el = document.getElementById('task-form-error');

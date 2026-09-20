@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and update it from project WebSocket events without per-card polling.
 - Add an assignment-gated Start action for Backlog cards with exactly one
   active agent, while ambiguous or missing assignments open the Assign flow.
+- Add an idempotent Review-card Git/PR handoff action for projects whose stage
+  policy does not already queue it, with current-revision and launch-state
+  checks that preserve the existing completion gate.
 
 ### Changed
 

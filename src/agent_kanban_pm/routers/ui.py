@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from collections import Counter
 from pathlib import Path
 import asyncio
+import json
 from pydantic import ValidationError
 import logging
 import re
@@ -18,7 +19,7 @@ from agent_kanban_pm.models import (
     Project, Task, Entity, Stage, Comment, EntityType, TaskStatus, ApprovalStatus,
     TaskLog, ProjectWorkspace, Role, OrchestrationDecision, DecisionType,
     AgentSession, AgentSessionStatus, AgentApproval, AgentApprovalStatus,
-    AgentActivity, ActivityType, LaunchRequest,
+    AgentActivity, ActivityType, LaunchRequest, OutboxEvent, StagePolicy,
 )
 from agent_kanban_pm.schemas import ProjectResponse, ChatPlanRequest, TaskCreate, TaskUpdate
 from agent_kanban_pm.auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
@@ -446,6 +447,7 @@ async def project_kanban_board(
     # Task stage alone cannot prove execution: use durable agent sessions.
     role_data = await _role_assignment_payload()
     worker_role = next((role for role in role_data["roles"] if role["role"] == "worker"), None)
+    git_pr_role = next((role for role in role_data["roles"] if role["role"] == "git_pr"), None)
     has_folder = bool(project.path and project.path.strip())
     has_worker = bool(worker_role and worker_role["installed"])
 
@@ -503,6 +505,15 @@ async def project_kanban_board(
     latest_session_by_task = {}
     for session in sessions:
         latest_session_by_task.setdefault(session.task_id, session.status.value)
+    implementation_session_by_task = {}
+    for session in sessions:
+        assigned_role = (session.assigned_role or "worker").strip().lower()
+        if (
+            session.status == AgentSessionStatus.DONE
+            and session.handoff_received_at is not None
+            and assigned_role not in {"test", "diff_review", "git_pr"}
+        ):
+            implementation_session_by_task.setdefault(session.task_id, session)
     open_launch_by_task = {}
     if task_ids:
         launch_result = await db.execute(
@@ -516,6 +527,36 @@ async def project_kanban_board(
         )
         for task_id, launch_status in launch_result:
             open_launch_by_task.setdefault(task_id, launch_status)
+
+    review_task_ids = [
+        task.id for stage in project.stages if stage.key == "review" for task in stage.tasks
+    ]
+    latest_git_launch_by_task = {}
+    if review_task_ids:
+        ranked_git_launch = (
+            select(
+                LaunchRequest.id.label("request_id"),
+                LaunchRequest.task_id,
+                LaunchRequest.status,
+                LaunchRequest.source_session_id,
+                LaunchRequest.session_id,
+                func.row_number().over(
+                    partition_by=LaunchRequest.task_id,
+                    order_by=LaunchRequest.id.desc(),
+                ).label("request_rank"),
+            )
+            .where(
+                LaunchRequest.task_id.in_(review_task_ids),
+                LaunchRequest.role == "git_pr",
+                LaunchRequest.archived_at.is_(None),
+            )
+            .subquery()
+        )
+        git_launch_result = await db.execute(
+            select(ranked_git_launch).where(ranked_git_launch.c.request_rank == 1)
+        )
+        for row in git_launch_result.mappings():
+            latest_git_launch_by_task[row["task_id"]] = dict(row)
 
     active_session_by_task = {}
     for session in sessions:
@@ -554,6 +595,66 @@ async def project_kanban_board(
             else:
                 state = {"state": "choose_agent", "label": "Choose agent"}
             start_state_by_task[task.id] = state
+
+    review_stage_ids = [stage.id for stage in project.stages if stage.key == "review"]
+    review_policy_roles = {}
+    if review_stage_ids:
+        policy_result = await db.execute(
+            select(StagePolicy).where(
+                StagePolicy.project_id == project_id,
+                StagePolicy.stage_id.in_(review_stage_ids),
+            )
+        )
+        for policy in policy_result.scalars():
+            review_policy_roles[policy.stage_id] = set(
+                json.loads(policy.on_enter_roles_json or "[]")
+            )
+
+    git_pr_state_by_task = {}
+    for stage in project.stages:
+        if stage.key != "review":
+            continue
+        policy_queues_git_pr = "git_pr" in review_policy_roles.get(stage.id, set())
+        for task in stage.tasks:
+            source = implementation_session_by_task.get(task.id)
+            current_git_session = next((
+                session for session in sessions
+                if session.task_id == task.id
+                and (session.assigned_role or "").strip().lower() == "git_pr"
+                and source is not None
+                and session.source_session_id == source.id
+                and session.work_revision == source.work_revision
+            ), None)
+            latest_request = latest_git_launch_by_task.get(task.id)
+            if latest_request and source is not None:
+                if latest_request["source_session_id"] != source.id:
+                    latest_request = None
+
+            if current_git_session and current_git_session.ended_at is None:
+                session_status = current_git_session.status.value
+                label = "Git/PR blocked" if session_status == "blocked" else "Git/PR active"
+                state = {"state": session_status, "label": label}
+            elif current_git_session and current_git_session.status == AgentSessionStatus.DONE:
+                state = {"state": "completed", "label": "Git/PR complete"}
+            elif latest_request and latest_request["status"] in {
+                "queued", "blocked", "reserved", "starting", "started",
+            }:
+                request_status = latest_request["status"]
+                state = {
+                    "state": request_status,
+                    "label": "Git/PR blocked" if request_status == "blocked" else "Git/PR queued",
+                }
+            elif source is None:
+                state = {"state": "waiting", "label": "Waiting for implementation"}
+            elif not git_pr_role:
+                state = {"state": "configure", "label": "Configure Git/PR"}
+            elif not git_pr_role["installed"]:
+                state = {"state": "unavailable", "label": "Git/PR unavailable"}
+            elif policy_queues_git_pr and not latest_request and not current_git_session:
+                state = {"state": "policy_queued", "label": "Git/PR queued by policy"}
+            else:
+                state = {"state": "request", "label": "Request Git/PR"}
+            git_pr_state_by_task[task.id] = state
     approvals_result = await db.execute(
         select(AgentApproval.task_id).where(
             AgentApproval.project_id == project_id,
@@ -633,6 +734,7 @@ async def project_kanban_board(
         "latest_session_by_task": latest_session_by_task,
         "latest_activity_by_task": latest_activity_by_task,
         "start_state_by_task": start_state_by_task,
+        "git_pr_state_by_task": git_pr_state_by_task,
         "pending_approval_task_ids": pending_approval_task_ids,
         "active_page": "board",
     })
@@ -1526,6 +1628,174 @@ async def ui_assign_task_role(
     )
     await db.commit()
     return {"ok": True, "entity_id": entity.id, "agent": entity.name, "role": role_name}
+
+
+@router.post("/ui/tasks/{task_id}/request-git-pr")
+async def ui_request_git_pr(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Optional[Entity] = Depends(get_current_entity),
+):
+    """Request one durable Git/PR handoff for the current implementation."""
+    if not current_entity:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    if not is_owner_or_manager(current_entity):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only managers can request Git/PR work")
+
+    task = await db.scalar(
+        select(Task).where(Task.id == task_id).options(selectinload(Task.assignees))
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    project = await db.get(Project, task.project_id)
+    if project:
+        await require_project_approval_for_mutation(project, current_entity)
+    stage = await db.get(Stage, task.stage_id) if task.stage_id else None
+    if stage is None or stage.key != "review":
+        raise HTTPException(status_code=409, detail="Git/PR work can only be requested from Review")
+
+    from agent_kanban_pm.runtime.review_gate import implementation_for_task
+    source = await implementation_for_task(db, task.id)
+    if source is None or not source.work_revision:
+        raise HTTPException(status_code=409, detail="A committed implementation handoff is required")
+
+    entity = await _ensure_role_entity("git_pr", db)
+    if not entity.is_active:
+        raise HTTPException(status_code=422, detail="CLI for role 'git_pr' is not installed")
+
+    current_session = await db.scalar(
+        select(AgentSession).where(
+            AgentSession.task_id == task.id,
+            AgentSession.assigned_role == "git_pr",
+            AgentSession.source_session_id == source.id,
+            AgentSession.work_revision == source.work_revision,
+        ).order_by(AgentSession.id.desc()).limit(1)
+    )
+    if current_session is not None and (
+        current_session.ended_at is None or current_session.status == AgentSessionStatus.DONE
+    ):
+        return {
+            "ok": True,
+            "created": False,
+            "state": "completed" if current_session.status == AgentSessionStatus.DONE else "active",
+            "session_id": current_session.id,
+            "source_session_id": source.id,
+            "work_revision": source.work_revision,
+        }
+
+    open_statuses = ("queued", "blocked", "reserved", "starting", "started")
+
+    async def current_request():
+        return await db.scalar(
+            select(LaunchRequest).where(
+                LaunchRequest.task_id == task.id,
+                LaunchRequest.role == "git_pr",
+                LaunchRequest.stage_id == stage.id,
+                LaunchRequest.source_session_id == source.id,
+                LaunchRequest.archived_at.is_(None),
+                LaunchRequest.status.in_(open_statuses),
+            ).order_by(LaunchRequest.id.desc()).limit(1)
+        )
+
+    existing = await current_request()
+    if existing is not None:
+        return {
+            "ok": True,
+            "created": False,
+            "state": existing.status,
+            "request_id": existing.id,
+            "session_id": existing.session_id,
+            "source_session_id": source.id,
+            "work_revision": source.work_revision,
+        }
+
+    # Entering Review may already have committed an automatic git_pr event,
+    # while the scheduler has not converted it into a LaunchRequest yet.
+    # Recognize that durable intent instead of creating a second request.
+    pending_events = (await db.execute(
+        select(OutboxEvent).where(OutboxEvent.delivered_at.is_(None))
+        .order_by(OutboxEvent.id.desc()).limit(500)
+    )).scalars()
+    for pending in pending_events:
+        try:
+            payload = json.loads(pending.payload)
+        except (TypeError, ValueError):
+            continue
+        data = payload.get("data") or {}
+        if (
+            payload.get("event_type") == EventType.TASK_ASSIGNED.value
+            and data.get("task_id") == task.id
+            and data.get("entity_id") == entity.id
+            and data.get("role") == "git_pr"
+            and data.get("stage_id") == stage.id
+            and data.get("source_session_id") == source.id
+        ):
+            return {
+                "ok": True,
+                "created": False,
+                "state": "policy_queued",
+                "event_id": pending.id,
+                "source_session_id": source.id,
+                "work_revision": source.work_revision,
+            }
+
+    # Close the narrow handoff race where the outbox dispatcher committed the
+    # LaunchRequest after the first lookup but before marking its event sent.
+    existing = await current_request()
+    if existing is not None:
+        return {
+            "ok": True,
+            "created": False,
+            "state": existing.status,
+            "request_id": existing.id,
+            "session_id": existing.session_id,
+            "source_session_id": source.id,
+            "work_revision": source.work_revision,
+        }
+
+    if entity not in task.assignees:
+        task.assignees.append(entity)
+    task.version += 1
+    db.add(TaskLog(
+        task_id=task.id,
+        log_type="action",
+        message=f"Requested Git/PR handoff from {entity.name} by {current_entity.name}",
+    ))
+    event = event_bus.enqueue(
+        db,
+        EventType.TASK_ASSIGNED.value,
+        {
+            "task_id": task.id,
+            "entity_id": entity.id,
+            "role": "git_pr",
+            "stage_id": stage.id,
+            "source_session_id": source.id,
+        },
+        project_id=task.project_id,
+        entity_id=current_entity.id,
+    )
+    await db.flush()
+    request = LaunchRequest(
+        event_id=event.id,
+        actor_id=current_entity.id,
+        task_id=task.id,
+        agent_id=entity.id,
+        role="git_pr",
+        source_session_id=source.id,
+        stage_id=stage.id,
+        status="queued",
+    )
+    db.add(request)
+    await db.commit()
+    await db.refresh(request)
+    return {
+        "ok": True,
+        "created": True,
+        "state": request.status,
+        "request_id": request.id,
+        "source_session_id": source.id,
+        "work_revision": source.work_revision,
+    }
 
 
 @router.patch("/ui/projects/{project_id}/edit")

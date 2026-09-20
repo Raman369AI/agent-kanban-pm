@@ -561,6 +561,36 @@
   }
   .task-start-state-running { color: #10b981; }
   .task-start-state-queued { color: #f59e0b; }
+  .task-git-pr-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 0.4rem;
+  }
+  .task-git-pr-button {
+    min-height: 1.8rem;
+    padding: 0.22rem 0.5rem;
+    font-size: 0.68rem;
+  }
+  .task-git-pr-state {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.55rem;
+    padding: 0.12rem 0.42rem;
+    border-radius: 999px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .task-git-pr-state-active,
+  .task-git-pr-state-completed { color: #10b981; }
+  .task-git-pr-state-blocked { color: #ef4444; }
+  .task-git-pr-state-queued,
+  .task-git-pr-state-reserved,
+  .task-git-pr-state-starting,
+  .task-git-pr-state-started,
+  .task-git-pr-state-policy_queued { color: #f59e0b; }
   .task-assignees-revamp {
     display: flex;
     flex-wrap: wrap;

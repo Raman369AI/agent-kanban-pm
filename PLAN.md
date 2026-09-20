@@ -1,7 +1,7 @@
 # Low-effort agent-workbench improvements
 
 - Date: 2026-09-20
-- Status: Implemented through Phase 2 — Phase 3 deferred
+- Status: Implemented
 - Basis: comparison of Cline Kanban with `agent-kanban-pm`
 
 ## Goal
@@ -41,7 +41,7 @@ changes are stable.
 | 0 | Promote a zero-install `uvx` path | Less than 1 hour | Implemented |
 | 1 | Show latest agent activity on task cards | 2-4 hours | Implemented |
 | 2 | Add a one-click Start action | 2-4 hours | Implemented |
-| 3 | Add a Request Git/PR handoff action | 0.5-1 day | Deferred |
+| 3 | Add a Request Git/PR handoff action | 0.5-1 day | Implemented |
 
 Phases 0 and 1 can ship together. Phase 2 should be a separate, small change so
 its lifecycle behavior is easy to review. Phase 3 is optional for the first
@@ -201,11 +201,10 @@ Use conservative behavior for ambiguous cases:
 
 ## Phase 3: Request Git/PR handoff in Review
 
-> Deferred for the current release. The standard Review stage policy already
-> queues the `git_pr` role through the durable assignment scheduler, and the
-> Activity launch queue already supports blocked-state inspection and retry.
-> Add a separate button only if projects with nonstandard policies need an
-> explicit manual trigger; do not duplicate the default automatic handoff.
+The standard Review policy already queues `git_pr` automatically. The explicit
+action is therefore shown only when manual intervention is useful, such as a
+nonstandard policy or a failed prior attempt. Existing automatic intent,
+launches, and current-revision sessions are recognized instead of duplicated.
 
 ### User experience
 
