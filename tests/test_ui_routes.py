@@ -19,6 +19,7 @@ def test_ui_routes_and_board_render():
             ("/ui/projects", 200),
             ("/ui/users", 200),
             ("/static/css/style.css", 200),
+            ("/static/css/app-polish.css", 200),
             ("/static/css/kanban_premium.css", 200),
             ("/static/js/main.js", 200),
             ("/docs", 200),

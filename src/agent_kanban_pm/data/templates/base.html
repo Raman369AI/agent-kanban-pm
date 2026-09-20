@@ -37,6 +37,7 @@
     <link rel="stylesheet" href="/static/css/style.css?v=7">
     <script src="/static/js/theme.js?v=7"></script>
     {% block extra_css %}{% endblock %}
+    <link rel="stylesheet" href="/static/css/app-polish.css?v=1">
 </head>
 
 <body>
@@ -46,10 +47,15 @@
     <aside class="sidebar" id="app-sidebar">
         <div class="sidebar-header">
             <div class="nav-brand">
-                <h1>Agent PM</h1>
+                <a class="brand-lockup" href="/" aria-label="Agent Kanban PM home">
+                    <span class="brand-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg>
+                    </span>
+                    <span class="brand-copy"><strong>agent-kanban</strong><small>Local control plane</small></span>
+                </a>
             </div>
-            <button id="sidebar-toggle" class="btn-icon sidebar-collapse-btn" title="Toggle sidebar">
-                <span class="icon">≡</span>
+            <button id="sidebar-toggle" class="btn-icon sidebar-collapse-btn" title="Toggle sidebar" aria-label="Toggle sidebar">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
             </button>
         </div>
 
@@ -57,19 +63,19 @@
             <ul>
                 <li>
                     <a href="/" class="nav-link {% if request.url.path == '/' %}active{% endif %}">
-                        <span class="nav-icon">🏠</span>
+                        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9h13v-9M9.5 19v-5h5v5"/></svg></span>
                         <span class="nav-text">Dashboard</span>
                     </a>
                 </li>
                 <li>
                     <a href="/ui/projects" class="nav-link {% if '/projects' in request.url.path %}active{% endif %}">
-                        <span class="nav-icon">📂</span>
+                        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7.5h7l2-2h9v13H3z"/><path d="M3 9.5h18"/></svg></span>
                         <span class="nav-text">Projects</span>
                     </a>
                 </li>
                 <li>
                     <a href="/ui/users" class="nav-link {% if '/users' in request.url.path %}active{% endif %}">
-                        <span class="nav-icon">👥</span>
+                        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19v-2.2A4.8 4.8 0 0 1 8.3 12h1.4a4.8 4.8 0 0 1 4.8 4.8V19"/><path d="M15 5.4a3 3 0 0 1 0 5.2M17 12.5a4.8 4.8 0 0 1 3.5 4.6V19"/></svg></span>
                         <span class="nav-text">Agents & roles</span>
                     </a>
                 </li>
@@ -80,7 +86,7 @@
             <ul>
                 <li>
                     <a href="/docs" target="_blank" class="nav-link">
-                        <span class="nav-icon">📚</span>
+                        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4.5h10a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"/><path d="M8 4.5v12.8A2.7 2.7 0 0 0 10.7 20"/></svg></span>
                         <span class="nav-text">API Docs</span>
                     </a>
                 </li>
@@ -103,13 +109,14 @@
                             aria-label="Open navigation menu" aria-expanded="false" aria-controls="app-sidebar">
                             <span class="icon">&#9776;</span>
                         </button>
+                        <span class="runtime-indicator"><i aria-hidden="true"></i> Local workspace</span>
                         {% block page_title %}{% endblock %}
                     </div>
                     <div class="header-actions">
                         <div class="preferences-controls">
                             <button id="view-toggle" class="btn btn-secondary" type="button">Switch to list</button>
                             <details class="appearance-menu">
-                                <summary class="btn btn-secondary">Appearance</summary>
+                                <summary class="btn btn-secondary"><span aria-hidden="true">◐</span> Appearance</summary>
                                 <div class="appearance-menu-content">
                                     <span class="appearance-setting-label">Theme</span>
                                     <div class="theme-choice" role="group" aria-label="Theme">
@@ -138,7 +145,7 @@
 
         <footer class="footer">
             <div class="container-fluid">
-                <p>&copy; {{ current_year() }} Agent PM &middot; Hybrid Agentic Project Management</p>
+                <p>&copy; {{ current_year() }} agent-kanban &middot; Local orchestration for humans and agents</p>
             </div>
         </footer>
     </div>

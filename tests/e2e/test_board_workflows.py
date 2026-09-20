@@ -1021,17 +1021,23 @@ def test_white_night_choices_keep_sidebar_readable(
     night = page.locator('[data-set-theme="dark"]')
     expect(night).to_have_attribute("aria-pressed", "true")
 
-    for button, theme, background in ((white, "light", [255, 255, 255]),
-                                       (night, "dark", [11, 17, 32])):
+    for button, theme, expected_color in (
+        (white, "light", "rgb(145, 162, 174)"),
+        (night, "dark", "rgb(130, 147, 159)"),
+    ):
         button.click()
         expect(page.locator("html")).to_have_attribute("data-theme", theme)
         expect(button).to_have_attribute("aria-pressed", "true")
-        expect(page.locator("#app-sidebar")).to_have_css("width", "260px")
-        expect(page.locator(".content-area")).to_have_css("margin-left", "260px")
-        expect(page.locator(".board-header-section")).to_have_css("border-radius", "24px")
+        sidebar = page.locator("#app-sidebar")
+        expect(sidebar).to_have_css("width", "236px")
+        expect(page.locator(".content-area")).to_have_css("margin-left", "236px")
+        expect(page.locator(".board-header-section")).to_have_css("border-radius", "14px")
         nav_link = page.locator(".sidebar-nav .nav-link:not(.active)").first
-        expected_color = "rgb(51, 65, 85)" if theme == "light" else "rgb(203, 213, 225)"
         expect(nav_link).to_have_css("color", expected_color)
+        background = sidebar.evaluate(
+            "element => getComputedStyle(element).backgroundColor"
+            ".match(/[\\d.]+/g).slice(0, 3).map(Number)"
+        )
         ratio = nav_link.evaluate(
             r"""(link, background) => {
                 const values = getComputedStyle(link).color.match(/[\d.]+/g).slice(0, 3).map(Number);

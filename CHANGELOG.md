@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-20
+
+### Added
+
+- Publish a responsive project site through GitHub Pages with project metadata,
+  social preview assets, sitemap, robots policy, and Google site verification.
+- Add a shared application-polish stylesheet with coordinated light and dark
+  themes, responsive layouts, reduced-motion support, and a compact local
+  workspace identity.
+
+### Changed
+
+- Refine the application shell and Kanban board with a denser sidebar, clearer
+  hierarchy, restrained surfaces, consistent controls, and scalable SVG icons.
+- Load board styles from the document head and keep the shared polish layer last
+  so page-specific styles have a deterministic cascade.
+- Update browser and route coverage for the revised dimensions, theme contrast,
+  responsive board behavior, and packaged stylesheet.
+
 ## [0.6.1] — 2026-09-19
 
 ### Fixed

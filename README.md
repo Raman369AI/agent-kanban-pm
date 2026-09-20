@@ -2,7 +2,7 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
-Status: stable release (`0.6.1`) for local, single-user development.
+Status: stable release (`0.7.0`) for local, single-user development.
 The local runtime, board UI, per-task agent sessions, and MCP surface work and
 are covered by tests, including a database upgrade path. It is a single-operator
 tool by design: one shared token guards the local server, so do not expose it to
@@ -352,7 +352,8 @@ across every interface.
 
 Board behaviour and styling live in `data/static/js/board.js`,
 `data/static/js/role-settings.js`, and `data/static/css/board.css`; the
-`kanban_board.html` template holds markup only.
+shared application polish layer lives in `data/static/css/app-polish.css`, and
+the `kanban_board.html` template holds markup only.
 
 Package data is served from `agent_kanban_pm/data/`; the historical root-level
 `agents/`, `mcp_configs/`, `static/`, and `templates/` folders are not part of
@@ -360,9 +361,9 @@ the packaged runtime.
 
 ## Roadmap
 
-Version `0.6.1` includes the guided UI workflow, durable launch scheduling,
-session handoffs, review controls, browser coverage, and the completed
-reliability follow-ups documented in [Plan.md](Plan.md).
+Version `0.7.0` adds the public project site and a cohesive, responsive visual
+system across the application shell and board while retaining the guided UI
+workflow, durable launch scheduling, session handoffs, and review controls.
 The next architectural work is to review
 service boundaries for projects, sessions, approvals, and transitions, and to
 decide when the tested versioned SQLite upgrades should move to Alembic.
