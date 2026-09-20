@@ -307,7 +307,10 @@
             : !(task.assignees || []).length
                 ? '<button class="btn btn-primary" type="button" onclick="openAssignModal(' + taskId + ')">Assign work</button>'
                 : stage && stage.dataset.stageKey === 'backlog'
-                    ? '<button class="btn btn-primary" type="button" onclick="moveToTodo(' + taskId + ',this)">Move to To Do</button>'
+                    ? (card.dataset.startState === 'eligible'
+                        ? '<button class="btn btn-primary" type="button" onclick="startTask(' + taskId + ',this,\'eligible\')">Start</button>'
+                        : '<button class="btn btn-primary" type="button" onclick="startTask(' + taskId + ',this,\'' + (card.dataset.startState || 'needs_assignment') + '\')">' +
+                            (card.dataset.startState === 'choose_agent' ? 'Choose agent' : 'Assign agent') + '</button>')
                     : '<a class="btn btn-primary" href="/ui/projects/' + PROJECT_ID + '/workbench#terminal:task:' + taskId + '">View activity</a>';
         overview.innerHTML =
             '<section class="task-overview-section"><h3>Description</h3><p class="task-overview-description">' +
@@ -1179,6 +1182,43 @@
         });
     };
 
+    // --- Start an unambiguous assigned Backlog task ---
+    window.startTask = function(taskId, btn, startState) {
+        var card = document.getElementById('task-card-' + taskId);
+        startState = startState || (card && card.dataset.startState) || 'needs_assignment';
+        if (startState !== 'eligible') {
+            showToast(
+                startState === 'choose_agent'
+                    ? 'Choose one active agent before starting this task.'
+                    : 'Assign an active agent before starting this task.',
+                'info'
+            );
+            openAssignModal(taskId);
+            return;
+        }
+        var todoCol = document.querySelector('.kanban-column-revamp[data-stage-key="to_do"]');
+        if (!todoCol) { showToast('No "To Do" column found', 'error'); return; }
+        if (!card) { showToast('Task card not found', 'error'); return; }
+        var todoZone = todoCol.querySelector('.kanban-drop-zone-revamp');
+        if (btn) {
+            btn.disabled = true;
+            btn.dataset.originalText = btn.textContent;
+            btn.textContent = 'Starting\u2026';
+        }
+        moveTaskCard(card, todoZone).then(function(moved) {
+            if (!moved) return null;
+            var agentName = card.dataset.startAgentName || 'assigned agent';
+            return refreshBoardFromServer().then(function() {
+                showToast('Task queued for ' + agentName + '.', 'success');
+            });
+        }).finally(function() {
+            if (btn && btn.isConnected) {
+                btn.disabled = false;
+                btn.textContent = btn.dataset.originalText || 'Start';
+            }
+        });
+    };
+
     // --- Task CRUD ---
     function setTaskFormError(message) {
         var el = document.getElementById('task-form-error');
@@ -1901,6 +1941,48 @@
     var boardWsNeedsRefresh = false;
     var BOARD_WS_MAX_BACKOFF = 30000;
     var boardExecutionRefreshTimer = null;
+    var ACTIVITY_TYPE_LABELS = {
+        thought: 'Thought', action: 'Action', observation: 'Output', result: 'Result',
+        error: 'Error', file_change: 'File change', command: 'Command',
+        tool_call: 'Tool call', handoff: 'Handoff'
+    };
+    var LOW_SIGNAL_ACTIVITY_TYPES = {thought: true, observation: true};
+    function normalizeActivityPreview(message) {
+        var text = String(message || '')
+            .replace(/[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g, '')
+            .replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return text.length > 180 ? text.slice(0, 179).trimEnd() + '\u2026' : text;
+    }
+    function updateTaskLiveActivity(data, eventTimestamp) {
+        if (!data || !data.task_id) return;
+        var summary = document.getElementById('task-live-summary-' + data.task_id);
+        if (!summary) return;
+        var nextMessage = normalizeActivityPreview(data.message) || 'Activity recorded';
+        var nextId = Number(data.activity_id || 0);
+        var currentId = Number(summary.dataset.activityId || 0);
+        var nextAt = eventTimestamp || data.created_at || new Date().toISOString();
+        var currentAt = summary.dataset.activityAt || '';
+        var type = data.activity_type || data.type || 'action';
+        var currentType = summary.dataset.activityType || '';
+        if (LOW_SIGNAL_ACTIVITY_TYPES[type] && currentType && !LOW_SIGNAL_ACTIVITY_TYPES[currentType]) return;
+        if (nextId && currentId && nextId <= currentId) return;
+        if ((!nextId || !currentId) && currentAt && Date.parse(nextAt) < Date.parse(currentAt)) return;
+        var label = ACTIVITY_TYPE_LABELS[type] || String(type).replace(/_/g, ' ');
+        label = label.charAt(0).toUpperCase() + label.slice(1);
+        var agentLabel = data.agent_name || (data.agent_id ? 'Agent #' + data.agent_id : 'Agent');
+        var typeEl = summary.querySelector('.task-live-type');
+        var messageEl = summary.querySelector('.task-live-message');
+        if (typeEl) typeEl.textContent = label;
+        if (messageEl) messageEl.textContent = nextMessage;
+        summary.dataset.activityId = nextId ? String(nextId) : '';
+        summary.dataset.activityAt = nextAt;
+        summary.dataset.activityType = type;
+        summary.title = 'Latest activity from ' + agentLabel;
+        summary.setAttribute('aria-label', 'Latest activity from ' + agentLabel + ': ' + label + '. ' + nextMessage);
+        summary.hidden = false;
+    }
     function setBoardConnectionStatus(message, stale) {
         var status = document.getElementById('board-connection-status');
         if (!status) return;
@@ -1965,6 +2047,7 @@
                 var data = msg.data;
                 // Add recent-activity dot on card
                 if (data.task_id) {
+                    updateTaskLiveActivity(data, msg.timestamp);
                     var card = document.getElementById('task-card-' + data.task_id);
                     if (card) {
                         var indicators = card.querySelector('.task-state-indicators');

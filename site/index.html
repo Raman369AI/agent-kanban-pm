@@ -268,7 +268,7 @@
           <div>
             <p class="overline">Start local</p>
             <h2>Give your agent work<br>and a place to land.</h2>
-            <p>Install the package, initialize your workspace, and open the board. No account required.</p>
+            <p>Run it instantly with uvx, initialize your workspace, and open the board. No account required. Use pipx when you want a persistent CLI install.</p>
             <div class="install-links">
               <a href="https://pypi.org/project/agent-kanban-pm/" target="_blank" rel="noreferrer">View on PyPI ↗</a>
               <a href="https://github.com/Raman369AI/agent-kanban-pm#install" target="_blank" rel="noreferrer">Installation guide ↗</a>
@@ -276,10 +276,8 @@
           </div>
           <div class="terminal-card" aria-label="Installation commands">
             <div class="terminal-title"><span>Terminal</span><button type="button" class="copy-button" data-copy-target="install-command" aria-label="Copy installation commands">Copy</button></div>
-            <pre id="install-command"><code><span>$</span> pipx install agent-kanban-pm
-
-<span>$</span> kanban init
-<span>$</span> kanban run
+            <pre id="install-command"><code><span>$</span> uvx --from agent-kanban-pm kanban init
+<span>$</span> uvx --from agent-kanban-pm kanban run
 
 <em>● Running at http://localhost:8000</em></code></pre>
           </div>

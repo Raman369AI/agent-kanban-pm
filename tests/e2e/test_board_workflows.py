@@ -653,11 +653,22 @@ def test_mobile_navigation_reachable_on_phone_width(
     assert page.url.endswith("/ui/projects")
 
 
-def test_card_overflow_menu_focus_visibility_and_move_to_todo(
+def test_card_overflow_menu_focus_visibility_and_start(
     page: Page, live_server: str, api: httpx.Client
 ):
     board = _prepare_board(api)
     task_id = board["task"]["id"]
+    agent_response = api.post(
+        "/entities/register/agent",
+        json={"name": f"start-agent-{uuid.uuid4().hex[:8]}", "entity_type": "agent"},
+        headers=board["headers"],
+    )
+    agent_response.raise_for_status()
+    api.post(
+        f"/ui/tasks/{task_id}/assign",
+        json={"entity_id": agent_response.json()["id"], "action": "assign"},
+        headers=board["headers"],
+    ).raise_for_status()
     page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
     card = page.locator(f"#task-card-{task_id}")
 
@@ -680,21 +691,24 @@ def test_card_overflow_menu_focus_visibility_and_move_to_todo(
     expect(menu_item).to_be_hidden()
     expect(more).to_be_focused()
 
-    # The backlog action moves the card and says what it does.
-    move_btn = card.get_by_role("button", name="Move to To Do")
-    expect(move_btn).to_be_visible()
-    move_btn.click()
-    _complete_workflow_override(page, "Queue this card from its explicit backlog action.")
-    expect(page.locator("#toast")).to_contain_text("Task is ready in To Do")
+    # Exactly one active agent makes the one-click Start action available.
+    start_btn = card.get_by_role(
+        "button", name=f"Start for task {board['task']['title']}", exact=True
+    )
+    expect(start_btn).to_be_visible()
+    start_btn.click()
+    _complete_workflow_override(page, "Start this assigned card from its explicit action.")
+    expect(page.locator("#toast")).to_contain_text("Task queued for")
     todo_zone = page.locator(
         '.kanban-column-revamp[data-stage-key="to_do"] .kanban-drop-zone-revamp'
     )
     expect(todo_zone.locator(f"#task-card-{task_id}")).to_be_visible()
 
     # Deleting from the menu removes the card after confirmation.
+    # Start emits a durable assignment event that intentionally refreshes the
+    # board, so wait for that refresh before opening a new transient menu.
+    page.wait_for_timeout(900)
     more.click()
-    # The local task_moved WebSocket echo must not replace the open menu.
-    page.wait_for_timeout(700)
     expect(menu_item).to_be_visible()
     menu_item.click()
     confirm = page.get_by_role("dialog", name="Delete task?")
@@ -1125,6 +1139,51 @@ def test_initial_socket_connection_keeps_rendered_card(
     original = card.element_handle()
     expect(page.locator("#board-connection-status")).to_have_text("Live")
     assert original is not None and original.evaluate("element => element.isConnected")
+
+
+def test_live_activity_event_updates_task_card(
+    page: Page, live_server: str, api: httpx.Client
+):
+    board = _prepare_board(api)
+    page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    agent_response = api.post(
+        "/entities/register/agent",
+        json={"name": f"activity-agent-{uuid.uuid4().hex[:8]}", "entity_type": "agent"},
+        headers=board["headers"],
+    )
+    agent_response.raise_for_status()
+    agent = agent_response.json()
+
+    response = api.post(
+        f"/agents/{agent['id']}/activity",
+        json={
+            "project_id": board["project_id"],
+            "task_id": board["task"]["id"],
+            "activity_type": "tool_call",
+            "message": "Running targeted board tests",
+        },
+        headers=board["headers"],
+    )
+    response.raise_for_status()
+
+    summary = page.locator(f"#task-live-summary-{board['task']['id']}")
+    expect(summary).to_be_visible(timeout=5000)
+    expect(summary.locator(".task-live-type")).to_have_text("Tool call")
+    expect(summary.locator(".task-live-message")).to_have_text("Running targeted board tests")
+
+    lower_signal = api.post(
+        f"/agents/{agent['id']}/activity",
+        json={
+            "project_id": board["project_id"],
+            "task_id": board["task"]["id"],
+            "activity_type": "observation",
+            "message": "raw terminal output should not replace the tool call",
+        },
+        headers=board["headers"],
+    )
+    lower_signal.raise_for_status()
+    page.wait_for_timeout(300)
+    expect(summary.locator(".task-live-message")).to_have_text("Running targeted board tests")
 
 
 def test_board_refreshes_after_websocket_reconnect(

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import case, select, func
 from sqlalchemy.orm import selectinload
 from typing import Optional
 from datetime import UTC, datetime
@@ -18,6 +18,7 @@ from agent_kanban_pm.models import (
     Project, Task, Entity, Stage, Comment, EntityType, TaskStatus, ApprovalStatus,
     TaskLog, ProjectWorkspace, Role, OrchestrationDecision, DecisionType,
     AgentSession, AgentSessionStatus, AgentApproval, AgentApprovalStatus,
+    AgentActivity, ActivityType, LaunchRequest,
 )
 from agent_kanban_pm.schemas import ProjectResponse, ChatPlanRequest, TaskCreate, TaskUpdate
 from agent_kanban_pm.auth import get_current_entity, require_owner, require_manager, is_owner_or_manager, require_project_approval_for_mutation, require_task_access
@@ -33,6 +34,7 @@ from agent_kanban_pm.runtime.default_stages import DEFAULT_STAGES
 from agent_kanban_pm.runtime.stage_identity import normalize_stage_key, STAGE_STATUSES
 from agent_kanban_pm.runtime.instance import get_csrf_token
 from agent_kanban_pm.runtime.paths import templates_dir
+from agent_kanban_pm.runtime.pty_manager import strip_ansi
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +57,50 @@ STATUS_LABELS = {
     "blocked": "Blocked",
 }
 
+ACTIVITY_LABELS = {
+    ActivityType.THOUGHT.value: "Thought",
+    ActivityType.ACTION.value: "Action",
+    ActivityType.OBSERVATION.value: "Output",
+    ActivityType.RESULT.value: "Result",
+    ActivityType.ERROR.value: "Error",
+    ActivityType.FILE_CHANGE.value: "File change",
+    ActivityType.COMMAND.value: "Command",
+    ActivityType.TOOL_CALL.value: "Tool call",
+    ActivityType.HANDOFF.value: "Handoff",
+}
+
+MEANINGFUL_ACTIVITY_TYPES = (
+    ActivityType.ERROR,
+    ActivityType.HANDOFF,
+    ActivityType.RESULT,
+    ActivityType.TOOL_CALL,
+    ActivityType.ACTION,
+    ActivityType.COMMAND,
+    ActivityType.FILE_CHANGE,
+)
+
 
 def _status_label(value) -> str:
     key = getattr(value, "value", value)
     return STATUS_LABELS.get(str(key), str(key).replace("_", " "))
+
+
+def _activity_preview(message: str, limit: int = 180) -> str:
+    """Return safe, compact text for a board card activity preview."""
+    cleaned = strip_ansi(message or "")
+    cleaned = re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) > limit:
+        return cleaned[:limit - 1].rstrip() + "…"
+    return cleaned
+
+
+def _utc_iso(value: Optional[datetime]) -> str:
+    if value is None:
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 templates.env.filters["status_label"] = _status_label
@@ -408,6 +450,50 @@ async def project_kanban_board(
     has_worker = bool(worker_role and worker_role["installed"])
 
     all_tasks = [task for stage in project.stages for task in stage.tasks]
+    latest_activity_by_task = {}
+    task_ids = [task.id for task in all_tasks]
+    if task_ids:
+        # Prefer the latest high-signal activity. Thought/observation entries
+        # are retained as a fallback when a task has no more useful event.
+        activity_priority = case(
+            (AgentActivity.activity_type.in_(MEANINGFUL_ACTIVITY_TYPES), 0),
+            else_=1,
+        )
+        ranked_activity = (
+            select(
+                AgentActivity.id.label("activity_id"),
+                AgentActivity.task_id,
+                AgentActivity.agent_id,
+                Entity.name.label("agent_name"),
+                AgentActivity.activity_type,
+                AgentActivity.message,
+                AgentActivity.created_at,
+                func.row_number().over(
+                    partition_by=AgentActivity.task_id,
+                    order_by=(activity_priority, AgentActivity.id.desc()),
+                ).label("activity_rank"),
+            )
+            .join(Entity, Entity.id == AgentActivity.agent_id)
+            .where(
+                AgentActivity.project_id == project_id,
+                AgentActivity.task_id.in_(task_ids),
+            )
+            .subquery()
+        )
+        activity_result = await db.execute(
+            select(ranked_activity).where(ranked_activity.c.activity_rank == 1)
+        )
+        for row in activity_result.mappings():
+            activity_type = getattr(row["activity_type"], "value", row["activity_type"])
+            latest_activity_by_task[row["task_id"]] = {
+                "id": row["activity_id"],
+                "agent_id": row["agent_id"],
+                "agent_name": row["agent_name"],
+                "type": activity_type,
+                "type_label": ACTIVITY_LABELS.get(activity_type, str(activity_type).replace("_", " ").title()),
+                "message": _activity_preview(row["message"]) or "Activity recorded",
+                "created_at": _utc_iso(row["created_at"]),
+            }
     session_result = await db.execute(
         select(AgentSession)
         .where(AgentSession.project_id == project_id, AgentSession.task_id.is_not(None))
@@ -417,6 +503,57 @@ async def project_kanban_board(
     latest_session_by_task = {}
     for session in sessions:
         latest_session_by_task.setdefault(session.task_id, session.status.value)
+    open_launch_by_task = {}
+    if task_ids:
+        launch_result = await db.execute(
+            select(LaunchRequest.task_id, LaunchRequest.status)
+            .where(
+                LaunchRequest.task_id.in_(task_ids),
+                LaunchRequest.archived_at.is_(None),
+                LaunchRequest.status.in_(("queued", "blocked", "reserved", "starting", "started")),
+            )
+            .order_by(LaunchRequest.id.desc())
+        )
+        for task_id, launch_status in launch_result:
+            open_launch_by_task.setdefault(task_id, launch_status)
+
+    active_session_by_task = {}
+    for session in sessions:
+        if session.task_id and session.ended_at is None:
+            active_session_by_task.setdefault(session.task_id, session.status.value)
+
+    todo_stage_id = next((stage.id for stage in project.stages if stage.key == "to_do"), None)
+    start_state_by_task = {}
+    for stage in project.stages:
+        if stage.key != "backlog":
+            continue
+        for task in stage.tasks:
+            active_agents = [
+                assignee for assignee in task.assignees
+                if assignee.entity_type == EntityType.AGENT and assignee.is_active
+            ]
+            if todo_stage_id is None:
+                state = {"state": "unavailable", "label": "To Do unavailable"}
+            elif task.id in active_session_by_task:
+                state = {"state": "running", "label": "Agent active"}
+            elif task.id in open_launch_by_task:
+                launch_status = open_launch_by_task[task.id]
+                state = {
+                    "state": "queued",
+                    "label": "Launch blocked" if launch_status == "blocked" else "Launch queued",
+                }
+            elif len(active_agents) == 1:
+                state = {
+                    "state": "eligible",
+                    "label": "Start",
+                    "agent_id": active_agents[0].id,
+                    "agent_name": active_agents[0].name,
+                }
+            elif not active_agents:
+                state = {"state": "needs_assignment", "label": "Assign agent"}
+            else:
+                state = {"state": "choose_agent", "label": "Choose agent"}
+            start_state_by_task[task.id] = state
     approvals_result = await db.execute(
         select(AgentApproval.task_id).where(
             AgentApproval.project_id == project_id,
@@ -480,7 +617,7 @@ async def project_kanban_board(
         "has_started": has_started,
         "execution_message": execution_message,
         "first_backlog_task_id": first_backlog_task_id,
-        "todo_stage_id": next((stage.id for stage in project.stages if stage.key == "to_do"), None),
+        "todo_stage_id": todo_stage_id,
         "first_todo_unassigned_task_id": first_todo_unassigned_task_id,
         "first_todo_assigned_task_id": first_todo_assigned_task_id,
         "completed_count": completed_count,
@@ -494,6 +631,8 @@ async def project_kanban_board(
         "stage_statuses": STAGE_STATUSES,
         "setup_checklist": setup_checklist,
         "latest_session_by_task": latest_session_by_task,
+        "latest_activity_by_task": latest_activity_by_task,
+        "start_state_by_task": start_state_by_task,
         "pending_approval_task_ids": pending_approval_task_ids,
         "active_page": "board",
     })

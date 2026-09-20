@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Show a compact, durable latest-agent-activity preview directly on task cards
+  and update it from project WebSocket events without per-card polling.
+- Add an assignment-gated Start action for Backlog cards with exactly one
+  active agent, while ambiguous or missing assignments open the Assign flow.
+
+### Changed
+
+- Promote zero-install `uvx` initialization and run commands in the README and
+  project site while retaining `pipx` as the persistent-install option.
+
 ## [0.7.0] — 2026-09-20
 
 ### Added

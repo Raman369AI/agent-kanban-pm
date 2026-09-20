@@ -4,7 +4,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/kanban_premium.css?v=7">
-<link rel="stylesheet" href="/static/css/board.css?v=8">
+<link rel="stylesheet" href="/static/css/board.css?v=9">
 {% endblock %}
 
 {% block content %}
@@ -269,12 +269,16 @@
 
         <div class="kanban-drop-zone-revamp" data-stage-id="{{ stage.id }}">
           {% for task in stage.tasks %}
+          {% set latest_activity = latest_activity_by_task.get(task.id) %}
+          {% set start_state = start_state_by_task.get(task.id) %}
           <div class="kanban-task-revamp" draggable="true" tabindex="0" role="group"
             aria-label="Task {{ task.title }} in {{ stage.name }}. Use left and right arrow keys to move."
             aria-keyshortcuts="ArrowLeft ArrowRight" onkeydown="handleTaskKeydown(event, this)"
             data-task-id="{{ task.id }}" data-current-stage="{{ stage.id }}" data-status="{{ task.status.value }}"
             data-priority="P{{ task.priority }}" data-priority-value="{{ task.priority }}"
             data-execution="{{ latest_session_by_task.get(task.id, '') }}" data-needs-me="{{ 'true' if task.id in pending_approval_task_ids else 'false' }}"
+            data-start-state="{{ start_state.state if start_state else '' }}"
+            data-start-agent-name="{{ start_state.agent_name if start_state and start_state.agent_name else '' }}"
             id="task-card-{{ task.id }}">
             <div class="task-compact-face" role="button" aria-haspopup="dialog" aria-controls="task-detail-panel" aria-expanded="false" onclick="toggleCardExpansion({{ task.id }})">
               <div class="task-state-indicators" id="task-indicators-{{ task.id }}"></div>
@@ -305,6 +309,18 @@
                 <span class="task-approval-badge" id="task-approval-badge-{{ task.id }}" style="display:none;cursor:pointer;" onclick="event.stopPropagation();openTaskApprovalPopup({{ task.id }})"></span>
                 <span class="task-session-chip" id="task-session-chip-{{ task.id }}" style="display:none;"></span>
               </div>
+              <div class="task-live-summary" id="task-live-summary-{{ task.id }}"
+                data-activity-id="{{ latest_activity.id if latest_activity else '' }}"
+                data-activity-at="{{ latest_activity.created_at if latest_activity else '' }}"
+                data-activity-type="{{ latest_activity.type if latest_activity else '' }}"
+                {% if latest_activity %}title="Latest activity from {{ latest_activity.agent_name }}"
+                aria-label="Latest activity from {{ latest_activity.agent_name }}: {{ latest_activity.type_label }}. {{ latest_activity.message }}"
+                {% else %}hidden{% endif %}>
+                <span class="task-live-pulse" aria-hidden="true"></span>
+                <span class="task-live-type">{{ latest_activity.type_label if latest_activity else '' }}</span>
+                <span class="task-live-separator" aria-hidden="true">&middot;</span>
+                <span class="task-live-message">{{ latest_activity.message if latest_activity else '' }}</span>
+              </div>
               {% if task.assignees %}
               <div class="task-assignees-revamp">
                 {% for assignee in task.assignees %}
@@ -318,6 +334,20 @@
                 {% endfor %}
                 {% if task.assignees|length > 1 %}
                 <span class="assignee-overflow" title="Expand to see all assignees">+{{ task.assignees|length - 1 }} more</span>
+                {% endif %}
+              </div>
+              {% endif %}
+              {% if start_state %}
+              <div class="task-start-row">
+                {% if start_state.state in ('eligible', 'needs_assignment', 'choose_agent') %}
+                <button class="btn btn-sm {% if start_state.state == 'eligible' %}btn-primary{% else %}btn-secondary{% endif %} task-start-button"
+                  type="button" onclick="event.stopPropagation();startTask({{ task.id }}, this, '{{ start_state.state }}')"
+                  aria-label="{{ start_state.label }} for task {{ task.title }}"
+                  title="{% if start_state.state == 'eligible' %}Move to To Do and queue {{ start_state.agent_name }}{% elif start_state.state == 'choose_agent' %}Choose one agent before starting{% else %}Assign an agent before starting{% endif %}">
+                  {% if start_state.state == 'eligible' %}&#9654;{% else %}&#128100;{% endif %} {{ start_state.label }}
+                </button>
+                {% else %}
+                <span class="task-start-state task-start-state-{{ start_state.state }}">{{ start_state.label }}</span>
                 {% endif %}
               </div>
               {% endif %}
@@ -376,10 +406,6 @@
 
             <div class="task-footer-revamp" onclick="event.stopPropagation()">
               <button class="btn-link" onclick="openAssignModal({{ task.id }})">&#128100; Assign</button>
-              {% if stage.key == 'backlog' %}
-              <button class="btn-link btn-move-to-todo" type="button" onclick="moveToTodo({{ task.id }}, this)"
-                title="Move this card to the To Do stage">&#8594; Move to To Do</button>
-              {% endif %}
             </div>
           </div>
           {% endfor %}
@@ -726,5 +752,5 @@
 <script src="/static/js/role-settings.js?v=7"></script>
 <script src="/static/js/terminal-feed.js?v=7"></script>
 <script src="/static/js/folder-picker.js?v=7"></script>
-<script src="/static/js/board.js?v=8"></script>
+<script src="/static/js/board.js?v=9"></script>
 {% endblock %}

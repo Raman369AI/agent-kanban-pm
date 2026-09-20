@@ -46,8 +46,15 @@ For an isolated CLI installation:
 
 ```bash
 pipx install agent-kanban-pm
-# Or run without installing:
-uvx --from agent-kanban-pm kanban --help
+kanban init
+kanban run
+```
+
+Or run from an ephemeral environment without installing the CLI:
+
+```bash
+uvx --from agent-kanban-pm kanban init
+uvx --from agent-kanban-pm kanban run
 ```
 
 From source:
@@ -74,9 +81,9 @@ kanban run --no-supervisor    # server + UI only
 1. Open **Projects**, create a project, and choose its workspace folder in
    the setup guide.
 2. Open **Agents & roles** to configure an available worker. Use **New task**
-   to create one card, then **Move to To Do** and assign the worker to start
-   execution. **Activity** shows whether the session is queued, running,
-   blocked, or failed.
+   to create one card, assign one active agent, then choose **Start**. The card
+   shows the latest agent activity while **Activity** provides the full session
+   and whether execution is queued, running, blocked, or failed.
 3. Open a task card to read its description, change its stage, inspect output,
    or answer a pending approval. The dashboard's **Needs attention** list and
    the board's **Needs me** filter take you directly to tasks waiting for a

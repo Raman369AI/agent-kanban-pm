@@ -1,5 +1,6 @@
 import sys
 import re
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -105,6 +106,131 @@ def test_ui_routes_and_board_render():
             assert marker.lower() not in body.lower()
 
 
+def test_board_renders_safe_latest_meaningful_activity_preview():
+    with TestClient(app) as client:
+        owner, headers = tests_helper.local_owner_headers(client)
+        project = client.post(
+            "/projects",
+            json={"name": "Activity Preview", "description": "Board preview"},
+            headers=headers,
+        ).json()
+        project_detail = client.get(f"/projects/{project['id']}", headers=headers).json()
+        backlog_id = next(
+            stage["id"] for stage in project_detail["stages"] if stage["name"] == "Backlog"
+        )
+        task_response = client.post(
+            "/ui/tasks/create",
+            json={
+                "title": "Preview task",
+                "project_id": project["id"],
+                "stage_id": backlog_id,
+            },
+            headers=headers,
+        )
+        assert task_response.status_code == 200, task_response.text
+        task = task_response.json()["task"]
+        agents = client.get("/entities?entity_type=agent", headers=headers).json()
+        assert agents
+        message = "\x1b[31m<script>alert(1)</script>\x1b[0m " + ("bounded " * 40)
+        action = client.post(
+            f"/agents/{agents[0]['id']}/activity",
+            json={
+                "project_id": project["id"],
+                "task_id": task["id"],
+                "activity_type": "action",
+                "message": message,
+            },
+            headers=headers,
+        )
+        assert action.status_code == 201, action.text
+        observation = client.post(
+            f"/agents/{agents[0]['id']}/activity",
+            json={
+                "project_id": project["id"],
+                "task_id": task["id"],
+                "activity_type": "observation",
+                "message": "lower-signal terminal output",
+            },
+            headers=headers,
+        )
+        assert observation.status_code == 201, observation.text
+
+        board = client.get(f"/ui/projects/{project['id']}/board")
+        assert board.status_code == 200
+        body = board.text
+        assert f'id="task-live-summary-{task["id"]}"' in body
+        assert f'data-activity-id="{action.json()["id"]}"' in body
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+        assert "\x1b" not in body
+        assert "lower-signal terminal output" not in body
+        assert "bounded bounded bounded" in body
+        assert "…" in body
+
+        board_js = client.get("/static/js/board.js").text
+        assert "updateTaskLiveActivity(data, msg.timestamp)" in board_js
+        assert "messageEl.textContent = nextMessage" in board_js
+
+
+def test_board_start_action_requires_exactly_one_active_agent():
+    with TestClient(app) as client:
+        owner, headers = tests_helper.local_owner_headers(client)
+        project = client.post(
+            "/projects",
+            json={"name": "Start Eligibility", "description": "Start safety"},
+            headers=headers,
+        ).json()
+        stages = {
+            stage["name"]: stage["id"]
+            for stage in client.get(f"/projects/{project['id']}").json()["stages"]
+        }
+        created = client.post(
+            "/ui/tasks/create",
+            json={
+                "title": "Start safely",
+                "project_id": project["id"],
+                "stage_id": stages["Backlog"],
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200, created.text
+        task_id = created.json()["task"]["id"]
+        board_url = f"/ui/projects/{project['id']}/board"
+
+        unassigned = client.get(board_url).text
+        assert 'data-start-state="needs_assignment"' in unassigned
+        assert 'aria-label="Assign agent for task Start safely"' in unassigned
+
+        first_agent = client.post(
+            "/entities/register/agent",
+            json={"name": f"start-agent-{uuid.uuid4().hex[:8]}", "entity_type": "agent"},
+            headers=headers,
+        ).json()
+        assigned = client.post(
+            f"/ui/tasks/{task_id}/assign",
+            json={"entity_id": first_agent["id"], "action": "assign"},
+            headers=headers,
+        )
+        assert assigned.status_code == 200, assigned.text
+        eligible = client.get(board_url).text
+        assert 'data-start-state="eligible"' in eligible
+        assert 'aria-label="Start for task Start safely"' in eligible
+
+        second_agent = client.post(
+            "/entities/register/agent",
+            json={"name": f"start-agent-{uuid.uuid4().hex[:8]}", "entity_type": "agent"},
+            headers=headers,
+        ).json()
+        assigned = client.post(
+            f"/ui/tasks/{task_id}/assign",
+            json={"entity_id": second_agent["id"], "action": "assign"},
+            headers=headers,
+        )
+        assert assigned.status_code == 200, assigned.text
+        ambiguous = client.get(board_url).text
+        assert 'data-start-state="choose_agent"' in ambiguous
+        assert 'aria-label="Choose agent for task Start safely"' in ambiguous
+
+
 def test_board_phase1_interaction_fixes():
     """Phase 1 UI plan: creation entry points, pending guards, mobile nav,
     accurate labels, and readable status text."""
@@ -174,12 +300,13 @@ def test_board_phase1_interaction_fixes():
         assert "data-sidebar-open" in style_css
         assert ".mobile-nav-toggle" in style_css
 
-        # Approval language is reserved for approval requests; the backlog
-        # action describes its actual effect.
-        assert "Move to To Do" in body
+        # Approval language is reserved for approval requests. Unassigned
+        # backlog work asks for an agent before exposing one-click Start.
         assert "moveToTodo" in board_js
+        assert 'data-start-state="needs_assignment"' in body
+        assert "Assign agent" in body
+        assert "window.startTask" in board_js
         assert "approveToTodo" not in board_js
-        assert 'title="Move this card to the To Do stage"' in body
 
         # Destructive task actions live in an accessible overflow menu.
         assert 'aria-haspopup="menu"' in body
