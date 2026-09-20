@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Code, Codex, OpenCode and Aider Kanban Integrations</title>
+  <meta name="description" content="Connect Claude Code, Codex, OpenCode, Aider, Antigravity CLI, and custom coding agents to Agent Kanban PM through local runtime adapters, MCP, REST, or CLI.">
+  <meta name="theme-color" content="#070b0f">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Coding-agent integrations for Agent Kanban PM">
+  <meta property="og:description" content="Coordinate popular coding-agent CLIs from one free local-first Kanban board.">
+  <meta property="og:url" content="https://raman369ai.github.io/agent-kanban-pm/integrations/">
+  <meta property="og:image" content="https://raman369ai.github.io/agent-kanban-pm/assets/og-card.png">
+  <link rel="canonical" href="https://raman369ai.github.io/agent-kanban-pm/integrations/">
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Coding-agent integrations for Agent Kanban PM",
+    "description": "Connect Claude Code, Codex, OpenCode, Aider, Antigravity CLI, and custom agents.",
+    "dateModified": "2026-09-20",
+    "mainEntityOfPage": "https://raman369ai.github.io/agent-kanban-pm/integrations/",
+    "isAccessibleForFree": true,
+    "author": {"@type": "Organization", "name": "Agent Kanban PM contributors"}
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="shell nav-shell">
+      <a class="brand" href="../" aria-label="Agent Kanban PM home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span>
+        <span>agent-kanban</span>
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="../getting-started/">Get started</a>
+        <a href="../coding-agent-kanban/">How it works</a>
+        <a href="https://github.com/Raman369AI/agent-kanban-pm">GitHub</a>
+      </nav>
+    </div>
+  </header>
+  <main class="content-main" id="main">
+    <div class="content-shell">
+      <div class="breadcrumbs"><a href="../">Home</a><span>/</span><span>Integrations</span></div>
+      <section class="content-hero">
+        <p class="overline">Agent integrations</p>
+        <h1>One Kanban board for the coding agents you use</h1>
+        <p>Coordinate Claude Code, Codex, OpenCode, Aider, Antigravity CLI, and custom command-line workers without locking the project to one model provider or hosted platform.</p>
+      </section>
+      <div class="content-grid">
+        <article class="prose">
+          <h2>Supported command-line agents</h2>
+          <p>Agent Kanban PM includes adapters for popular coding-agent CLIs and a generic process path for tools that can run in a terminal. The board manages tasks, lifecycle, evidence, and recovery; each selected agent remains responsible for its own code-generation and tool-use behavior.</p>
+          <ul>
+            <li><strong>Claude Code</strong> for Anthropic-powered repository work.</li>
+            <li><strong>Codex</strong> for OpenAI coding-agent sessions.</li>
+            <li><strong>OpenCode</strong> for provider-flexible terminal workflows.</li>
+            <li><strong>Aider</strong> for Git-aware pair programming.</li>
+            <li><strong>Antigravity CLI</strong> and custom shell adapters for additional runtimes.</li>
+          </ul>
+
+          <h2>Four ways to connect</h2>
+          <h3>Managed local sessions</h3>
+          <p>Choose an agent on a task and launch it from the board. Agent Kanban PM starts the configured executable, streams terminal output, records process state, and keeps the session associated with the card. Optional worktree isolation gives the run a clean branch and working directory.</p>
+
+          <h3>MCP tools</h3>
+          <p>Agents that support the Model Context Protocol can interact with project and task state through Agent Kanban PM's MCP server. This is useful when an orchestrator needs to create work, claim a task, post progress, attach evidence, or request a stage transition using structured tools.</p>
+
+          <h3>REST API</h3>
+          <p>The local HTTP API exposes the same core domain for scripts and purpose-built integrations. Use the generated API schema and the local authentication token rather than scraping the browser interface.</p>
+
+          <h3>Command-line interface</h3>
+          <p>The CLI supports terminal-first operators and automation. It is also the simplest bridge for shell scripts that need to inspect or update board state without embedding an HTTP client.</p>
+
+          <h2>Integration boundaries</h2>
+          <p>Installing Agent Kanban PM does not install or subscribe you to third-party agent services. Install and authenticate each coding-agent CLI according to its provider's instructions, then configure the executable locally. Provider charges, if any, are separate from this project.</p>
+
+          <div class="free-callout">
+            <strong>The Kanban layer is always free.</strong>
+            <p>Agent Kanban PM has no paid plan, per-agent charge, hosted account, or usage fee. It is open source under the MIT license and runs locally.</p>
+          </div>
+
+          <h2>A shared contract across different agents</h2>
+          <p>Using several agents is manageable when they share an operational contract. The task holds the goal and acceptance criteria. Claims and leases establish ownership. Events expose progress. Review evidence connects the run to files, tests, and commits. Approval gates keep sensitive transitions under human control.</p>
+          <p>That contract is intentionally independent of the prompt syntax or model vendor. You can change the assigned CLI without replacing the project-management layer or losing the task's history.</p>
+
+          <h2>Start with one agent</h2>
+          <p>You do not need a multi-agent setup on day one. Start the local board, connect the coding CLI you already use, and run one well-scoped task through review. Add orchestrators, MCP clients, or concurrent worktrees after the basic loop is comfortable.</p>
+
+          <div class="page-cta">
+            <a class="button button-primary" href="../getting-started/">Install Agent Kanban PM <span aria-hidden="true">→</span></a>
+            <a class="button button-quiet" href="../coding-agent-kanban/">See the workflow</a>
+          </div>
+        </article>
+        <aside class="content-aside" aria-label="Integration summary">
+          <strong>Connection surfaces</strong>
+          <ul>
+            <li>Browser-managed runtime</li>
+            <li>MCP server</li>
+            <li>Local REST API</li>
+            <li>Command-line interface</li>
+          </ul>
+          <p>All four operate on the same local task state.</p>
+        </aside>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="shell footer-shell">
+      <a class="brand" href="../"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span><span>agent-kanban</span></a>
+      <p>Free forever · Open source · Local-first</p>
+      <nav><a href="../getting-started/">Get started</a><a href="../coding-agent-kanban/">How it works</a></nav>
+    </div>
+  </footer>
+</body>
+</html>

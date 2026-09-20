@@ -2,12 +2,19 @@
 
 Local-first Kanban project management for humans and headless CLI agents.
 
+[Website](https://raman369ai.github.io/agent-kanban-pm/) ·
+[Getting started](https://raman369ai.github.io/agent-kanban-pm/getting-started/) ·
+[PyPI](https://pypi.org/project/agent-kanban-pm/)
+
 Status: stable release (`0.8.0`) for local, single-user development.
 The local runtime, board UI, per-task agent sessions, and MCP surface work and
 are covered by tests, including a database upgrade path. It is a single-operator
 tool by design: one shared token guards the local server, so do not expose it to
 an untrusted network or share an instance with people you would not give shell
 access.
+
+Agent Kanban PM is free forever and open source under the MIT license. There is
+no paid plan, hosted dependency, account requirement, or usage fee.
 
 The version in this checkout can be newer than the latest published package;
 use the matching Git tag when you need to reproduce a particular release.

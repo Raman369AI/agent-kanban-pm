@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting Started with Agent Kanban PM — Free coding-agent Kanban</title>
+  <meta name="description" content="Install Agent Kanban PM and start a free local-first Kanban board for coding agents in minutes. No account, paid plan, or hosted service required.">
+  <meta name="theme-color" content="#070b0f">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Getting Started with Agent Kanban PM">
+  <meta property="og:description" content="Install a free local-first Kanban board for coding agents in minutes.">
+  <meta property="og:url" content="https://raman369ai.github.io/agent-kanban-pm/getting-started/">
+  <meta property="og:image" content="https://raman369ai.github.io/agent-kanban-pm/assets/og-card.png">
+  <link rel="canonical" href="https://raman369ai.github.io/agent-kanban-pm/getting-started/">
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Getting Started with Agent Kanban PM",
+    "description": "Install and run the free local-first Kanban board for coding agents.",
+    "dateModified": "2026-09-20",
+    "mainEntityOfPage": "https://raman369ai.github.io/agent-kanban-pm/getting-started/",
+    "isAccessibleForFree": true,
+    "author": {"@type": "Organization", "name": "Agent Kanban PM contributors"}
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="shell nav-shell">
+      <a class="brand" href="../" aria-label="Agent Kanban PM home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span>
+        <span>agent-kanban</span>
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="../coding-agent-kanban/">How it works</a>
+        <a href="../integrations/">Integrations</a>
+        <a href="https://github.com/Raman369AI/agent-kanban-pm">GitHub</a>
+      </nav>
+    </div>
+  </header>
+  <main class="content-main" id="main">
+    <div class="content-shell">
+      <div class="breadcrumbs"><a href="../">Home</a><span>/</span><span>Getting started</span></div>
+      <section class="content-hero">
+        <p class="overline">Installation guide</p>
+        <h1>Getting started with Agent Kanban PM</h1>
+        <p>Launch a local Kanban control plane for your coding agents, create a project, and move your first task from plan to reviewed change. The software is free forever, open source, and runs on your machine.</p>
+      </section>
+      <div class="content-grid">
+        <article class="prose">
+          <h2>What you need</h2>
+          <p>Agent Kanban PM supports Python 3.11 or newer on Linux and macOS. Windows users can run it through WSL. You also need Git and at least one command-line coding agent such as Claude Code, Codex, OpenCode, Aider, or Antigravity CLI. Tmux is recommended for detachable sessions but is not required.</p>
+
+          <h2>Run it without installing</h2>
+          <p>The quickest start uses <code>uvx</code>. It downloads the published Python package into an isolated environment and starts the local server:</p>
+          <pre class="code-block"><code>uvx agent-kanban-pm
+# Open the URL printed in your terminal,
+# normally http://127.0.0.1:8000</code></pre>
+          <p>Your board, tasks, agent sessions, and review evidence stay local. The server is designed for one trusted operator; do not expose it to an untrusted network.</p>
+
+          <h2>Install a persistent command</h2>
+          <p>If you want the <code>agent-kanban</code> command available every day, install it with <code>uv tool</code> or <code>pipx</code>:</p>
+          <pre class="code-block"><code>uv tool install agent-kanban-pm
+agent-kanban
+
+# Or:
+pipx install agent-kanban-pm
+agent-kanban</code></pre>
+
+          <div class="free-callout">
+            <strong>Free forever means free forever.</strong>
+            <p>There is no paid tier, account requirement, hosted dependency, trial limit, or usage fee. Agent Kanban PM is released under the MIT license.</p>
+          </div>
+
+          <h2>Your first four steps</h2>
+          <ol>
+            <li><strong>Create a project.</strong> Point it at a Git repository you want your agents to work in.</li>
+            <li><strong>Add a task.</strong> Write the objective, acceptance criteria, and useful context just as you would for a human contributor.</li>
+            <li><strong>Assign and launch.</strong> Choose an installed CLI agent. Agent Kanban PM keeps the run attached to the task and can isolate work in a Git worktree.</li>
+            <li><strong>Review the evidence.</strong> Inspect output, diffs, tests, commits, and approval gates before accepting the result.</li>
+          </ol>
+
+          <h2>Choose how agents connect</h2>
+          <p>Local agents can work through the browser-managed runtime, the command-line interface, a REST API, or the MCP server. The board remains the shared source of truth whichever surface you choose. Read the <a href="../integrations/">integration guide</a> for supported agent CLIs and connection options.</p>
+
+          <h2>Build from source</h2>
+          <p>Contributors can clone the repository and use the locked development environment:</p>
+          <pre class="code-block"><code>git clone https://github.com/Raman369AI/agent-kanban-pm.git
+cd agent-kanban-pm
+uv sync --locked
+uv run agent-kanban</code></pre>
+          <p>For architecture, security boundaries, and development commands, continue to the project README and contributor documentation on GitHub.</p>
+
+          <div class="page-cta">
+            <a class="button button-primary" href="https://pypi.org/project/agent-kanban-pm/">View on PyPI <span aria-hidden="true">→</span></a>
+            <a class="button button-quiet" href="https://github.com/Raman369AI/agent-kanban-pm">Read the README</a>
+          </div>
+        </article>
+        <aside class="content-aside" aria-label="Guide summary">
+          <strong>Quick facts</strong>
+          <p>Local-first project management for humans and headless coding agents.</p>
+          <ul>
+            <li>Free and MIT licensed</li>
+            <li>Python 3.11+</li>
+            <li>Linux, macOS, or WSL</li>
+            <li>No cloud account</li>
+          </ul>
+        </aside>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="shell footer-shell">
+      <a class="brand" href="../"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span><span>agent-kanban</span></a>
+      <p>Free forever · Open source · Local-first</p>
+      <nav><a href="../coding-agent-kanban/">How it works</a><a href="../integrations/">Integrations</a></nav>
+    </div>
+  </footer>
+</body>
+</html>

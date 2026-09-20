@@ -2,7 +2,18 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://raman369ai.github.io/agent-kanban-pm/</loc>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
+    <lastmod>2026-09-20</lastmod>
+  </url>
+  <url>
+    <loc>https://raman369ai.github.io/agent-kanban-pm/getting-started/</loc>
+    <lastmod>2026-09-20</lastmod>
+  </url>
+  <url>
+    <loc>https://raman369ai.github.io/agent-kanban-pm/coding-agent-kanban/</loc>
+    <lastmod>2026-09-20</lastmod>
+  </url>
+  <url>
+    <loc>https://raman369ai.github.io/agent-kanban-pm/integrations/</loc>
+    <lastmod>2026-09-20</lastmod>
   </url>
 </urlset>

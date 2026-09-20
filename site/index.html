@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agent Kanban PM — A control plane for coding agents</title>
-  <meta name="description" content="Local-first orchestration for coding agents with durable sessions, isolated worktrees, approval gates, review evidence, and recoverable handoffs.">
+  <title>Agent Kanban PM — Free local-first Kanban for coding agents</title>
+  <meta name="description" content="Free and open-source local-first Kanban for coding agents, with durable sessions, isolated worktrees, approval gates, review evidence, and recoverable handoffs.">
   <meta name="theme-color" content="#070b0f">
   <meta name="color-scheme" content="dark">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Agent Kanban PM — Coordinate coding agents without losing control">
-  <meta property="og:description" content="A local-first control plane for durable agent execution, review, approvals, and Git handoffs.">
+  <meta property="og:title" content="Agent Kanban PM — Free Kanban for coding agents">
+  <meta property="og:description" content="Free forever and open source: a local-first control plane for durable agent execution, review, approvals, and Git handoffs.">
   <meta property="og:url" content="https://raman369ai.github.io/agent-kanban-pm/">
   <meta property="og:image" content="https://raman369ai.github.io/agent-kanban-pm/assets/og-card.png">
   <meta property="og:image:width" content="1200">
@@ -17,7 +17,7 @@
   <meta property="og:image:alt" content="Agent Kanban PM coordinating coding agents on a local Kanban board">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Agent Kanban PM">
-  <meta name="twitter:description" content="A local-first control plane for coding agents.">
+  <meta name="twitter:description" content="Free and open-source local-first Kanban for coding agents.">
   <meta name="twitter:image" content="https://raman369ai.github.io/agent-kanban-pm/assets/og-card.png">
   <link rel="canonical" href="https://raman369ai.github.io/agent-kanban-pm/">
   <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
@@ -28,13 +28,25 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "Agent Kanban PM",
+    "url": "https://raman369ai.github.io/agent-kanban-pm/",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS, Windows via WSL",
-    "softwareVersion": "0.7.0",
-    "description": "Local-first Kanban project management and orchestration for humans and command-line coding agents.",
+    "softwareVersion": "0.8.0",
+    "description": "Free and open-source local-first Kanban project management and orchestration for humans and command-line coding agents.",
+    "isAccessibleForFree": true,
     "license": "https://opensource.org/license/mit",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock"
+    },
     "downloadUrl": "https://pypi.org/project/agent-kanban-pm/",
-    "codeRepository": "https://github.com/Raman369AI/agent-kanban-pm"
+    "codeRepository": "https://github.com/Raman369AI/agent-kanban-pm",
+    "sameAs": [
+      "https://github.com/Raman369AI/agent-kanban-pm",
+      "https://pypi.org/project/agent-kanban-pm/"
+    ]
   }
   </script>
 </head>
@@ -53,6 +65,8 @@
       <nav class="site-nav" aria-label="Main navigation">
         <a href="#workflow">Workflow</a>
         <a href="#features">Features</a>
+        <a href="./getting-started/">Guide</a>
+        <a href="./integrations/">Integrations</a>
         <a href="#install">Install</a>
       </nav>
 
@@ -68,19 +82,20 @@
       <div class="hero-glow" aria-hidden="true"></div>
       <div class="shell hero-grid">
         <div class="hero-copy" data-reveal>
-          <a class="eyebrow" href="https://github.com/Raman369AI/agent-kanban-pm/releases/tag/v0.7.0">
+          <a class="eyebrow" href="https://github.com/Raman369AI/agent-kanban-pm/releases/tag/v0.8.0">
             <span class="status-dot"></span>
-            v0.7.0 stable local release
+            v0.8.0 stable local release
             <span aria-hidden="true">→</span>
           </a>
-          <h1>Your agents<br>can code.<br><span>Now they can<br>coordinate.</span></h1>
-          <p class="hero-lede">A local-first control plane for humans and command-line coding agents. Plan work, supervise execution, review exact changes, and recover safely when processes fail.</p>
+          <h1><span class="hero-product">Agent Kanban PM</span>Your agents<br>can code.<br><span>Now they can<br>coordinate.</span></h1>
+          <p class="hero-lede">Free forever and open source. Agent Kanban PM is a local-first Kanban control plane for humans and command-line coding agents. Plan work, supervise execution, review exact changes, and recover safely when processes fail.</p>
           <div class="hero-actions">
             <a class="button button-primary" href="#install">Install in 30 seconds <span aria-hidden="true">→</span></a>
             <a class="button button-quiet" href="https://github.com/Raman369AI/agent-kanban-pm" target="_blank" rel="noreferrer">View source</a>
           </div>
           <ul class="hero-meta" aria-label="Project facts">
             <li>MIT licensed</li>
+            <li>Free forever</li>
             <li>Python 3.11+</li>
             <li>macOS + Linux</li>
           </ul>
@@ -102,7 +117,7 @@
               <div class="mock-topline">
                 <div>
                   <span class="mock-kicker">PROJECT</span>
-                  <strong>Release 0.7</strong>
+                  <strong>Release 0.8</strong>
                 </div>
                 <button type="button" tabindex="-1">+ New task</button>
               </div>
@@ -268,7 +283,7 @@
           <div>
             <p class="overline">Start local</p>
             <h2>Give your agent work<br>and a place to land.</h2>
-            <p>Run it instantly with uvx, initialize your workspace, and open the board. No account required. Use pipx when you want a persistent CLI install.</p>
+            <p>Agent Kanban PM is free forever under the MIT license: no paid plan, account, hosted service, or usage fee. Run it instantly with uvx, initialize your workspace, and open the board. Use pipx when you want a persistent CLI install.</p>
             <div class="install-links">
               <a href="https://pypi.org/project/agent-kanban-pm/" target="_blank" rel="noreferrer">View on PyPI ↗</a>
               <a href="https://github.com/Raman369AI/agent-kanban-pm#install" target="_blank" rel="noreferrer">Installation guide ↗</a>
@@ -293,12 +308,13 @@
         <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span>
         <span>agent-kanban</span>
       </a>
-      <p>Open-source local orchestration for humans and agents.</p>
+      <p>Free forever. Open-source local orchestration for humans and agents.</p>
       <nav aria-label="Footer navigation">
+        <a href="./getting-started/">Getting started</a>
+        <a href="./coding-agent-kanban/">How it works</a>
+        <a href="./integrations/">Integrations</a>
         <a href="https://pypi.org/project/agent-kanban-pm/">PyPI</a>
         <a href="https://github.com/Raman369AI/agent-kanban-pm">GitHub</a>
-        <a href="https://github.com/Raman369AI/agent-kanban-pm/blob/main/ARCHITECTURE.md">Architecture</a>
-        <a href="https://github.com/Raman369AI/agent-kanban-pm/blob/main/LICENSE">License</a>
       </nav>
     </div>
   </footer>

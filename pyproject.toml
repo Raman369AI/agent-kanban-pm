@@ -46,7 +46,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Raman369AI/agent-kanban-pm"
+Homepage = "https://raman369ai.github.io/agent-kanban-pm/"
+Documentation = "https://raman369ai.github.io/agent-kanban-pm/getting-started/"
 Repository = "https://github.com/Raman369AI/agent-kanban-pm"
 Issues = "https://github.com/Raman369AI/agent-kanban-pm/issues"
 Changelog = "https://github.com/Raman369AI/agent-kanban-pm/blob/main/CHANGELOG.md"
