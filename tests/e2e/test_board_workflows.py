@@ -1294,6 +1294,9 @@ def test_phase3_edit_draft_survives_refresh_and_conflict(
     dialog = page.get_by_role("dialog", name=f"Edit Task #{task_id}")
     title = dialog.locator("#task-form-title")
     expect(title).to_have_value(board["task"]["title"])
+    # Wait for the initial detail request to establish the version that the
+    # later remote edit must conflict with on slower CI runners.
+    expect(dialog.get_by_role("button", name="Save changes")).to_be_enabled()
     title.fill("My unsaved draft")
 
     changed = api.patch(
