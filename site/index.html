@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Kanban PM — A control plane for coding agents</title>
+  <meta name="description" content="Local-first orchestration for coding agents with durable sessions, isolated worktrees, approval gates, review evidence, and recoverable handoffs.">
+  <meta name="theme-color" content="#070b0f">
+  <meta name="color-scheme" content="dark">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Agent Kanban PM — Coordinate coding agents without losing control">
+  <meta property="og:description" content="A local-first control plane for durable agent execution, review, approvals, and Git handoffs.">
+  <meta property="og:url" content="https://raman369ai.github.io/agent-kanban-pm/">
+  <meta property="og:image" content="https://raman369ai.github.io/agent-kanban-pm/assets/og-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Agent Kanban PM coordinating coding agents on a local Kanban board">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Agent Kanban PM">
+  <meta name="twitter:description" content="A local-first control plane for coding agents.">
+  <meta name="twitter:image" content="https://raman369ai.github.io/agent-kanban-pm/assets/og-card.png">
+  <link rel="canonical" href="https://raman369ai.github.io/agent-kanban-pm/">
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+  <script>document.documentElement.classList.add("js")</script>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Agent Kanban PM",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, macOS, Windows via WSL",
+    "softwareVersion": "0.6.1",
+    "description": "Local-first Kanban project management and orchestration for humans and command-line coding agents.",
+    "license": "https://opensource.org/license/mit",
+    "downloadUrl": "https://pypi.org/project/agent-kanban-pm/",
+    "codeRepository": "https://github.com/Raman369AI/agent-kanban-pm"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header" data-header>
+    <div class="shell nav-shell">
+      <a class="brand" href="#top" aria-label="Agent Kanban PM home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" role="img"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg>
+        </span>
+        <span>agent-kanban</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="#workflow">Workflow</a>
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+      </nav>
+
+      <a class="button button-quiet nav-github" href="https://github.com/Raman369AI/agent-kanban-pm" target="_blank" rel="noreferrer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.1.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.82a9.6 9.6 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.86v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>
+        GitHub <span aria-hidden="true">↗</span>
+      </a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero section" id="top">
+      <div class="hero-glow" aria-hidden="true"></div>
+      <div class="shell hero-grid">
+        <div class="hero-copy" data-reveal>
+          <a class="eyebrow" href="https://github.com/Raman369AI/agent-kanban-pm/releases/tag/v0.6.1">
+            <span class="status-dot"></span>
+            v0.6.1 stable local release
+            <span aria-hidden="true">→</span>
+          </a>
+          <h1>Your agents<br>can code.<br><span>Now they can<br>coordinate.</span></h1>
+          <p class="hero-lede">A local-first control plane for humans and command-line coding agents. Plan work, supervise execution, review exact changes, and recover safely when processes fail.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#install">Install in 30 seconds <span aria-hidden="true">→</span></a>
+            <a class="button button-quiet" href="https://github.com/Raman369AI/agent-kanban-pm" target="_blank" rel="noreferrer">View source</a>
+          </div>
+          <ul class="hero-meta" aria-label="Project facts">
+            <li>MIT licensed</li>
+            <li>Python 3.11+</li>
+            <li>macOS + Linux</li>
+          </ul>
+        </div>
+
+        <div class="product-frame" data-reveal data-delay="1" aria-label="Illustration of the Agent Kanban PM board">
+          <div class="window-bar">
+            <div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+            <span>localhost:8000 / board</span>
+            <span class="live-state"><i></i> Live</span>
+          </div>
+          <div class="app-shell">
+            <aside class="mock-sidebar" aria-hidden="true">
+              <span class="mock-logo">K</span>
+              <i class="active"></i><i></i><i></i><i></i>
+              <span class="mock-avatar"></span>
+            </aside>
+            <div class="mock-main">
+              <div class="mock-topline">
+                <div>
+                  <span class="mock-kicker">PROJECT</span>
+                  <strong>Release 0.7</strong>
+                </div>
+                <button type="button" tabindex="-1">+ New task</button>
+              </div>
+              <div class="mock-status-row">
+                <span><i></i> 3 agents active</span>
+                <span>1 approval needed</span>
+              </div>
+              <div class="mock-board">
+                <div class="mock-column">
+                  <header><span>TO DO</span><b>2</b></header>
+                  <article class="mock-card stage-todo">
+                    <small>#42 · WORKER</small>
+                    <strong>Add browser terminal</strong>
+                    <footer><span>Codex</span><i></i></footer>
+                  </article>
+                  <article class="mock-card stage-todo muted-card">
+                    <small>#45 · TEST</small>
+                    <strong>Verify reconnect flow</strong>
+                  </article>
+                </div>
+                <div class="mock-column">
+                  <header><span>IN PROGRESS</span><b>1</b></header>
+                  <article class="mock-card stage-progress">
+                    <small>#38 · WORKER</small>
+                    <strong>Implement retry-safe launch</strong>
+                    <div class="mock-terminal"><span>$</span> pytest -q<br><em>tests passed</em></div>
+                    <footer><span>Claude</span><i class="pulse"></i></footer>
+                  </article>
+                </div>
+                <div class="mock-column">
+                  <header><span>REVIEW</span><b>1</b></header>
+                  <article class="mock-card stage-review">
+                    <small>#36 · DIFF REVIEW</small>
+                    <strong>Audit auth boundaries</strong>
+                    <div class="review-line"><span>+184</span><span>−27</span></div>
+                    <footer><span>Needs approval</span><i class="warning"></i></footer>
+                  </article>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="agent-strip" aria-label="Supported command-line agents">
+        <div class="shell agent-strip-inner">
+          <span>Works with the CLIs you already use</span>
+          <ul>
+            <li>Claude Code</li>
+            <li>Codex</li>
+            <li>Antigravity</li>
+            <li>OpenCode</li>
+            <li>Aider</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section workflow-section" id="workflow">
+      <div class="shell narrow">
+        <div class="section-heading centered" data-reveal>
+          <p class="overline">A human is still in the loop</p>
+          <h2>From brief to reviewed work,<br>without losing the thread.</h2>
+          <p>Each card becomes an isolated agent session. The board keeps execution visible and decisions yours.</p>
+        </div>
+
+        <ol class="workflow-grid" data-reveal>
+          <li>
+            <span class="step-number">01</span>
+            <span class="feature-icon" aria-hidden="true">⌁</span>
+            <h3>Plan the work</h3>
+            <p>Describe an outcome, preview proposed cards, or create one precise task yourself. Nothing is created until you confirm.</p>
+          </li>
+          <li>
+            <span class="step-number">02</span>
+            <span class="feature-icon" aria-hidden="true">⌘</span>
+            <h3>Run in isolation</h3>
+            <p>Every Git task gets its own worktree and branch. Tmux or a native PTY keeps the agent session durable and observable.</p>
+          </li>
+          <li>
+            <span class="step-number">03</span>
+            <span class="feature-icon" aria-hidden="true">✓</span>
+            <h3>Review the handoff</h3>
+            <p>Inspect exact changes, resolve approval requests, and verify the final PR destination before work moves to Done.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section feature-section" id="features">
+      <div class="shell narrow">
+        <div class="section-heading" data-reveal>
+          <p class="overline">Built for the failure cases</p>
+          <h2>One calm control plane for a<br>noisy agent stack.</h2>
+        </div>
+
+        <div class="bento-grid">
+          <article class="bento bento-wide" data-reveal>
+            <span class="card-index">01</span>
+            <h3>One task. One process. One audit trail.</h3>
+            <p>Sessions, commands, approvals, terminal output, reviews, and handoffs stay attached to the card that caused them.</p>
+            <div class="audit-console" aria-label="Example session audit entries">
+              <div><time>09:41:12</time><span class="console-mark cyan">◆</span><strong>session.started</strong><span>worker · supervised</span></div>
+              <div><time>09:42:08</time><span class="console-mark violet">◆</span><strong>approval.requested</strong><span>git push origin</span></div>
+              <div><time>09:43:51</time><span class="console-mark green">◆</span><strong>handoff.ready</strong><span>tests passed</span></div>
+            </div>
+          </article>
+
+          <article class="bento" data-reveal>
+            <span class="card-index">02</span>
+            <span class="feature-icon" aria-hidden="true">⌂</span>
+            <h3>Local by design</h3>
+            <p>SQLite-backed state, local process supervision, and no external API are required. Your code and agent credentials remain on your machine.</p>
+          </article>
+
+          <article class="bento" data-reveal data-delay="1">
+            <span class="card-index">03</span>
+            <span class="feature-icon" aria-hidden="true">▣</span>
+            <h3>CLI native</h3>
+            <p>Bring Claude Code, Codex, Antigravity, OpenCode, or Aider. YAML adapters describe how each CLI starts and requests approval.</p>
+          </article>
+
+          <article class="bento bento-wide" data-reveal>
+            <span class="card-index">04</span>
+            <h3>Three surfaces. One source of truth.</h3>
+            <div class="surface-row">
+              <div><small>BOARD UI</small><strong>See, decide, recover</strong></div>
+              <span>→</span>
+              <div><small>CLI</small><strong>Inspect, assign, audit</strong></div>
+              <span>→</span>
+              <div><small>MCP + REST</small><strong>Let agents coordinate</strong></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section evidence-section" id="evidence">
+      <div class="shell narrow">
+        <div class="section-heading centered" data-reveal>
+          <p class="overline">Trust comes from evidence</p>
+          <h2>Designed to recover,<br>not merely to demo.</h2>
+        </div>
+        <div class="evidence-grid">
+          <article data-reveal>
+            <strong>Durable execution</strong>
+            <p>Launch intent, leases, checkpoints, and handoffs survive retries and restarts without silently duplicating work.</p>
+          </article>
+          <article data-reveal data-delay="1">
+            <strong>Review provenance</strong>
+            <p>Approvals bind to an implementation revision, immutable base commit, reviewer identity, and content digest.</p>
+          </article>
+          <article data-reveal data-delay="2">
+            <strong>Verified integration</strong>
+            <p>Merged pull requests must match the reviewed head, configured repository, and intended integration branch.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section install-section" id="install">
+      <div class="shell narrow">
+        <div class="install-card" data-reveal>
+          <div>
+            <p class="overline">Start local</p>
+            <h2>Give your agent work<br>and a place to land.</h2>
+            <p>Install the package, initialize your workspace, and open the board. No account required.</p>
+            <div class="install-links">
+              <a href="https://pypi.org/project/agent-kanban-pm/" target="_blank" rel="noreferrer">View on PyPI ↗</a>
+              <a href="https://github.com/Raman369AI/agent-kanban-pm#install" target="_blank" rel="noreferrer">Installation guide ↗</a>
+            </div>
+          </div>
+          <div class="terminal-card" aria-label="Installation commands">
+            <div class="terminal-title"><span>Terminal</span><button type="button" class="copy-button" data-copy-target="install-command" aria-label="Copy installation commands">Copy</button></div>
+            <pre id="install-command"><code><span>$</span> pipx install agent-kanban-pm
+
+<span>$</span> kanban init
+<span>$</span> kanban run
+
+<em>● Running at http://localhost:8000</em></code></pre>
+          </div>
+        </div>
+        <p class="compatibility">Requires Python 3.11+, Git, and a supported coding CLI. Windows users can run it through WSL.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-shell">
+      <a class="brand" href="#top">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span>
+        <span>agent-kanban</span>
+      </a>
+      <p>Open-source local orchestration for humans and agents.</p>
+      <nav aria-label="Footer navigation">
+        <a href="https://pypi.org/project/agent-kanban-pm/">PyPI</a>
+        <a href="https://github.com/Raman369AI/agent-kanban-pm">GitHub</a>
+        <a href="https://github.com/Raman369AI/agent-kanban-pm/blob/main/ARCHITECTURE.md">Architecture</a>
+        <a href="https://github.com/Raman369AI/agent-kanban-pm/blob/main/LICENSE">License</a>
+      </nav>
+    </div>
+  </footer>
+
+  <div class="toast" data-toast role="status" aria-live="polite"></div>
+  <script src="./script.js" defer></script>
+</body>
+</html>

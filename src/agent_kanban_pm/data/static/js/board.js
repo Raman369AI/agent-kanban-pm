@@ -1680,6 +1680,12 @@
         el.textContent = message || '';
         el.style.display = message ? '' : 'none';
     }
+    window.openPlanWorkModal = function() {
+        setPlanError('');
+        openModal('plan-work-modal');
+        var input = document.getElementById('chat-task-input');
+        if (input) window.setTimeout(function() { input.focus(); }, 0);
+    };
     var planPreviewRequest = null;
     function updatePlanPreviewCount() {
         var rows = Array.from(document.querySelectorAll('#plan-preview-items .plan-preview-row'));
@@ -1722,15 +1728,20 @@
         });
         document.getElementById('plan-preview-error').textContent = '';
         updatePlanPreviewCount();
+        closeModal('plan-work-modal');
         openModal('plan-preview-modal');
         var first = list.querySelector('.plan-title');
         if (first) first.focus();
     }
-    function closePlanPreview() {
+    function closePlanPreview(returnToPlanner) {
         if (planRequestPending) return;
         closeModal('plan-preview-modal');
         planPreviewRequest = null;
-        document.getElementById('chat-task-input').focus();
+        if (returnToPlanner !== false) {
+            openPlanWorkModal();
+            var input = document.getElementById('chat-task-input');
+            if (input) window.setTimeout(function() { input.focus(); }, 0);
+        }
     }
     async function createTaskFromChat() {
         var input = document.getElementById('chat-task-input');
@@ -1752,7 +1763,7 @@
             input.focus();
         } finally {
             planRequestPending = false;
-            if (btn) { btn.disabled = false; btn.textContent = 'Plan work'; }
+            if (btn) { btn.disabled = false; btn.textContent = 'Preview plan'; }
             updatePlanPreviewCount();
         }
     }
@@ -1781,7 +1792,7 @@
             var data = await resp.json().catch(function() { return {}; });
             if (!resp.ok) throw new Error(data.detail || 'Could not create tasks');
             planRequestPending = false;
-            closePlanPreview();
+            closePlanPreview(false);
             document.getElementById('chat-task-input').value = '';
             var wrap = document.getElementById('plan-work-wrap');
             var stageName = wrap && wrap.dataset.stageName ? wrap.dataset.stageName : 'Backlog';

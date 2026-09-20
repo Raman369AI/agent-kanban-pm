@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://raman369ai.github.io/agent-kanban-pm/sitemap.xml

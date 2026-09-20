@@ -164,6 +164,8 @@ def test_drag_and_keyboard_card_movement(page: Page, live_server: str, api: http
     page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
 
     card = page.locator(f"#task-card-{task_id}")
+    expect(card).to_be_visible()
+    assert card.evaluate("el => getComputedStyle(el, '::before').backgroundColor") == "rgb(100, 116, 139)"
     todo_zone = page.locator(
         '.kanban-column-revamp[data-stage-name="To Do"] .kanban-drop-zone-revamp'
     )
@@ -171,6 +173,7 @@ def test_drag_and_keyboard_card_movement(page: Page, live_server: str, api: http
     _complete_workflow_override(page, "Queue this card for browser movement coverage.")
     expect(todo_zone.locator(f"#task-card-{task_id}")).to_be_visible()
     expect(page.locator("#toast")).to_contain_text("Task moved to To Do")
+    assert card.evaluate("el => getComputedStyle(el, '::before').backgroundColor") == "rgb(59, 130, 246)"
 
     card.focus()
     card.press("ArrowRight")
@@ -537,6 +540,7 @@ def test_plan_work_pending_guard_blocks_duplicate_submissions(
         """
     )
     page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    page.locator("#plan-work-btn").click()
 
     inp = page.locator("#chat-task-input")
     inp.fill("Ship the login fix")
@@ -584,6 +588,7 @@ def test_plan_work_failure_keeps_text_and_allows_retry(
         """
     )
     page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    page.locator("#plan-work-btn").click()
 
     inp = page.locator("#chat-task-input")
     inp.fill("Plan the onboarding flow")
@@ -957,12 +962,20 @@ def test_phase1_viewport_theme_walkthrough(
     for width in (1440, 1024, 768, 390):
         page.set_viewport_size({"width": width, "height": 900})
         page.goto(url)
-        expect(page.locator("#new-task-btn")).to_be_visible()
-        expect(page.locator("#chat-task-input")).to_be_visible()
-        expect(page.locator("#chat-plan-btn")).to_be_visible()
+        new_task = page.locator("#new-task-btn")
+        plan_work = page.locator("#plan-work-btn")
+        expect(new_task).to_be_visible()
+        expect(plan_work).to_be_visible()
+        assert abs(new_task.bounding_box()["height"] - plan_work.bounding_box()["height"]) <= 1
+        plan_work.click()
+        planner = page.locator("#plan-work-modal")
+        expect(planner).to_be_visible()
+        expect(planner.locator("#chat-task-input")).to_be_visible()
+        expect(planner.locator("#chat-plan-btn")).to_be_visible()
         if width == 1024:
             page.evaluate("document.documentElement.setAttribute('data-sidebar', 'expanded')")
-            assert page.locator("#chat-task-input").bounding_box()["width"] >= 160
+            assert planner.locator("#chat-task-input").bounding_box()["width"] >= 320
+        planner.get_by_role("button", name="Cancel").click()
         if width <= 992:
             toggle = page.locator("#mobile-nav-toggle")
             toggle.click()
@@ -984,7 +997,7 @@ def test_phase1_viewport_theme_walkthrough(
         page.goto(url)
         expect(page.locator("html")).to_have_attribute("data-theme", theme)
         expect(page.locator("#new-task-btn")).to_be_visible()
-        expect(page.locator("#chat-plan-btn")).to_be_visible()
+        expect(page.locator("#plan-work-btn")).to_be_visible()
         expect(page.locator(f"#task-card-{board['task']['id']}")).to_be_visible()
 
 
@@ -1058,7 +1071,7 @@ def test_phase1_controls_at_200_percent_phone_zoom_equivalent(
     )
     for selector in (
         "#mobile-nav-toggle", ".appearance-menu summary",
-        "#new-task-btn", "#chat-task-input", "#chat-plan-btn",
+        "#new-task-btn", "#plan-work-btn",
     ):
         box = page.locator(selector).bounding_box()
         assert box is not None
@@ -1068,6 +1081,15 @@ def test_phase1_controls_at_200_percent_phone_zoom_equivalent(
     expect(page.get_by_role("dialog", name="New task")).to_be_visible()
     for selector in ("#task-form-title", "#task-form-stage", "#task-form-submit"):
         box = page.locator(selector).bounding_box()
+        assert box is not None
+        assert box["x"] >= 0 and box["x"] + box["width"] <= 196, selector
+    page.get_by_role("dialog", name="New task").get_by_role("button", name="Close task dialog").click()
+
+    page.locator("#plan-work-btn").click()
+    planner = page.get_by_role("dialog", name="Plan work with an agent")
+    expect(planner).to_be_visible()
+    for selector in ("#chat-task-input", "#chat-plan-btn"):
+        box = planner.locator(selector).bounding_box()
         assert box is not None
         assert box["x"] >= 0 and box["x"] + box["width"] <= 196, selector
 
@@ -1291,6 +1313,7 @@ def test_phase5_plan_preview_cancel_and_selected_commit_once(
 ):
     board = _prepare_board(api)
     page.goto(f"{live_server}/ui/projects/{board['project_id']}/board")
+    page.locator("#plan-work-btn").click()
     input_box = page.locator("#chat-task-input")
     input_box.fill("Build a small onboarding flow")
     input_box.press("Enter")

@@ -157,7 +157,7 @@ def test_board_phase1_interaction_fixes():
         assert "openNewTaskModal" in board_js
         assert "Plan work" in body
         assert 'id="task-form-stage"' in body
-        assert "Planning proposes task cards" in body
+        assert "Nothing is created until you confirm" in body
 
         # One Enter handler only (no inline keydown on the plan input) and a
         # pending guard so repeated submit attempts cannot duplicate work.

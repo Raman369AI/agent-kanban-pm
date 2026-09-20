@@ -26,7 +26,7 @@
 
   .board-title-row {
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(280px, 560px) auto;
+    grid-template-columns: minmax(220px, 1fr) auto;
     gap: 1rem;
     align-items: center;
   }
@@ -55,7 +55,15 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
+    flex-wrap: wrap;
     gap: 0.5rem;
+  }
+  .board-create-action {
+    min-height: var(--control-height);
+    min-width: 8rem;
+    justify-content: center;
+    gap: 0.4rem;
+    white-space: nowrap;
   }
 
   .board-advanced-details {
@@ -80,7 +88,7 @@
     margin-top: 0.65rem;
   }
 
-  @media(max-width: 1200px) {
+  @media(max-width: 820px) {
     .board-title-row {
       grid-template-columns: minmax(0, 1fr);
       align-items: stretch;
@@ -223,69 +231,6 @@
   }
   .chat-input::placeholder { color: var(--text-muted); }
   .chat-input:focus { outline: none !important; }
-  .header-create-wrap {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    max-width: 640px;
-    position: relative;
-  }
-  #new-task-btn { flex-shrink: 0; }
-  .chat-task-input-wrap-compact {
-    display: flex;
-    align-items: center;
-    background: var(--bg-secondary);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-lg);
-    padding: 0.15rem 0.25rem 0.15rem 1rem;
-    transition: all 0.2s;
-    box-shadow: var(--shadow-sm);
-  }
-  /* The plan input is a grid row so the hint/error can sit under the field
-     without pushing the board around when it appears. */
-  #plan-work-wrap {
-    flex: 1;
-    min-width: 0;
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-areas: "input button" "note note";
-    align-items: center;
-    row-gap: 0.15rem;
-  }
-  #chat-task-input { grid-area: input; }
-  #chat-plan-btn { grid-area: button; margin-left: 0.4rem; }
-  .chat-plan-hint,
-  .chat-plan-error {
-    grid-area: note;
-    margin: 0;
-    padding-left: 1rem;
-    font-size: 0.7rem;
-    line-height: 1.3;
-  }
-  .chat-plan-error { font-weight: 600; }
-  @media (max-width: 900px) {
-    .header-create-wrap { flex-direction: column; align-items: stretch; }
-    #new-task-btn { width: 100%; }
-  }
-  .chat-task-input-wrap-compact:focus-within {
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb), 0.1);
-  }
-  .chat-input-compact {
-    flex: 1;
-    background: transparent !important;
-    border: none !important;
-    padding: 0.4rem 0 !important;
-    font-size: 0.85rem !important;
-    color: var(--text-primary) !important;
-    box-shadow: none !important;
-  }
-  .chat-input-compact:focus { outline: none; }
-  .chat-btn-compact {
-    min-height: var(--control-height-sm);
-    padding: 0.35rem 0.75rem;
-    flex-shrink: 0;
-  }
 
   /* Board: full-width column layout */
   .board-main-revamp {
@@ -306,6 +251,7 @@
 
   /* Column: flex column with sticky header & footer, scrollable drop zone */
   .kanban-column-revamp {
+    --stage-color: var(--accent-primary);
     display: flex;
     flex-direction: column;
     flex: 1 1 0;
@@ -321,6 +267,11 @@
     overflow: hidden;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
+  .kanban-column-revamp[data-stage-key="backlog"] { --stage-color: #64748b; }
+  .kanban-column-revamp[data-stage-key="to_do"] { --stage-color: #3b82f6; }
+  .kanban-column-revamp[data-stage-key="in_progress"] { --stage-color: #f59e0b; }
+  .kanban-column-revamp[data-stage-key="review"] { --stage-color: #8b5cf6; }
+  .kanban-column-revamp[data-stage-key="done"] { --stage-color: #10b981; }
   .kanban-column-revamp:hover {
     background: rgba(255, 255, 255, 0.5);
     border-color: rgba(var(--accent-primary-rgb), 0.2);
@@ -383,7 +334,7 @@
     background: var(--bg-card);
     backdrop-filter: blur(12px);
     border: 1px solid var(--glass-border);
-    border-left: 2px solid var(--accent-primary);
+    border-left: 2px solid var(--glass-border);
     border-radius: var(--radius-lg);
     margin-bottom: 0.5rem;
     box-shadow: var(--shadow-sm);
@@ -392,6 +343,15 @@
     position: relative;
     overflow: hidden;
     user-select: none;
+  }
+  .kanban-task-revamp::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 4px;
+    background: var(--stage-color);
+    z-index: 4;
+    pointer-events: none;
   }
   .kanban-task-revamp:hover:not(.static) {
     transform: translateY(-2px);
@@ -409,7 +369,7 @@
   /* State indicators overlay */
   .task-state-indicators {
     position: absolute;
-    top: 4px;
+    top: 8px;
     right: 4px;
     display: flex;
     gap: 3px;
@@ -786,6 +746,11 @@
     .board-header-section .d-flex.justify-content-between { flex-direction: column; align-items: stretch; gap: 0.85rem; }
     .board-header-section .d-flex.align-items-center.gap-3 { flex-wrap: wrap; }
     .header-actions { display: grid; grid-template-columns: 1fr; gap: 0.5rem; }
+    .board-primary-actions { grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); }
+    .board-primary-actions .board-connection-status { grid-column: 1 / -1; }
+    .board-primary-actions .board-create-action { min-width: 0; width: 100%; }
+    .board-primary-actions #new-task-btn { width: 100%; }
+    .board-primary-actions #header-bell-btn { align-self: center; }
     #project-path-label { max-width: 72vw; }
     .approval-popup-grid { grid-template-columns: 1fr; }
     .approval-popup-actions { flex-wrap: wrap; }
@@ -798,13 +763,8 @@
     .board-title-row { grid-template-columns: minmax(0, 1fr); }
     .board-title-row > * { min-width: 0; }
     .board-title-block h2 { overflow-wrap: anywhere; }
-    .header-create-wrap { min-width: 0; max-width: 100%; }
-    #plan-work-wrap {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-areas: "input" "button" "note";
-    }
-    #chat-task-input { min-width: 0; width: 100%; }
-    #chat-plan-btn { width: 100%; margin-left: 0; }
+    .board-primary-actions { grid-template-columns: minmax(0, 1fr); }
+    .board-primary-actions #header-bell-btn { justify-self: start; }
   }
 
 /* Phase 3: one task workspace outside the board columns. */
@@ -940,6 +900,22 @@ body.task-panel-open { overflow: hidden; }
 .board-connection-status { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--success); font-size: 0.76rem; white-space: nowrap; }
 .board-connection-status::before { content: ''; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: currentColor; }
 .board-connection-status.is-stale { color: var(--warning); }
+.board-primary-actions #new-task-btn { width: auto; }
+.plan-work-card#plan-work-wrap { display: block; width: min(560px, calc(100vw - 1.5rem)); }
+.plan-work-card .modal-header { align-items: flex-start; }
+.plan-work-card .modal-header h3 { margin-bottom: 0.25rem; }
+.plan-work-card .modal-header p { margin: 0; font-size: 0.82rem; line-height: 1.45; }
+.plan-work-body { display: grid; gap: 0.55rem; padding: 1rem; }
+.plan-work-body > label { font-weight: 700; font-size: 0.86rem; }
+.plan-work-card #chat-task-input { grid-area: auto; width: 100%; min-height: 8rem; resize: vertical; }
+.plan-work-card #chat-plan-btn { grid-area: auto; margin-left: 0; }
+.plan-work-card .chat-plan-hint { grid-area: auto; margin: 0; padding: 0; font-size: 0.75rem; line-height: 1.4; }
+.plan-work-card .chat-plan-error { grid-area: auto; min-height: 1.2rem; margin: 0; padding: 0; font-weight: 600; }
+
+.board-simple-shell .kanban-task-revamp.has-active-session { border-left-color: #10b981; }
+@media (max-width: 760px) {
+  .board-primary-actions #new-task-btn { width: 100%; }
+}
 
 /* Readable board and planning preview */
 .board-simple-shell .kanban-task-revamp { backdrop-filter: none; border-color: var(--border-color); box-shadow: none; border-radius: var(--radius); }
