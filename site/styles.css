@@ -1321,3 +1321,7 @@ a {
   line-height: 1.6;
 }
 .prose code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+
+.prose a.button { text-decoration: none; }
+.prose a.button-primary { color: #03110f; }
+.prose a.button-quiet { color: var(--text); }
