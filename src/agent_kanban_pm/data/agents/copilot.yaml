@@ -1,0 +1,44 @@
+name: copilot
+display_name: "GitHub Copilot CLI"
+version: "1.0"
+
+# Verified against GitHub's Copilot CLI command and programmatic references.
+invoke:
+  command: copilot
+  info_flag: "--version"
+  model_flag: "--model"
+
+capabilities: [code, review, planning, testing, refactoring]
+
+models:
+  - id: default
+
+protocol: stdio
+
+auth:
+  type: none
+roles: [orchestrator, worker, ui, test, diff_review]
+modes: [supervised, auto, headless]
+
+reporting:
+  heartbeat_interval: 30
+
+chat_designer:
+  prompt_flag: "--prompt"
+  stdin: false
+  output_format: "stdout"
+  timeout_seconds: 300
+  extra_args: ["--output-format=text", "--no-color"]
+
+role_command:
+  args: ["--no-color"]
+  auto_args: ["--allow-all-tools"]
+
+# Interactive mode is required for supervised approvals. The bypass flag is
+# appended only for roles explicitly configured with autonomy: auto.
+task_command:
+  args: ["--interactive={prompt}", "--no-color"]
+  auto_args: ["--allow-all-tools"]
+
+owns: ['src/', 'tests/', 'lib/']
+review_only: false

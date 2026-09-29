@@ -227,11 +227,45 @@ file there without touching Python.
 | Adapter | Command | Status |
 |---|---|---|
 | `claude` | `claude` | Supported |
+| `copilot` | `copilot` | Supported |
+| `cursor` | `cursor-agent` | Supported |
 | `antigravity` | `agy` | Supported — Google's current CLI |
 | `codex` | `codex` | Supported |
 | `opencode` | `opencode` | Supported |
 | `aider` | `aider` | Supported |
 | `goose`, `crush`, `continue` | — | Stubs; invocation not yet verified |
+
+### Token dashboard and fallback routing
+
+The project Activity workbench includes a **Usage** tab with per-agent input,
+output, reasoning, cache, cost, and account-quota headroom. Agents or local
+collectors report cumulative counters to `POST /agents/sessions/{id}/usage`
+and account quota to `POST /agents/quota`; repeat reports update the same
+ledger row instead of double-counting it. Usage and quota endpoints require an
+authenticated local entity and never store prompts or response content.
+
+Fallback routing is opt-in per role in `~/.kanban/preferences.yaml`:
+
+```yaml
+roles:
+  worker:
+    agent: claude
+    model: default
+    fallbacks:
+      - agent: copilot
+        model: default
+      - agent: codex
+        model: default
+    routing:
+      strategy: ordered       # ordered or headroom
+      min_headroom_percent: 10
+```
+
+Only listed fallbacks are eligible. With `ordered`, the primary stays selected
+until its reported headroom is below the threshold. With `headroom`, the agent
+with the most reported capacity is selected. If the primary's quota is unknown,
+it remains selected; missing telemetry never causes a silent switch. Routing
+decisions are written to the task log and orchestration decision trail.
 
 ### Gemini CLI is retired
 
@@ -384,7 +418,7 @@ service boundaries for projects, sessions, approvals, and transitions, and to
 decide when the tested versioned SQLite upgrades should move to Alembic.
 
 Usage accounting, quota-aware model routing, and cross-CLI task continuation
-are planned separately in [USAGE_ROUTING_PLAN.md](USAGE_ROUTING_PLAN.md).
+are planned separately in [usage-routing.md](docs/plans/usage-routing.md).
 
 ## Security
 

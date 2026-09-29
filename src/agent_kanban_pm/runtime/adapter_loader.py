@@ -32,6 +32,7 @@ USER_ADAPTERS_DIR = Path.home() / ".kanban" / "agents"
 
 POPULAR_CLI_TOOLS = [
     ("claude", "Claude Code"),
+    ("copilot", "GitHub Copilot CLI"),
     ("agy", "Antigravity CLI"),
     ("codex", "Codex CLI"),
     ("opencode", "OpenCode"),
@@ -294,7 +295,11 @@ def _configured_agent_names() -> set:
     prefs = load_preferences()
     if not prefs:
         return set()
-    return {assignment.agent for assignment in prefs.get_role_assignments().values()}
+    names = set()
+    for assignment in prefs.get_role_assignments().values():
+        names.add(assignment.agent)
+        names.update(fallback.agent for fallback in assignment.fallbacks)
+    return names
 
 
 def adapter_role_to_db_role(adapter_roles: List[str]) -> Role:

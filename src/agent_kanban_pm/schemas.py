@@ -266,6 +266,7 @@ class AgentSessionResponse(BaseModel):
     status: AgentSessionStatus
     command: Optional[str] = None
     model: Optional[str] = None
+    resolved_model: Optional[str] = None
     mode: Optional[str] = None
     started_at: datetime
     ended_at: Optional[datetime] = None

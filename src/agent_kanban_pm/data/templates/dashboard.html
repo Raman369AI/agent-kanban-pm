@@ -50,6 +50,20 @@
     </div>
 </div>
 
+<!-- Agent Usage -->
+<section class="card glass-card mb-4" aria-labelledby="dashboard-usage-title" style="padding:2rem;">
+    <div class="card-header" style="border-bottom:1px solid var(--glass-border);padding-bottom:1rem;margin-bottom:1rem;">
+        <div>
+            <h3 class="card-title" id="dashboard-usage-title" style="font-weight:800;letter-spacing:-0.01em;">Agent token usage</h3>
+            <p class="text-secondary" style="margin:0.25rem 0 0;">Tracked task sessions across all projects, plus current quota headroom.</p>
+        </div>
+        <a href="/ui/projects" class="btn btn-secondary btn-sm">Project usage</a>
+    </div>
+    <div id="dashboard-usage-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.85rem;">
+        <p class="text-secondary">Loading agent usage…</p>
+    </div>
+</section>
+
 <!-- Recent Projects -->
 <div class="card glass-card mb-4" style="padding: 2rem;">
     <div class="card-header" style="border-bottom: 1px solid var(--glass-border); padding-bottom: 1.5rem; margin-bottom: 1.5rem;">
@@ -114,4 +128,53 @@
         {% endfor %}
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async function () {
+    const grid = document.getElementById('dashboard-usage-grid');
+    const fmt = value => Number(value || 0).toLocaleString();
+    try {
+        const rows = await window.apiFetch('/agents/usage');
+        grid.innerHTML = '';
+        if (!rows.length) {
+            grid.textContent = 'No configured agents or usage records.';
+            return;
+        }
+        rows.forEach(row => {
+            const card = document.createElement('article');
+            card.className = 'stat-card glass-card';
+            card.style.textAlign = 'left';
+            card.style.padding = '1rem';
+
+            const title = document.createElement('div');
+            title.style.cssText = 'display:flex;justify-content:space-between;gap:.5rem;align-items:center;font-weight:800;';
+            const name = document.createElement('span');
+            name.textContent = row.cli;
+            const state = document.createElement('small');
+            state.className = 'text-secondary';
+            state.textContent = row.tracked ? `${row.sessions} session${row.sessions === 1 ? '' : 's'}` : 'awaiting telemetry';
+            title.append(name, state);
+
+            const total = document.createElement('div');
+            total.className = 'stat-value';
+            total.style.cssText = 'font-size:1.45rem;margin:.7rem 0 .15rem;color:var(--accent-primary);';
+            total.textContent = row.tracked ? fmt(row.total_tokens) : '—';
+            const label = document.createElement('div');
+            label.className = 'stat-label';
+            label.textContent = 'Tracked tokens';
+
+            const detail = document.createElement('div');
+            detail.className = 'text-secondary';
+            detail.style.cssText = 'font-size:.72rem;margin-top:.6rem;';
+            const quota = row.quota ? `${Number(row.quota.remaining_percent).toFixed(1)}% quota remaining` : 'Quota unavailable';
+            detail.textContent = `${(row.roles || []).join(', ') || 'unassigned'} · ${quota}`;
+
+            card.append(title, total, label, detail);
+            grid.appendChild(card);
+        });
+    } catch (error) {
+        grid.textContent = `Usage unavailable: ${error.message}`;
+    }
+});
+</script>
 {% endblock %}

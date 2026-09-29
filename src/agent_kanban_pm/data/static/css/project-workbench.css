@@ -108,6 +108,23 @@
   .queue-error{max-width:360px;color:#ef4444;white-space:normal;word-break:break-word;}
   .queue-actions{display:flex;gap:0.35rem;white-space:nowrap;}
 
+  /* Usage */
+  .usage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0.85rem;}
+  .usage-card{border:1px solid var(--glass-border);border-radius:var(--radius-lg);background:var(--glass-bg);padding:1rem;min-width:0;}
+  .usage-card-head,.usage-foot{display:flex;justify-content:space-between;align-items:flex-start;gap:0.75rem;}
+  .usage-role,.usage-source,.usage-foot{font-size:0.7rem;color:var(--text-muted);}
+  .usage-routing{display:inline-block;margin-top:0.55rem;padding:0.18rem 0.5rem;border-radius:1rem;background:rgba(var(--accent-primary-rgb),0.1);color:var(--accent-primary);font-size:0.68rem;font-weight:700;}
+  .usage-source{border:1px solid var(--glass-border);border-radius:1rem;padding:0.15rem 0.45rem;white-space:nowrap;}
+  .usage-total{font-size:1.6rem;font-weight:800;margin:0.85rem 0 0.4rem;letter-spacing:-0.02em;}
+  .usage-total span{font-size:0.75rem;font-weight:600;color:var(--text-muted);}
+  .usage-breakdown{display:flex;gap:0.65rem;flex-wrap:wrap;font-size:0.7rem;color:var(--text-secondary);margin-bottom:0.8rem;}
+  .quota-row{display:grid;grid-template-columns:minmax(80px,1fr) auto;gap:0.6rem;align-items:center;font-size:0.68rem;color:var(--text-muted);margin-bottom:0.8rem;}
+  .quota-track{height:7px;background:var(--bg-secondary);border-radius:1rem;overflow:hidden;border:1px solid var(--glass-border);}
+  .quota-track i{display:block;height:100%;border-radius:1rem;}
+  .quota-track i.healthy{background:#10b981}.quota-track i.warning{background:#f59e0b}.quota-track i.critical{background:#ef4444}.quota-track i.unknown{background:#64748b}
+  .usage-foot{padding-top:0.65rem;border-top:1px solid var(--glass-border);}
+  .usage-empty{padding:1.25rem;border:1px dashed var(--glass-border);border-radius:var(--radius-lg);color:var(--text-muted);font-size:0.82rem;}
+
   /* Status badge */
   .as-idle{background:rgba(148,163,184,0.12);color:#64748b;}
   .as-thinking{background:rgba(99,102,241,0.12);color:#6366f1;}

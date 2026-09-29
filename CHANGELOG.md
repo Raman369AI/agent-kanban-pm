@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add supported GitHub Copilot CLI and Cursor Agent adapters alongside the
+  existing Claude, Codex, OpenCode, Aider, and Antigravity integrations.
+- Add an authenticated, idempotent per-session token/cost ledger, account-wide
+  quota snapshots, actual-model tracking, and a project Activity usage dashboard.
+- Add opt-in per-role fallback routing with ordered or quota-headroom selection,
+  explicit candidate consent, stale-quota protection, and audited decisions.
+
 ## [0.8.0] — 2026-09-20
 
 ### Added
@@ -105,7 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Seven open findings covering shutdown delivery, launch recovery, review and PR
 provenance, nested override dialogs, moving diff baselines, and approval-note
-drafts are documented with proposed fixes and acceptance checks in [Plan.md](Plan.md).
+drafts are documented with proposed fixes and acceptance checks in [reliability-followup.md](docs/plans/reliability-followup.md).
 Implementation details and verification limits are documented in
 [review/LIFECYCLE_REVIEW.md](review/LIFECYCLE_REVIEW.md).
 

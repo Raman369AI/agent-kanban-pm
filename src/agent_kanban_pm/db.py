@@ -352,6 +352,13 @@ async def _migrate_db_schema():
                     ))
             await _record_migration(19, "immutable_review_base")
 
+        if not await _migration_applied(20):
+            if not await _column_exists(conn, "agent_sessions", "resolved_model"):
+                await conn.execute(text(
+                    "ALTER TABLE agent_sessions ADD COLUMN resolved_model VARCHAR(255)"
+                ))
+            await _record_migration(20, "agent_usage_and_resolved_model")
+
     # Backfill default roles
     async with async_session_maker() as session:
         from agent_kanban_pm.models import Entity

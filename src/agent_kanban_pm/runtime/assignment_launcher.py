@@ -46,6 +46,8 @@ from agent_kanban_pm.models import (
     TaskLease,
     TaskLog,
     TaskStatus,
+    OrchestrationDecision,
+    DecisionType,
 )
 from agent_kanban_pm.runtime.adapter_loader import AdapterSpec, load_all_adapters, standalone_assignment_to_adapter
 from agent_kanban_pm.runtime.handoff_protocol import (
@@ -71,6 +73,11 @@ from agent_kanban_pm.runtime.preferences import (
     load_preferences,
 )
 from agent_kanban_pm.runtime.instance import get_tmux_prefix
+from agent_kanban_pm.runtime.routing import (
+    RouteCandidate,
+    choose_route,
+    latest_quota_by_cli,
+)
 
 from agent_kanban_pm.runtime.workspaces import (
     WorkspacePreparationError, record_ownership, owns_workspace, ownership_path,
@@ -544,6 +551,75 @@ class AssignmentLauncher:
                 (role_name for role_name, assignment in role_assignments.items() if assignment.agent == agent.name),
                 "worker",
             )
+            routed_model = None
+            routed_to_fallback = False
+            role_assignment = role_assignments.get(matching_role_name)
+            if role_assignment and role_assignment.fallbacks and agent.name == role_assignment.agent:
+                candidates = [RouteCandidate(role_assignment.agent, role_assignment.model)] + [
+                    RouteCandidate(item.agent, item.model) for item in role_assignment.fallbacks
+                ]
+                candidate_names = [item.agent for item in candidates]
+                candidate_entities = {
+                    item.name: item for item in (await db.execute(
+                        select(Entity).where(
+                            Entity.entity_type == EntityType.AGENT,
+                            Entity.name.in_(candidate_names),
+                        )
+                    )).scalars().all()
+                }
+                available = {
+                    name: bool(
+                        candidate_entities.get(name)
+                        and candidate_entities[name].is_active
+                        and adapters.get(name)
+                        and shutil.which(adapters[name].invoke.command)
+                    )
+                    for name in candidate_names
+                }
+                quotas = await latest_quota_by_cli(db, candidate_names)
+                decision = choose_route(
+                    candidates,
+                    available=available,
+                    used_percent=quotas,
+                    strategy=role_assignment.routing.strategy,
+                    min_headroom_percent=role_assignment.routing.min_headroom_percent,
+                )
+                if decision is None:
+                    message = (
+                        f"No eligible agent for role {matching_role_name}; "
+                        + "; ".join(
+                            f"{name}: unavailable or below quota headroom"
+                            for name in candidate_names
+                        )
+                    )
+                    db.add(TaskLog(task_id=task.id, message=message, log_type="info"))
+                    await db.commit()
+                    logger.info(message)
+                    return None
+                routed_model = decision.model
+                selected = candidate_entities[decision.agent]
+                if selected.id != agent.id:
+                    original_agent = agent
+                    agent = selected
+                    routed_to_fallback = True
+                    if not any(item.id == agent.id for item in task.assignees):
+                        task.assignees.append(agent)
+                    message = (
+                        f"Auto-routed role {matching_role_name} from {original_agent.name} "
+                        f"to {agent.name}: {decision.reason}."
+                    )
+                    db.add(TaskLog(task_id=task.id, message=message, log_type="info"))
+                    db.add(OrchestrationDecision(
+                        project_id=task.project_id,
+                        decision_type=DecisionType.OTHER,
+                        input_summary=f"Quota-aware route for task #{task.id} / {matching_role_name}",
+                        rationale=message + (
+                            " Rejected: " + "; ".join(decision.rejected)
+                            if decision.rejected else ""
+                        ),
+                        affected_task_ids=str(task.id),
+                        affected_agent_ids=f"{original_agent.id},{agent.id}",
+                    ))
 
             if task.status == TaskStatus.COMPLETED and matching_role_name != "git_pr":
                 return None
@@ -785,7 +861,8 @@ class AssignmentLauncher:
             checkpoint = checkpoint_result.scalar_one_or_none()
             autonomy = prefs.autonomy_for_role(matching_role_name) if prefs else AUTONOMY_SUPERVISED
             assignment = role_assignments.get(matching_role_name)
-            model = (assignment.model if assignment else None) or (adapter.models[0].id if adapter.models else None)
+            configured_model = None if routed_to_fallback else (assignment.model if assignment else None)
+            model = routed_model or configured_model or (adapter.models[0].id if adapter.models else None)
             model = effective_model(adapter, model)
             prompt = _build_prompt(
                 task, project, agent, workspace_path, checkpoint, isolated_workspace, autonomy

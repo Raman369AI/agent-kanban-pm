@@ -37,6 +37,17 @@ AUTONOMY_AUTO = "auto"
 _AUTONOMY_MODES = {AUTONOMY_SUPERVISED, AUTONOMY_AUTO}
 
 
+class RoutingFallback(BaseModel):
+    agent: str
+    model: Optional[str] = None
+
+
+class RoutingConfig(BaseModel):
+    """Opt-in routing policy for a role's explicitly listed agents."""
+    strategy: str = "ordered"
+    min_headroom_percent: float = 10.0
+
+
 class RoleAssignment(BaseModel):
     agent: str
     mode: str = "headless"
@@ -51,6 +62,8 @@ class RoleAssignment(BaseModel):
     chat_timeout_seconds: Optional[int] = None
     owns: List[str] = Field(default_factory=list)
     review_only: bool = False
+    fallbacks: List[RoutingFallback] = Field(default_factory=list)
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
     # "supervised" (default): the CLI keeps its approval prompts and risky
     # actions surface in the Kanban approval queue. "auto": the launcher adds
     # the adapter's bypass flags (task_command.auto_args, e.g.

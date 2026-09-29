@@ -235,7 +235,10 @@ def test_board_phase1_interaction_fixes():
     """Phase 1 UI plan: creation entry points, pending guards, mobile nav,
     accurate labels, and readable status text."""
     with TestClient(app) as client:
-        assert client.get("/").status_code == 200
+        dashboard_response = client.get("/")
+        assert dashboard_response.status_code == 200
+        assert "Agent token usage" in dashboard_response.text
+        assert "'/agents/usage'" in dashboard_response.text
 
         owner, headers = tests_helper.local_owner_headers(client)
         project_response = client.post(

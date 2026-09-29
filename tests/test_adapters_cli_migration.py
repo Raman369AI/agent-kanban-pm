@@ -58,7 +58,7 @@ def cli_stubs(tmp_path, monkeypatch):
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for command in ("agy", "opencode", "claude", "codex", "aider"):
+    for command in ("agy", "opencode", "claude", "codex", "aider", "copilot", "cursor-agent"):
         stub = bin_dir / command
         stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         stub.chmod(0o755)
@@ -84,6 +84,14 @@ def test_discovery_offers_antigravity_not_the_retired_gemini_cli():
     commands = [command for command, _display in POPULAR_CLI_TOOLS]
     assert "agy" in commands
     assert "gemini" not in commands
+
+
+def test_discovery_and_bundles_include_copilot_and_cursor():
+    commands = [command for command, _display in POPULAR_CLI_TOOLS]
+    assert "copilot" in commands
+    assert "cursor-agent" in commands
+    assert _adapter("copilot").invoke.command == "copilot"
+    assert _adapter("cursor").invoke.command == "cursor-agent"
 
 
 def test_every_bundled_adapter_defaults_to_not_deprecated():
@@ -188,6 +196,8 @@ def test_no_bundled_adapter_hides_a_bypass_flag_in_its_supervised_args():
         "--yes-always",
         "--full-auto",
         "--auto",
+        "--allow-all-tools",
+        "--force",
         "yolo",
         "bypasspermissions",
     )

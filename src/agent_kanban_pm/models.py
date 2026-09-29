@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table, Enum as SQLEnum, Index, UniqueConstraint, text
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Float, Table, Enum as SQLEnum, Index, UniqueConstraint, text
 from sqlalchemy.orm import relationship, declarative_base
 import enum
 from agent_kanban_pm.runtime.stage_identity import default_stage_key, normalize_stage_key
@@ -274,6 +274,7 @@ class AgentSession(Base):
     status = Column(SQLEnum(AgentSessionStatus), default=AgentSessionStatus.ACTIVE, nullable=False)
     command = Column(Text, nullable=True)
     model = Column(String(255), nullable=True)
+    resolved_model = Column(String(255), nullable=True)
     mode = Column(String(50), nullable=True)
     started_at = Column(DateTime, default=lambda: datetime.now(UTC))
     ended_at = Column(DateTime, nullable=True)
@@ -283,6 +284,71 @@ class AgentSession(Base):
     agent = relationship("Entity")
     project = relationship("Project")
     task = relationship("Task")
+
+
+class UsageRecord(Base):
+    """Cumulative token/cost telemetry for one agent session.
+
+    Records contain counters and identifiers only. Prompt, response, and
+    source-code content must never be persisted here.
+    """
+    __tablename__ = "usage_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id", "source", "external_session_id",
+            name="uq_usage_record_source_session",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey('agent_sessions.id', ondelete='CASCADE'), nullable=False, index=True)
+    task_id = Column(Integer, ForeignKey('tasks.id', ondelete='SET NULL'), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False, index=True)
+    agent_id = Column(Integer, ForeignKey('entities.id', ondelete='CASCADE'), nullable=False, index=True)
+    role = Column(String(100), nullable=True)
+    cli = Column(String(100), nullable=False, index=True)
+    model = Column(String(255), nullable=True)
+    provider = Column(String(100), nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    cache_read_tokens = Column(Integer, nullable=True)
+    cache_write_tokens = Column(Integer, nullable=True)
+    reasoning_tokens = Column(Integer, nullable=True)
+    cost_usd = Column(Float, nullable=True)
+    cost_source = Column(String(32), nullable=True)
+    source = Column(String(32), nullable=False, default="reported")
+    external_session_id = Column(String(255), nullable=False, default="session")
+    attribution = Column(String(32), nullable=False, default="exact")
+    captured_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
+
+    session = relationship("AgentSession")
+    task = relationship("Task")
+    project = relationship("Project")
+    agent = relationship("Entity")
+
+
+class QuotaSnapshot(Base):
+    """Observed account/window usage for a CLI.
+
+    Quota is account-wide and must not be inferred by summing UsageRecord.
+    """
+    __tablename__ = "quota_snapshots"
+    __table_args__ = (
+        Index("ix_quota_cli_window_observed", "cli", "window", "observed_at"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey('entities.id', ondelete='SET NULL'), nullable=True, index=True)
+    cli = Column(String(100), nullable=False, index=True)
+    plan_type = Column(String(100), nullable=True)
+    window = Column(String(50), nullable=False, default="primary")
+    used_percent = Column(Float, nullable=False)
+    window_minutes = Column(Integer, nullable=True)
+    resets_at = Column(DateTime, nullable=True)
+    source = Column(String(32), nullable=False, default="reported")
+    observed_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
+
+    agent = relationship("Entity")
 
 
 class ProjectWorkspace(Base):

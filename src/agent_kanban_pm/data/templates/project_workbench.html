@@ -2,7 +2,7 @@
 {% block title %}Activity – {{ project.name }}{% endblock %}
 
 {% block content %}
-<link rel="stylesheet" href="/static/css/project-workbench.css?v=7">
+<link rel="stylesheet" href="/static/css/project-workbench.css?v=8">
 
 {% include "_project_subnav.html" %}
 
@@ -20,6 +20,7 @@
     Approvals <span class="tab-badge" id="wb-approvals-badge" style="display:none;">0</span>
   </button>
   <button class="wb-tab" data-tab="decisions" onclick="switchWbTab('decisions')">Decisions</button>
+  <button class="wb-tab" data-tab="usage" onclick="switchWbTab('usage')">Usage</button>
   <button class="wb-tab" data-tab="queue" onclick="switchWbTab('queue')">Launch queue <span class="tab-badge" id="wb-queue-badge" style="display:none;">0</span></button>
 </div>
 
@@ -76,6 +77,20 @@
   </div>
 </div>
 
+<!-- USAGE TAB -->
+<div class="wb-pane" id="wb-pane-usage">
+  <div class="queue-toolbar">
+    <div>
+      <h5 style="margin:0;">Tokens and routing headroom</h5>
+      <div style="font-size:0.75rem;color:var(--text-muted);">Cumulative project usage. Quota is account-wide and comes from agent-reported snapshots.</div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="loadUsage()">Refresh</button>
+  </div>
+  <div class="usage-grid" id="wb-usage-grid">
+    <div class="usage-empty">Loading usage…</div>
+  </div>
+</div>
+
 <!-- APPROVALS TAB -->
 <div class="wb-pane" id="wb-pane-approvals">
   <div class="section-hdr">
@@ -129,5 +144,5 @@
 window.PROJECT_ID = {{ project.id }};
 window.CURRENT_ENTITY_ID = {{ current_entity.id if current_entity else 'null' }};
 </script>
-<script src="/static/js/project-workbench.js?v=7"></script>
+<script src="/static/js/project-workbench.js?v=8"></script>
 {% endblock %}

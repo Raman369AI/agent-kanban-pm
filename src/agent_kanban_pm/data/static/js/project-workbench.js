@@ -46,6 +46,39 @@ function switchWbTab(tab){
     if(wbSelectedSessionId&&(!wbTerminalData||wbTerminalData.session.id!==wbSelectedSessionId))loadWbTerminal(wbSelectedSessionId);
   }
   if(tab==='queue')loadLaunchQueue();
+  if(tab==='usage')loadUsage();
+}
+
+/* ── USAGE ── */
+function fmtTokens(value){
+  if(value===null||value===undefined)return'Unavailable';
+  return Number(value).toLocaleString();
+}
+function renderUsage(rows){
+  const el=document.getElementById('wb-usage-grid');
+  if(!rows||!rows.length){el.innerHTML='<div class="usage-empty">No configured agents or usage records.</div>';return;}
+  el.innerHTML=rows.map(row=>{
+    const quota=row.quota;
+    const remaining=quota?Math.max(0,Number(quota.remaining_percent)):null;
+    const quotaClass=remaining===null?'unknown':remaining<10?'critical':remaining<25?'warning':'healthy';
+    const quotaLabel=remaining===null?'Quota unavailable':remaining.toFixed(1)+'% quota remaining';
+    const reset=quota&&quota.resets_at?' · resets '+ta(quota.resets_at):'';
+    const model=row.models&&row.models.length?row.models.join(', '):'model unavailable';
+    const routes=(row.routing||[]).map(r=>r.role+' '+(r.primary?'primary':'fallback')+' · '+r.strategy).join('; ');
+    return `<article class="usage-card">
+      <div class="usage-card-head"><div><strong>${esc(row.cli)}</strong><div class="usage-role">${esc((row.roles||[]).join(', ')||'unassigned')}</div></div><span class="usage-source">${row.tracked?row.sessions+' session'+(row.sessions===1?'':'s'):'awaiting telemetry'}</span></div>
+      ${routes?`<div class="usage-routing">Auto-routing: ${esc(routes)}</div>`:''}
+      <div class="usage-total">${row.tracked?fmtTokens(row.total_tokens):'—'}<span> tokens</span></div>
+      <div class="usage-breakdown"><span>In ${fmtTokens(row.tracked?row.input_tokens:null)}</span><span>Out ${fmtTokens(row.tracked?row.output_tokens:null)}</span><span>Reasoning ${fmtTokens(row.tracked?row.reasoning_tokens:null)}</span></div>
+      <div class="quota-row"><div class="quota-track"><i class="${quotaClass}" style="width:${remaining===null?0:remaining}%"></i></div><span>${esc(quotaLabel+reset)}</span></div>
+      <div class="usage-foot"><span>${esc(model)}</span><span>${row.cost_usd===null?'Cost unavailable':'$'+Number(row.cost_usd).toFixed(4)}</span></div>
+    </article>`;
+  }).join('');
+}
+async function loadUsage(){
+  const el=document.getElementById('wb-usage-grid');
+  try{renderUsage(await workbenchFetch('/agents/usage?project_id='+PROJECT_ID));}
+  catch(e){el.innerHTML='<div class="usage-empty">Failed to load usage: '+esc(e.message)+'</div>';}
 }
 
 /* ── LIVE ── */
@@ -472,6 +505,7 @@ document.addEventListener('DOMContentLoaded',function(){
   loadLive();
   loadApprovals();
   loadDecisions();
+  loadUsage();
   loadLaunchQueue();
   connectWbWs();
   setInterval(loadLive,5000);

@@ -451,6 +451,8 @@ async def _finalize_completed_session(
         }, project_id=session.project_id, entity_id=session.agent_id)
         await db.commit()
 
+    from agent_kanban_pm.runtime.usage_collectors import collect_session_usage
+    await collect_session_usage(session.id)
     return True
 
 
@@ -536,6 +538,8 @@ async def _finalize_failed_session(
         }, project_id=session.project_id, entity_id=session.agent_id)
         await db.commit()
 
+    from agent_kanban_pm.runtime.usage_collectors import collect_session_usage
+    await collect_session_usage(session.id)
     return True
 
 

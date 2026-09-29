@@ -1,0 +1,42 @@
+name: cursor
+display_name: "Cursor Agent"
+version: "1.0"
+
+# Verified against Cursor CLI's official parameter reference.
+invoke:
+  command: cursor-agent
+  info_flag: "--version"
+  model_flag: "--model"
+
+capabilities: [code, review, debugging, testing, refactoring]
+
+models:
+  - id: default
+
+protocol: stdio
+
+auth:
+  type: none
+roles: [worker, ui, test, diff_review]
+modes: [supervised, auto, headless]
+
+reporting:
+  heartbeat_interval: 30
+
+chat_designer:
+  prompt_flag: "--print"
+  stdin: false
+  output_format: "stdout"
+  timeout_seconds: 300
+  extra_args: ["--output-format", "text"]
+
+role_command:
+  args: []
+  auto_args: ["--force"]
+
+task_command:
+  args: ["{prompt}"]
+  auto_args: ["--force"]
+
+owns: ['src/', 'tests/', 'lib/']
+review_only: false
