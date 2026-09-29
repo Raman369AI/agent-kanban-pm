@@ -404,3 +404,100 @@ def test_assignment_admission_indexes_are_unique_and_partial(tmp_path):
     assert "WHERE ENDED_AT IS NULL" in session_sql
     assert "UNIQUE INDEX" in lease_sql
     assert "WHERE STATUS = 'ACTIVE'" in lease_sql
+
+
+# --- 0002: purge rows orphaned by deletes made before FK enforcement ---------
+
+def _fill(conn: sqlite3.Connection, table: str, **values) -> int:
+    """Insert a row, giving every NOT NULL column without a default a filler."""
+    row = dict(values)
+    for _cid, name, ctype, notnull, default, pk in conn.execute(f"PRAGMA table_info({table})").fetchall():
+        if name in row or default is not None or not notnull or pk:
+            continue
+        kind = (ctype or "").upper()
+        if "INT" in kind or "BOOL" in kind:
+            row[name] = 1 if "INT" in kind else 0
+        elif "FLOAT" in kind or "NUM" in kind or "REAL" in kind:
+            row[name] = 0
+        elif "DATE" in kind or "TIME" in kind:
+            row[name] = "2026-01-01 00:00:00"
+        else:
+            row[name] = "x"
+    cols = ", ".join(row)
+    marks = ", ".join("?" for _ in row)
+    return conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", list(row.values())).lastrowid
+
+
+def _db_with_orphans(tmp_path: Path) -> Path:
+    """A current database, marked as still at 0001, with valid rows and orphans."""
+    db = tmp_path / "orphans.db"
+    assert "INIT_OK" in _run_init_db(db).stdout
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("UPDATE alembic_version SET version_num = '0001'")
+        entity = _fill(conn, "entities", name="keeper", entity_type="AGENT", role="WORKER")
+        project = _fill(conn, "projects", name="keeper-project")
+        task = _fill(conn, "tasks", title="keeper-task", project_id=project)
+        _fill(conn, "agent_connections", entity_id=entity)                 # valid
+        _fill(conn, "agent_connections", entity_id=9001)                   # orphan: entity gone
+        _fill(conn, "task_leases", task_id=task, agent_id=entity)          # valid
+        _fill(conn, "task_leases", task_id=9002, agent_id=entity)          # orphan: task gone
+        _fill(conn, "agent_checkpoints", agent_id=entity, project_id=project, task_id=task)   # valid
+        _fill(conn, "agent_checkpoints", agent_id=entity, project_id=9003, task_id=9002)      # orphan
+        _fill(conn, "agent_checkpoints", agent_id=entity, project_id=project, task_id=task, session_id=9004)  # SET NULL
+        conn.commit()
+    finally:
+        conn.close()
+    return db
+
+
+def _backups(db: Path) -> list[Path]:
+    return sorted(db.parent.glob(f"{db.stem}.pre-orphan-purge-*.db"))
+
+
+def test_orphan_purge_removes_only_orphans(tmp_path):
+    db = _db_with_orphans(tmp_path)
+    result = _run_init_db(db)
+    assert "INIT_OK" in result.stdout, result.stderr
+
+    assert _rows(db, "SELECT COUNT(*) FROM agent_connections") == [(1,)]
+    assert _rows(db, "SELECT COUNT(*) FROM task_leases") == [(1,)]
+    # two survive: the valid one and the one whose only bad reference was session_id
+    assert _rows(db, "SELECT COUNT(*) FROM agent_checkpoints") == [(2,)]
+    assert _rows(db, "SELECT COUNT(*) FROM entities WHERE name = 'keeper'") == [(1,)]
+    assert _rows(db, "SELECT COUNT(*) FROM tasks WHERE title = 'keeper-task'") == [(1,)]
+    assert _alembic_versions(db) == [_head_revision()]
+
+
+def test_orphan_purge_clears_set_null_references_but_keeps_the_row(tmp_path):
+    db = _db_with_orphans(tmp_path)
+    assert "INIT_OK" in _run_init_db(db).stdout
+    assert _rows(db, "SELECT COUNT(*) FROM agent_checkpoints WHERE session_id IS NOT NULL") == [(0,)]
+
+
+def test_orphan_purge_leaves_no_foreign_key_violations(tmp_path):
+    db = _db_with_orphans(tmp_path)
+    assert "INIT_OK" in _run_init_db(db).stdout
+    assert _rows(db, "PRAGMA foreign_key_check") == []
+
+
+def test_orphan_purge_backs_up_only_when_it_finds_something(tmp_path):
+    dirty = _db_with_orphans(tmp_path)
+    assert "INIT_OK" in _run_init_db(dirty).stdout
+    backups = _backups(dirty)
+    assert len(backups) == 1
+    # the backup still holds the orphans, so the purge is recoverable
+    assert _rows(backups[0], "SELECT COUNT(*) FROM agent_connections") == [(2,)]
+
+    clean_dir = tmp_path / "clean"
+    clean_dir.mkdir()
+    clean = clean_dir / "clean.db"
+    assert "INIT_OK" in _run_init_db(clean).stdout
+    conn = sqlite3.connect(clean)
+    conn.execute("UPDATE alembic_version SET version_num = '0001'")
+    conn.commit()
+    conn.close()
+    assert "INIT_OK" in _run_init_db(clean).stdout
+    assert _backups(clean) == []
+    assert _alembic_versions(clean) == [_head_revision()]

@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Declare the `uq_session_launch_request` and `uq_pending_event_outbox_agent`
   unique indexes on the models. Previously only the legacy migration chain
   created them.
+- Add migration `0002`, which removes rows orphaned by deletes made before
+  foreign keys were enforced (following each key's `ON DELETE` rule). SQLite
+  reuses ids, so an orphan could otherwise attach to a later project, task or
+  agent. If it finds any, it first copies the database to
+  `<name>.pre-orphan-purge-<timestamp>.db` next to it.
 
 ## [0.8.0] — 2026-09-20
 
