@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from agent_kanban_pm.models import ContributionType
 from agent_kanban_pm.app import app
-import agent_kanban_pm.routers.agent_activity as agent_activity_router
+import agent_kanban_pm.routers.agent_activity.contributions as agent_activity_router
 
 
 def test_coordination_state_and_terminal_feed():

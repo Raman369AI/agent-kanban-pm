@@ -245,7 +245,7 @@ class TestDiffReviewAPI:
 
 @pytest.mark.asyncio
 async def test_task_git_diff_route_scopes_task_and_returns_snapshot(db_session, client, tmp_path, monkeypatch):
-    from agent_kanban_pm.routers import agent_activity
+    from agent_kanban_pm.routers.agent_activity import diff_reviews as agent_activity
 
     project = Project(name="Git diff project", path=str(tmp_path))
     agent = Entity(name="diff-test-agent", entity_type=EntityType.AGENT, role=Role.WORKER)
