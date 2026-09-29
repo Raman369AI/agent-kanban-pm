@@ -32,7 +32,7 @@ changes are stable.
   drag-and-drop behavior.
 - Do not add a database migration for Phases 0-2 unless implementation proves
   it unavoidable.
-- Leave the historical [`Plan.md`](Plan.md) unchanged.
+- Leave the historical [`reliability-followup.md`](reliability-followup.md) unchanged.
 
 ## Delivery overview
 
