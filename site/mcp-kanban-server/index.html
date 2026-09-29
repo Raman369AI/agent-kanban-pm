@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCP Kanban Server for AI Coding Agents — Agent Kanban PM</title>
+  <meta name="description" content="Agent Kanban PM exposes a Kanban board to coding agents over the Model Context Protocol, so Claude Code, Codex and others can read, claim and update tasks. Free and local.">
+  <meta name="theme-color" content="#070b0f">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="An MCP Kanban server for coding agents">
+  <meta property="og:description" content="Agent Kanban PM exposes a Kanban board to coding agents over the Model Context Protocol, so Claude Code, Codex and others can read, claim and update tasks. Free and local.">
+  <meta property="og:url" content="https://raman369ai.github.io/agent-kanban-pm/mcp-kanban-server/">
+  <meta property="og:image" content="https://raman369ai.github.io/agent-kanban-pm/assets/og-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://raman369ai.github.io/agent-kanban-pm/mcp-kanban-server/">
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"Article","headline":"An MCP Kanban server for coding agents","description":"Agent Kanban PM exposes a Kanban board to coding agents over the Model Context Protocol, so Claude Code, Codex and others can read, claim and update tasks. Free and local.","dateModified":"2026-09-28","mainEntityOfPage":"https://raman369ai.github.io/agent-kanban-pm/mcp-kanban-server/","isAccessibleForFree":true,"author":{"@type":"Organization","name":"Agent Kanban PM contributors"}}
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="shell nav-shell">
+      <a class="brand" href="../" aria-label="Agent Kanban PM home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span>
+        <span>agent-kanban</span>
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="../getting-started/">Get started</a>
+        <a href="../integrations/">Integrations</a>
+        <a href="https://github.com/Raman369AI/agent-kanban-pm">GitHub</a>
+      </nav>
+    </div>
+  </header>
+  <main class="content-main" id="main">
+    <div class="content-shell">
+      <div class="breadcrumbs"><a href="../">Home</a><span>/</span><span>MCP Kanban server</span></div>
+      <section class="content-hero">
+        <p class="overline">MCP</p>
+        <h1>An MCP Kanban server for coding agents</h1>
+        <p>Agent Kanban PM ships an MCP server, <code>kanban-mcp</code>, so a CLI agent can work the same board a human is watching: reading its task, reporting progress and handing work off for review.</p>
+      </section>
+      <div class="content-grid">
+        <article class="prose">
+          <h2>Why put a board behind MCP</h2>
+          <p>Without a shared record, each agent session is an island. With the board exposed over the Model Context Protocol, an agent can ask what it is supposed to do, update the card as it works, and hand off with evidence, using the same tools whichever agent CLI you run.</p>
+          <h2>Run it</h2>
+<pre><code>pip install agent-kanban-pm
+kanban init
+KANBAN_AGENT_NAME=codex KANBAN_AGENT_ROLE=worker kanban-mcp</code></pre>
+          <p>The server identifies the agent through local process identity, so cards record which agent did what. Point your agent's MCP configuration at the <code>kanban-mcp</code> command. Ready-made configurations ship with the package.</p>
+          <h2>Not only MCP</h2>
+          <p>The same board is reachable through the web UI, a REST API and the <code>kanban</code> CLI, so agents without MCP support can still participate. Supported agents include Claude Code, Codex, OpenCode, Aider, Antigravity CLI, Cursor and Copilot; see <a href="../integrations/">integrations</a>.</p>
+          <h2>Scope</h2>
+          <p>It is a single-operator, local tool: one shared token guards the local server, so do not expose it to an untrusted network. For how the pieces fit, read <a href="../coding-agent-kanban/">Local-first Kanban for coding agents</a>.</p>
+          <div class="page-cta">
+            <a class="button button-primary" href="../getting-started/">Start locally <span aria-hidden="true">→</span></a>
+            <a class="button button-quiet" href="https://github.com/Raman369AI/agent-kanban-pm">Explore the source</a>
+          </div>
+        </article>
+        <aside class="content-aside" aria-label="Related pages">
+          <strong>Related</strong>
+          <ul>
+            <li><a href="../coding-agent-kanban/">Coding-agent Kanban</a></li>
+            <li><a href="../claude-code-kanban/">Claude Code Kanban</a></li>
+            <li><a href="../mcp-kanban-server/">MCP Kanban server</a></li>
+            <li><a href="../run-multiple-coding-agents/">Run multiple agents</a></li>
+            <li><a href="../integrations/">All integrations</a></li>
+          </ul>
+        </aside>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="shell footer-shell">
+      <a class="brand" href="../"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span><span>agent-kanban</span></a>
+      <p>Free forever · Open source · Local-first</p>
+      <nav><a href="../getting-started/">Get started</a><a href="../integrations/">Integrations</a></nav>
+    </div>
+  </footer>
+</body>
+</html>

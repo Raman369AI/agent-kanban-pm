@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kanban Board for Claude Code — Agent Kanban PM</title>
+  <meta name="description" content="Give Claude Code a durable task board: assign cards, launch sessions from the UI, isolate work in Git worktrees, and review results before merging. Free and local-first.">
+  <meta name="theme-color" content="#070b0f">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="A Kanban board for Claude Code">
+  <meta property="og:description" content="Give Claude Code a durable task board: assign cards, launch sessions from the UI, isolate work in Git worktrees, and review results before merging. Free and local-first.">
+  <meta property="og:url" content="https://raman369ai.github.io/agent-kanban-pm/claude-code-kanban/">
+  <meta property="og:image" content="https://raman369ai.github.io/agent-kanban-pm/assets/og-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://raman369ai.github.io/agent-kanban-pm/claude-code-kanban/">
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"Article","headline":"A Kanban board for Claude Code","description":"Give Claude Code a durable task board: assign cards, launch sessions from the UI, isolate work in Git worktrees, and review results before merging. Free and local-first.","dateModified":"2026-09-28","mainEntityOfPage":"https://raman369ai.github.io/agent-kanban-pm/claude-code-kanban/","isAccessibleForFree":true,"author":{"@type":"Organization","name":"Agent Kanban PM contributors"}}
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="shell nav-shell">
+      <a class="brand" href="../" aria-label="Agent Kanban PM home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span>
+        <span>agent-kanban</span>
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="../getting-started/">Get started</a>
+        <a href="../integrations/">Integrations</a>
+        <a href="https://github.com/Raman369AI/agent-kanban-pm">GitHub</a>
+      </nav>
+    </div>
+  </header>
+  <main class="content-main" id="main">
+    <div class="content-shell">
+      <div class="breadcrumbs"><a href="../">Home</a><span>/</span><span>Claude Code Kanban</span></div>
+      <section class="content-hero">
+        <p class="overline">Claude Code</p>
+        <h1>A Kanban board for Claude Code</h1>
+        <p>Claude Code is strong at single tasks. Once you have several, you need somewhere to track what each session was asked to do, what it changed, and what still needs review. Agent Kanban PM is that board, and it runs locally.</p>
+      </section>
+      <div class="content-grid">
+        <article class="prose">
+          <h2>What you get</h2>
+          <ul>
+            <li><strong>Cards as durable task context.</strong> Objective, acceptance criteria and state live on the card, not in a scrolled-away terminal.</li>
+            <li><strong>Launch from the board.</strong> Assign a card to the Claude Code adapter and the runtime starts and tracks the session, streaming terminal output back to the UI.</li>
+            <li><strong>Isolated worktrees.</strong> Concurrent tasks can work in separate Git worktrees instead of fighting over one checkout.</li>
+            <li><strong>Review before done.</strong> Cards carry their commits, changed files and output into review, where you approve, return or recover them.</li>
+            <li><strong>Audit trail.</strong> <code>kanban audit</code> shows what agents ran and whether approvals were on.</li>
+          </ul>
+          <h2>Set it up</h2>
+<pre><code>pip install agent-kanban-pm
+kanban init
+kanban agents discover        # finds local CLIs, including claude
+kanban roles assign worker claude --mode headless
+kanban run                    # server + UI + role supervisor</code></pre>
+          <p>Then open the board, create a card and assign it. The full walkthrough is in the <a href="../getting-started/">getting-started guide</a>.</p>
+          <h2>Claude Code as worker, orchestrator or reviewer</h2>
+          <p>Roles are assignable, so Claude Code can be the worker on implementation cards while another agent reviews, or the other way round. Claude Code can also talk to the board directly over <a href="../mcp-kanban-server/">MCP</a> to read and update its own cards.</p>
+          <h2>Local-first and free</h2>
+          <p>The board runs on your machine and stores its data locally. There is no account, hosted workspace or usage fee. Your Claude Code account and network use are unchanged. See the <a href="../coding-agent-kanban/">overview of the plan, run, review loop</a>, or the <a href="../integrations/">other supported agents</a>.</p>
+          <div class="page-cta">
+            <a class="button button-primary" href="../getting-started/">Start locally <span aria-hidden="true">→</span></a>
+            <a class="button button-quiet" href="https://github.com/Raman369AI/agent-kanban-pm">Explore the source</a>
+          </div>
+        </article>
+        <aside class="content-aside" aria-label="Related pages">
+          <strong>Related</strong>
+          <ul>
+            <li><a href="../coding-agent-kanban/">Coding-agent Kanban</a></li>
+            <li><a href="../claude-code-kanban/">Claude Code Kanban</a></li>
+            <li><a href="../mcp-kanban-server/">MCP Kanban server</a></li>
+            <li><a href="../run-multiple-coding-agents/">Run multiple agents</a></li>
+            <li><a href="../integrations/">All integrations</a></li>
+          </ul>
+        </aside>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="shell footer-shell">
+      <a class="brand" href="../"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span><span>agent-kanban</span></a>
+      <p>Free forever · Open source · Local-first</p>
+      <nav><a href="../getting-started/">Get started</a><a href="../integrations/">Integrations</a></nav>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How to Run Multiple Coding Agents in Parallel — Agent Kanban PM</title>
+  <meta name="description" content="A practical workflow for running several CLI coding agents at once without collisions: one card per task, separate worktrees, explicit assignment and a review gate.">
+  <meta name="theme-color" content="#070b0f">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="How to run multiple coding agents in parallel">
+  <meta property="og:description" content="A practical workflow for running several CLI coding agents at once without collisions: one card per task, separate worktrees, explicit assignment and a review gate.">
+  <meta property="og:url" content="https://raman369ai.github.io/agent-kanban-pm/run-multiple-coding-agents/">
+  <meta property="og:image" content="https://raman369ai.github.io/agent-kanban-pm/assets/og-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://raman369ai.github.io/agent-kanban-pm/run-multiple-coding-agents/">
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"Article","headline":"How to run multiple coding agents in parallel","description":"A practical workflow for running several CLI coding agents at once without collisions: one card per task, separate worktrees, explicit assignment and a review gate.","dateModified":"2026-09-28","mainEntityOfPage":"https://raman369ai.github.io/agent-kanban-pm/run-multiple-coding-agents/","isAccessibleForFree":true,"author":{"@type":"Organization","name":"Agent Kanban PM contributors"}}
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="shell nav-shell">
+      <a class="brand" href="../" aria-label="Agent Kanban PM home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span>
+        <span>agent-kanban</span>
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="../getting-started/">Get started</a>
+        <a href="../integrations/">Integrations</a>
+        <a href="https://github.com/Raman369AI/agent-kanban-pm">GitHub</a>
+      </nav>
+    </div>
+  </header>
+  <main class="content-main" id="main">
+    <div class="content-shell">
+      <div class="breadcrumbs"><a href="../">Home</a><span>/</span><span>Run multiple agents</span></div>
+      <section class="content-hero">
+        <p class="overline">Tutorial</p>
+        <h1>How to run multiple coding agents in parallel</h1>
+        <p>Running two or three coding agents at once is easy. Keeping them from overwriting each other, and knowing what each one did afterwards, is the hard part. This is the workflow that works.</p>
+      </section>
+      <div class="content-grid">
+        <article class="prose">
+          <h2>1. Split the work into independent cards</h2>
+          <p>Each card should touch a separable area and state its acceptance criteria. Overlapping cards are the main cause of merge pain, so sequence them with dependencies instead of running them together.</p>
+          <h2>2. Give every agent its own workspace</h2>
+          <p>Agents sharing one checkout will clobber each other's files. Run each in its own Git worktree; Agent Kanban PM supports worktree isolation and uses explicit leases so two workers cannot claim the same task.</p>
+          <h2>3. Assign by role, not by habit</h2>
+<pre><code>kanban agents discover
+kanban roles list
+kanban roles assign worker claude --mode headless
+kanban run</code></pre>
+          <p>Choose an agent per role. You might use one CLI for implementation and another for review.</p>
+          <h2>4. Watch progress in one place</h2>
+          <p>The board streams each session's terminal output and shows card state. <code>kanban sheet</code> gives a compact status from the terminal.</p>
+          <h2>5. Gate on review</h2>
+          <p>Treat "in review" as a checkpoint, not a claim of completion. Check the diff, tests and agent output on the card, then approve, return or recover. Use <code>kanban handoff status --workspace .</code> to inspect a worktree.</p>
+          <h2>6. Audit afterwards</h2>
+          <p><code>kanban audit --auto --commands</code> lists unsupervised runs and the commands they recorded, useful when you let agents run with approvals off.</p>
+          <p>New here? Start with <a href="../getting-started/">getting started</a>, or read <a href="../coding-agent-kanban/">why coding agents need a board</a>.</p>
+          <div class="page-cta">
+            <a class="button button-primary" href="../getting-started/">Start locally <span aria-hidden="true">→</span></a>
+            <a class="button button-quiet" href="https://github.com/Raman369AI/agent-kanban-pm">Explore the source</a>
+          </div>
+        </article>
+        <aside class="content-aside" aria-label="Related pages">
+          <strong>Related</strong>
+          <ul>
+            <li><a href="../coding-agent-kanban/">Coding-agent Kanban</a></li>
+            <li><a href="../claude-code-kanban/">Claude Code Kanban</a></li>
+            <li><a href="../mcp-kanban-server/">MCP Kanban server</a></li>
+            <li><a href="../run-multiple-coding-agents/">Run multiple agents</a></li>
+            <li><a href="../integrations/">All integrations</a></li>
+          </ul>
+        </aside>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="shell footer-shell">
+      <a class="brand" href="../"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 9h8M8 12h5M8 15h7"/></svg></span><span>agent-kanban</span></a>
+      <p>Free forever · Open source · Local-first</p>
+      <nav><a href="../getting-started/">Get started</a><a href="../integrations/">Integrations</a></nav>
+    </div>
+  </footer>
+</body>
+</html>
