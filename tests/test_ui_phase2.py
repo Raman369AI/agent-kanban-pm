@@ -34,7 +34,7 @@ def test_setup_queues_then_assigns_and_requires_a_real_session(monkeypatch, tmp_
             "role_names": ["worker"],
         }
 
-    monkeypatch.setattr(ui, "_role_assignment_payload", configured_roles)
+    monkeypatch.setattr(ui.roles, "_role_assignment_payload", configured_roles)
     with TestClient(app) as client:
         owner, headers = tests_helper.local_owner_headers(client)
         created = client.post("/projects", json={"name": "Phase 2 setup"}, headers=headers)

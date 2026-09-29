@@ -49,7 +49,7 @@ def _configure_git_pr(monkeypatch, agent_name):
             "role_names": ["git_pr"],
         }
 
-    monkeypatch.setattr(ui, "_role_assignment_payload", role_payload)
+    monkeypatch.setattr(ui.roles, "_role_assignment_payload", role_payload)
 
 
 async def _seed_implementation(task_id, agent_id, *, manual_policy=True):
