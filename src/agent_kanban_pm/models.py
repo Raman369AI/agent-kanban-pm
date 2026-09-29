@@ -252,6 +252,7 @@ class AgentSession(Base):
             sqlite_where=text("ended_at IS NULL"),
             postgresql_where=text("ended_at IS NULL"),
         ),
+        Index("uq_session_launch_request", "launch_request_id", unique=True),
     )
 
     id = Column(Integer, primary_key=True)
@@ -501,6 +502,16 @@ class UserContribution(Base):
 class PendingEvent(Base):
     """Persisted event queue — shared between FastAPI server and MCP server processes."""
     __tablename__ = "pending_events"
+    __table_args__ = (
+        Index(
+            "uq_pending_event_outbox_agent",
+            "outbox_event_id",
+            "agent_id",
+            unique=True,
+            sqlite_where=text("outbox_event_id IS NOT NULL"),
+            postgresql_where=text("outbox_event_id IS NOT NULL"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     outbox_event_id = Column(Integer, ForeignKey('outbox_events.id', ondelete='CASCADE'), nullable=True)

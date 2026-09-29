@@ -126,7 +126,9 @@ def _build_legacy_db(db_path: Path) -> None:
     # ...then strip it back to the old shape.
     conn = sqlite3.connect(db_path)
     try:
+        # A database that predates Alembic has neither bookkeeping table.
         conn.execute("DROP TABLE IF EXISTS schema_migrations")
+        conn.execute("DROP TABLE IF EXISTS alembic_version")
         for table, columns in MIGRATED_COLUMNS.items():
             existing = {
                 row[1] for row in conn.execute(f"PRAGMA table_info({table})")
@@ -282,17 +284,105 @@ def test_upgrade_is_idempotent(legacy_db):
     assert len(tasks) == 1, "task rows multiplied across upgrades"
 
 
-def test_fresh_database_also_records_the_chain(tmp_path):
-    """A new install must land on the same migration version as an upgraded one."""
+def _alembic_versions(db_path: Path) -> list[str]:
+    return [row[0] for row in _rows(db_path, "SELECT version_num FROM alembic_version")]
+
+
+def test_fresh_database_is_stamped_at_head(tmp_path):
+    """A new install is built from the models and stamped, not migrated."""
     fresh = tmp_path / "fresh.db"
     result = _run_init_db(fresh)
     assert "INIT_OK" in result.stdout, f"fresh init failed:\n{result.stderr}"
+    assert _alembic_versions(fresh) == [_head_revision()]
+    assert not _columns(fresh, "schema_migrations"), "fresh installs must not run the legacy chain"
 
-    versions = {row[0] for row in _rows(fresh, "SELECT version FROM schema_migrations")}
-    assert versions >= set(range(1, 21)), (
-        "a fresh database skipped migration bookkeeping, so the next release's "
-        f"migrations would run against it unpredictably: {sorted(versions)}"
-    )
+
+def test_legacy_upgrade_is_stamped_at_head(legacy_db):
+    result = _run_init_db(legacy_db)
+    assert "INIT_OK" in result.stdout, f"upgrade failed:\n{result.stderr}"
+    assert _alembic_versions(legacy_db) == [_head_revision()]
+
+
+def test_managed_database_reinit_is_a_noop(tmp_path):
+    fresh = tmp_path / "managed.db"
+    assert "INIT_OK" in _run_init_db(fresh).stdout
+    before = _schema_snapshot(fresh)
+    second = _run_init_db(fresh)
+    assert "INIT_OK" in second.stdout, second.stderr
+    assert _schema_snapshot(fresh) == before
+    assert _alembic_versions(fresh) == [_head_revision()]
+
+
+def _head_revision() -> str:
+    from alembic.script import ScriptDirectory
+    from agent_kanban_pm.db_migrations import make_config
+
+    return ScriptDirectory.from_config(make_config()).get_current_head()
+
+
+def _schema_snapshot(db_path: Path) -> dict:
+    """Columns per table plus index definitions, ignoring bookkeeping tables."""
+    conn = sqlite3.connect(db_path)
+    try:
+        tables = [
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' AND name NOT IN ('alembic_version', 'schema_migrations')"
+            )
+        ]
+        columns = {t: sorted(r[1] for r in conn.execute(f"PRAGMA table_info({t})")) for t in tables}
+        indexes = sorted(
+            (name, sql) for name, sql in conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
+            )
+        )
+        return {"columns": columns, "indexes": indexes}
+    finally:
+        conn.close()
+
+
+def test_fresh_and_upgraded_databases_have_the_same_schema(tmp_path, legacy_db):
+    """The models must fully describe the schema the legacy chain produces.
+
+    Anything the chain creates that the models do not (for example a unique
+    index) would silently vanish from new installs, which no longer run it.
+    """
+    fresh = tmp_path / "fresh-schema.db"
+    assert "INIT_OK" in _run_init_db(fresh).stdout
+    assert "INIT_OK" in _run_init_db(legacy_db).stdout
+
+    fresh_schema, upgraded_schema = _schema_snapshot(fresh), _schema_snapshot(legacy_db)
+    assert fresh_schema["columns"] == upgraded_schema["columns"]
+    # The legacy fixture rebuilds tables without their plain indexes, so only
+    # the unique indexes (the ones the chain itself creates) are comparable.
+    def unique(schema):
+        return [(name, " ".join(sql.split())) for name, sql in schema["indexes"] if name.startswith("uq_")]
+
+    assert unique(fresh_schema) == unique(upgraded_schema)
+    assert unique(fresh_schema), "expected the uq_* integrity indexes to exist"
+
+
+def test_models_match_migrated_schema(tmp_path):
+    """Alembic's own diff of models vs. database is empty (drift guard).
+
+    Any model change needs a revision under db_migrations/versions/.
+    """
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+    from sqlalchemy import create_engine
+
+    from agent_kanban_pm.models import Base
+
+    fresh = tmp_path / "drift.db"
+    assert "INIT_OK" in _run_init_db(fresh).stdout
+    engine = create_engine(f"sqlite:///{fresh}")
+    try:
+        with engine.connect() as conn:
+            ctx = MigrationContext.configure(conn, opts={"compare_type": False})
+            diff = compare_metadata(ctx, Base.metadata)
+    finally:
+        engine.dispose()
+    assert diff == [], f"models and database disagree; add an Alembic revision:\n{diff}"
 
 
 def test_assignment_admission_indexes_are_unique_and_partial(tmp_path):

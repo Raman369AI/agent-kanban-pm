@@ -43,6 +43,7 @@ dependencies = [
   # the @server.list_tools/@server.call_tool decorators, 2.x with
   # add_request_handler. See _register_tool_handlers.
   "mcp>=1.0",
+  "alembic>=1.13.0",
 ]
 
 [project.urls]
@@ -82,6 +83,7 @@ include = ["agent_kanban_pm*"]
 version = {attr = "agent_kanban_pm.runtime._version.__version__"}
 
 [tool.setuptools.package-data]
+"agent_kanban_pm.db_migrations" = ["script.py.mako"]
 "agent_kanban_pm.data" = ["templates/*.html", "static/css/*.css", "static/js/*.js", "static/js/board/*.js", "agents/*.yaml", "mcp_configs/*.json"]
 
 [tool.pytest.ini_options]

@@ -165,6 +165,7 @@ CRITICAL_FILE_PATTERNS = (
     "db.py",
     "models.py",
     "alembic/",
+    "db_migrations/",
     ".ssh/",
     ".env",
 )

@@ -3,6 +3,7 @@ include LICENSE
 include ARCHITECTURE.md
 include CHANGELOG.md
 recursive-include src/agent_kanban_pm/data *.html *.css *.js *.yaml *.json
+recursive-include src/agent_kanban_pm/db_migrations *.py *.mako
 prune agents
 prune mcp_configs
 prune static

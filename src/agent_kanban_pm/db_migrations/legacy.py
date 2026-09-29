@@ -1,0 +1,327 @@
+"""Frozen pre-Alembic migration chain (schema_migrations v1-v20).
+
+Databases created before Alembic was adopted are upgraded by this chain and
+then stamped with the Alembic baseline revision (see ``__init__``). Do NOT add
+migrations here: new schema changes are Alembic revisions under ``versions/``.
+"""
+import logging
+
+from sqlalchemy import select, text
+
+logger = logging.getLogger(__name__)
+
+
+async def _column_exists(conn, table: str, column: str) -> bool:
+    """Check if a column exists in a table (SQLite PRAGMA)."""
+    result = await conn.execute(text(f"PRAGMA table_info({table})"))
+    rows = result.fetchall()
+    return any(row[1] == column for row in rows)
+
+
+async def run_legacy_migrations(engine, async_session_maker) -> None:
+    """Add missing columns for RBAC, audit trail, and agent visibility.
+
+    Uses a `schema_migrations` table to track applied migrations by version
+    number so each migration runs exactly once (P2-2).
+
+    MIGRATION RULES:
+    - NEVER add CREATE TABLE for a table that has a SQLAlchemy model.
+      create_all() handles those. Only data-only migrations go here.
+    - ALTER TABLE additions are for columns added after initial release.
+      Guard with _column_exists() and _migration_applied().
+    - Data migrations (INSERT/UPDATE) are always acceptable.
+    - When adding a new model, do NOT add migration DDL — create_all()
+      will create the table. Only add a migration version if there is
+      data to backfill.
+    """
+    from agent_kanban_pm.models import EntityType, Role
+    async with engine.begin() as conn:
+        # Bootstrap the migration tracking table
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """))
+
+        async def _migration_applied(version: int) -> bool:
+            result = await conn.execute(
+                text("SELECT 1 FROM schema_migrations WHERE version = :v"),
+                {"v": version},
+            )
+            return result.scalar() is not None
+
+        async def _record_migration(version: int, name: str) -> None:
+            await conn.execute(
+                text("INSERT INTO schema_migrations (version, name) VALUES (:v, :n)"),
+                {"v": version, "n": name},
+            )
+            logger.info("Applied migration v%d: %s", version, name)
+        # --- Migration v1: Entities role column ---
+        if not await _migration_applied(1):
+            if not await _column_exists(conn, "entities", "role"):
+                logger.info("Migrating: adding 'role' column to entities")
+                await conn.execute(text("ALTER TABLE entities ADD COLUMN role VARCHAR(10) DEFAULT 'WORKER'"))
+            await _record_migration(1, "entities_role_column")
+
+        # --- Migration v2: Tasks created_by and version columns ---
+        if not await _migration_applied(2):
+            if not await _column_exists(conn, "tasks", "created_by"):
+                await conn.execute(text("ALTER TABLE tasks ADD COLUMN created_by INTEGER"))
+            if not await _column_exists(conn, "tasks", "version"):
+                await conn.execute(text("ALTER TABLE tasks ADD COLUMN version INTEGER DEFAULT 0"))
+            await _record_migration(2, "tasks_created_by_version")
+
+        # --- Migration v3: Agent activities structured fields ---
+        if not await _migration_applied(3):
+            activity_columns = {
+                "session_id": "INTEGER",
+                "project_id": "INTEGER",
+                "source": "VARCHAR(100)",
+                "payload_json": "TEXT",
+                "workspace_path": "TEXT",
+                "file_path": "TEXT",
+                "command": "TEXT",
+            }
+            for column, ddl_type in activity_columns.items():
+                if not await _column_exists(conn, "agent_activities", column):
+                    await conn.execute(text(f"ALTER TABLE agent_activities ADD COLUMN {column} {ddl_type}"))
+            await _record_migration(3, "agent_activities_structured_fields")
+
+        # Fix any existing lowercase role values before ORM loads them
+        await conn.execute(text("UPDATE entities SET role = UPPER(role) WHERE role IS NOT NULL"))
+        # Set NULL roles to WORKER as a safe default (backfill will correct human vs agent)
+        await conn.execute(text("UPDATE entities SET role = 'WORKER' WHERE role IS NULL"))
+
+        # --- Migration v4: Backfill workspaces ---
+        # Tables agent_checkpoints and stage_policies are created by
+        # create_all() via their SQLAlchemy models (AgentCheckpoint,
+        # StagePolicy). No CREATE TABLE DDL is needed here.
+        if not await _migration_applied(4):
+            # Backfill primary workspace rows from the legacy projects.path field.
+            await conn.execute(text("""
+                INSERT INTO project_workspaces (project_id, root_path, label, is_primary, created_at)
+                SELECT p.id, p.path, 'Primary workspace', 1, CURRENT_TIMESTAMP
+                FROM projects p
+                WHERE p.path IS NOT NULL
+                  AND p.path != ''
+                  AND NOT EXISTS (
+                      SELECT 1 FROM project_workspaces w WHERE w.project_id = p.id AND w.root_path = p.path
+                  )
+            """))
+            await _record_migration(4, "checkpoints_stage_policies")
+
+        # --- Migration v5: Optimistic concurrency on approvals ---
+        if not await _migration_applied(5):
+            if not await _column_exists(conn, "agent_approvals", "update_version"):
+                await conn.execute(text("ALTER TABLE agent_approvals ADD COLUMN update_version INTEGER NOT NULL DEFAULT 0"))
+            await _record_migration(5, "approval_update_version")
+
+        # --- Migration v6: Soft-delete on pending events ---
+        if not await _migration_applied(6):
+            if not await _column_exists(conn, "pending_events", "consumed_at"):
+                await conn.execute(text("ALTER TABLE pending_events ADD COLUMN consumed_at DATETIME DEFAULT NULL"))
+            await _record_migration(6, "pending_events_consumed_at")
+
+        # --- Migration v7: Task sequence_order for ordered subtask enforcement ---
+        if not await _migration_applied(7):
+            if not await _column_exists(conn, "tasks", "sequence_order"):
+                await conn.execute(text("ALTER TABLE tasks ADD COLUMN sequence_order INTEGER"))
+            await _record_migration(7, "tasks_sequence_order")
+
+        # --- Migration v8: Project.is_demo flag (replaces hardcoded name/path heuristics) ---
+        if not await _migration_applied(8):
+            if not await _column_exists(conn, "projects", "is_demo"):
+                await conn.execute(
+                    text("ALTER TABLE projects ADD COLUMN is_demo BOOLEAN NOT NULL DEFAULT 0")
+                )
+            # Backfill: rows previously hidden by kanban_cli.cmd_sheet's
+            # hardcoded markers are marked as demo so the new is_demo filter
+            # preserves existing local behavior without keeping the heuristic
+            # in product code.
+            await conn.execute(text(
+                "UPDATE projects SET is_demo = 1 WHERE is_demo = 0 AND ("
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%test%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%phase 6%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%visibility%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%coordination%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%approval queue%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%diff review%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%reject project%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%folder picker smoke%' OR"
+                "  LOWER(COALESCE(name, '') || ' ' || COALESCE(path, '')) LIKE '%/tmp/%'"
+                ")"
+            ))
+            await _record_migration(8, "projects_is_demo_flag")
+
+        # --- Migration v9: Atomic assignment admission guards ---
+        if not await _migration_applied(9):
+            # Keep the newest row if a pre-v9 database already contains
+            # duplicates, then enforce one open session/active lease for each
+            # task-agent assignment. Separate review agents can still run in
+            # parallel on the same task.
+            await conn.execute(text("""
+                UPDATE agent_sessions
+                SET status = 'ERROR',
+                    ended_at = COALESCE(last_seen_at, CURRENT_TIMESTAMP)
+                WHERE task_id IS NOT NULL
+                  AND ended_at IS NULL
+                  AND id NOT IN (
+                      SELECT MAX(id)
+                      FROM agent_sessions
+                      WHERE task_id IS NOT NULL AND ended_at IS NULL
+                      GROUP BY agent_id, task_id
+                  )
+            """))
+            await conn.execute(text("""
+                UPDATE task_leases
+                SET status = 'RELEASED',
+                    released_at = COALESCE(released_at, CURRENT_TIMESTAMP)
+                WHERE status = 'ACTIVE'
+                  AND id NOT IN (
+                      SELECT MAX(id)
+                      FROM task_leases
+                      WHERE status = 'ACTIVE'
+                      GROUP BY task_id, agent_id
+                  )
+            """))
+            await conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_sessions_open_assignment
+                ON agent_sessions (agent_id, task_id)
+                WHERE ended_at IS NULL
+            """))
+            await conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_task_leases_active_assignment
+                ON task_leases (task_id, agent_id)
+                WHERE status = 'ACTIVE'
+            """))
+            await _record_migration(9, "atomic_assignment_admission")
+
+        if not await _migration_applied(10):
+            from agent_kanban_pm.runtime.stage_identity import normalize_stage_key
+            if not await _column_exists(conn, "stages", "workflow_key"):
+                await conn.execute(text("ALTER TABLE stages ADD COLUMN workflow_key VARCHAR(255)"))
+            rows = (await conn.execute(text("SELECT id, name FROM stages WHERE workflow_key IS NULL"))).all()
+            for stage_id, name in rows:
+                await conn.execute(text("UPDATE stages SET workflow_key = :key WHERE id = :id"),
+                                   {"key": normalize_stage_key(name), "id": stage_id})
+            await _record_migration(10, "stable_stage_identity")
+
+        if not await _migration_applied(11):
+            for column, ddl in (
+                ("assigned_role", "VARCHAR(100)"),
+                ("run_token", "VARCHAR(64)"),
+                ("handoff_state", "VARCHAR(32)"),
+                ("handoff_summary", "TEXT"),
+                ("handoff_received_at", "DATETIME"),
+            ):
+                if not await _column_exists(conn, "agent_sessions", column):
+                    await conn.execute(text(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}"))
+            await _record_migration(11, "session_handoff_identity")
+
+        if not await _migration_applied(12):
+            if not await _column_exists(conn, "agent_sessions", "exit_code"):
+                await conn.execute(text("ALTER TABLE agent_sessions ADD COLUMN exit_code INTEGER"))
+            await _record_migration(12, "session_process_exit_code")
+
+        if not await _migration_applied(13):
+            for column, ddl in (
+                ("launch_request_id", "INTEGER"),
+                ("source_session_id", "INTEGER"),
+                ("work_revision", "VARCHAR(64)"),
+                ("handoff_outputs_json", "TEXT"),
+            ):
+                if not await _column_exists(conn, "agent_sessions", column):
+                    await conn.execute(text(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}"))
+            if not await _column_exists(conn, "diff_reviews", "work_revision"):
+                await conn.execute(text("ALTER TABLE diff_reviews ADD COLUMN work_revision VARCHAR(64)"))
+            await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_session_launch_request ON agent_sessions (launch_request_id)"))
+            await _record_migration(13, "durable_launches_and_review_revisions")
+
+        if not await _migration_applied(14):
+            if not await _column_exists(conn, "agent_sessions", "launch_spec_json"):
+                await conn.execute(text("ALTER TABLE agent_sessions ADD COLUMN launch_spec_json TEXT"))
+            if not await _column_exists(conn, "launch_requests", "actor_id"):
+                await conn.execute(text("ALTER TABLE launch_requests ADD COLUMN actor_id INTEGER REFERENCES entities(id) ON DELETE SET NULL"))
+            await _record_migration(14, "recoverable_task_launches")
+
+        if not await _migration_applied(15):
+            for table, column, ddl in (
+                ("diff_reviews", "diff_sha256", "VARCHAR(64)"),
+                ("pending_events", "outbox_event_id", "INTEGER REFERENCES outbox_events(id) ON DELETE CASCADE"),
+                ("outbox_events", "claimed_at", "DATETIME"),
+                ("outbox_events", "claim_token", "VARCHAR(64)"),
+                ("launch_requests", "claimed_at", "DATETIME"),
+                ("launch_requests", "claim_token", "VARCHAR(64)"),
+                ("launch_requests", "archived_at", "DATETIME"),
+            ):
+                if not await _column_exists(conn, table, column):
+                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_pending_event_outbox_agent "
+                "ON pending_events (outbox_event_id, agent_id) WHERE outbox_event_id IS NOT NULL"
+            ))
+            await _record_migration(15, "review_evidence_and_delivery_claims")
+
+        if not await _migration_applied(16):
+            await conn.execute(text("""
+                UPDATE stage_policies
+                SET on_enter_roles_json = '["diff_review", "test", "git_pr"]',
+                    required_outputs_json = '["test_result", "diff_review_result", "final_summary"]'
+                WHERE stage_key = 'review'
+                  AND on_enter_roles_json IN ('["diff_review", "test"]', '["test", "diff_review"]')
+                  AND required_outputs_json IN ('["test_result", "diff_review_result"]', '["diff_review_result", "test_result"]')
+            """))
+            await conn.execute(text("""
+                UPDATE stage_policies
+                SET on_enter_roles_json = '[]', required_outputs_json = '[]'
+                WHERE stage_key IN ('done', 'completed')
+                  AND on_enter_roles_json = '["git_pr"]'
+                  AND required_outputs_json = '["final_summary"]'
+            """))
+            await _record_migration(16, "git_pr_before_done")
+
+        if not await _migration_applied(17):
+            if not await _column_exists(conn, "agent_sessions", "handoff_artifacts_json"):
+                await conn.execute(text("ALTER TABLE agent_sessions ADD COLUMN handoff_artifacts_json TEXT"))
+            await _record_migration(17, "verified_handoff_artifacts")
+
+        if not await _migration_applied(18):
+            if not await _column_exists(conn, "launch_requests", "override_reason"):
+                await conn.execute(text("ALTER TABLE launch_requests ADD COLUMN override_reason TEXT"))
+            await _record_migration(18, "launch_override_reasons")
+
+        if not await _migration_applied(19):
+            for table, column in (
+                ("agent_sessions", "review_base_revision"),
+                ("diff_reviews", "base_revision"),
+            ):
+                if not await _column_exists(conn, table, column):
+                    await conn.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR(64)"
+                    ))
+            await _record_migration(19, "immutable_review_base")
+
+        if not await _migration_applied(20):
+            if not await _column_exists(conn, "agent_sessions", "resolved_model"):
+                await conn.execute(text(
+                    "ALTER TABLE agent_sessions ADD COLUMN resolved_model VARCHAR(255)"
+                ))
+            await _record_migration(20, "agent_usage_and_resolved_model")
+
+    # Backfill default roles
+    async with async_session_maker() as session:
+        from agent_kanban_pm.models import Entity
+        result = await session.execute(select(Entity))
+        entities = result.scalars().all()
+        for entity in entities:
+            try:
+                _ = Role(entity.role.value)  # validate
+            except (ValueError, AttributeError):
+                if entity.entity_type == EntityType.HUMAN:
+                    entity.role = Role.OWNER
+                else:
+                    entity.role = Role.WORKER
+                logger.info(f"Backfilled role for entity {entity.name}: {entity.role.value}")
+        await session.commit()

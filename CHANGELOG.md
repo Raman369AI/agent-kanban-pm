@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add opt-in per-role fallback routing with ordered or quota-headroom selection,
   explicit candidate consent, stale-quota protection, and audited decisions.
 
+### Changed
+
+- Database schema changes are now Alembic revisions
+  (`src/agent_kanban_pm/db_migrations/`). Existing databases are upgraded by the
+  frozen legacy chain and then adopted at the `0001` baseline automatically on
+  first start; new databases are created from the models and stamped at head.
+  Add `alembic` to your environment if you install from source.
+- Declare the `uq_session_launch_request` and `uq_pending_event_outbox_agent`
+  unique indexes on the models. Previously only the legacy migration chain
+  created them.
+
 ## [0.8.0] — 2026-09-20
 
 ### Added
