@@ -82,7 +82,7 @@ include = ["agent_kanban_pm*"]
 version = {attr = "agent_kanban_pm.runtime._version.__version__"}
 
 [tool.setuptools.package-data]
-"agent_kanban_pm.data" = ["templates/*.html", "static/css/*.css", "static/js/*.js", "agents/*.yaml", "mcp_configs/*.json"]
+"agent_kanban_pm.data" = ["templates/*.html", "static/css/*.css", "static/js/*.js", "static/js/board/*.js", "agents/*.yaml", "mcp_configs/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

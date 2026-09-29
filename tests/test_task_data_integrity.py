@@ -162,8 +162,8 @@ def test_board_editing_uses_canonical_values_and_escapes_comments():
         body = response.text
         assert "<body>" in body
         assert str(datetime.now().year) in body
-        assert '/static/js/board.js' in body
-        script = client.get('/static/js/board.js').text
+        assert '/static/js/board/init.js' in body
+        script = tests_helper.board_js(client)
         assert "data.description || ''" in script
         assert "data.status || 'pending'" in script
         assert "escapeHtml(c.content)" in script

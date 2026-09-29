@@ -269,3 +269,14 @@ try:  # pragma: no cover — optional dependency
         cleanup_now()
 except ImportError:
     pass
+
+
+BOARD_SCRIPTS = (
+    "notifications", "task-panel", "card-panels", "review", "ui", "dragdrop",
+    "task-actions", "assign-project", "plan-filters", "realtime", "init",
+)
+
+
+def board_js(client) -> str:
+    """Return the board scripts concatenated in load order."""
+    return "\n".join(client.get(f"/static/js/board/{name}.js").text for name in BOARD_SCRIPTS)

@@ -188,6 +188,6 @@ def test_git_pr_request_is_review_only_current_revision_and_idempotent(monkeypat
         assert log_count == 1
         assert assignment_count == 1
 
-        board_js = client.get("/static/js/board.js").text
+        board_js = tests_helper.board_js(client)
         assert "window.requestGitPr" in board_js
         assert "/request-git-pr" in board_js

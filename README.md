@@ -398,7 +398,7 @@ concerns such as authentication, response formatting, commits, and event
 publication. This keeps stage/parent validation and transition rules consistent
 across every interface.
 
-Board behaviour and styling live in `data/static/js/board.js`,
+Board behaviour and styling live in `data/static/js/board/*.js` (classic scripts loaded in order),
 `data/static/js/role-settings.js`, and `data/static/css/board.css`; the
 shared application polish layer lives in `data/static/css/app-polish.css`, and
 the `kanban_board.html` template holds markup only.

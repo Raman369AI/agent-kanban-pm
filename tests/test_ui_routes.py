@@ -71,8 +71,8 @@ def test_ui_routes_and_board_render():
         assert "board-revamp-shell" in body
         assert "kanban-column-revamp" in body
         assert 'id="approval-popup-overlay"' in body
-        assert '/static/js/board.js' in body
-        assert "function openApprovalPopup" in client.get('/static/js/board.js').text
+        assert '/static/js/board/init.js' in body
+        assert "function openApprovalPopup" in tests_helper.board_js(client)
         assert client.get('/static/css/board.css').status_code == 200
         assert client.get('/static/js/role-settings.js').status_code == 200
         assert "&#128272; Approvals" not in body
@@ -166,7 +166,7 @@ def test_board_renders_safe_latest_meaningful_activity_preview():
         assert "bounded bounded bounded" in body
         assert "…" in body
 
-        board_js = client.get("/static/js/board.js").text
+        board_js = tests_helper.board_js(client)
         assert "updateTaskLiveActivity(data, msg.timestamp)" in board_js
         assert "messageEl.textContent = nextMessage" in board_js
 
@@ -276,7 +276,7 @@ def test_board_phase1_interaction_fixes():
         board = client.get(f"/ui/projects/{project['id']}/board")
         assert board.status_code == 200
         body = board.text
-        board_js = client.get("/static/js/board.js").text
+        board_js = tests_helper.board_js(client)
         base_html = client.get("/ui/projects").text
         main_js = client.get("/static/js/main.js").text
         style_css = client.get("/static/css/style.css").text
@@ -389,8 +389,8 @@ def test_phase2_setup_guide_and_unified_navigation():
         assert "Start work" in board_html
         assert "Missing prerequisite" in board_html or "Prerequisite" in board_html
 
-        # Assignment modal in board.js: Configure agents action in empty state & unavailable explanation
-        board_js = client.get("/static/js/board.js").text
+        # Assignment modal in the board scripts: Configure agents action in empty state & unavailable explanation
+        board_js = tests_helper.board_js(client)
         assert "Configure agents" in board_js
         assert "not found on PATH" in board_js
 
