@@ -158,7 +158,7 @@ def validate_transition(
 # subprocess/tmux, filesystem access, database migrations, git operations).
 CRITICAL_FILE_PATTERNS = (
     "auth.py",
-    "mcp/server.py",
+    "mcp/",
     "session_streamer.py",
     "role_supervisor.py",
     "assignment_launcher.py",
